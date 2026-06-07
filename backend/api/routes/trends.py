@@ -49,7 +49,12 @@ router = APIRouter()
 
 def _idea_out(k: KeywordIdea) -> KeywordIdeaOut:
     return KeywordIdeaOut(
-        id=str(k.id), term=k.term, notes=k.notes, created_at=k.created_at
+        id=str(k.id),
+        term=k.term,
+        notes=k.notes,
+        temporal_window=k.temporal_window,
+        source_provider=k.source_provider,
+        created_at=k.created_at,
     )
 
 
@@ -141,10 +146,14 @@ def _latest_by(observations: list[KeywordObservation], source: str, metric: str)
 
 @router.get("/ranking", response_model=list[RankingRow])
 async def ranking(
+    window: str | None = Query(None),
     _: User = Depends(require_user),
     session: AsyncSession = Depends(db_session),
 ):
-    res = await session.execute(select(KeywordIdea))
+    stmt = select(KeywordIdea)
+    if window in {"day", "week", "month"}:
+        stmt = stmt.where(KeywordIdea.temporal_window == window)
+    res = await session.execute(stmt)
     ideas = list(res.scalars())
     if not ideas:
         return []
@@ -207,6 +216,8 @@ async def ranking(
                 ml_avg_price=price,
                 sparkline=sparkline,
                 top_listings=top_listings,
+                temporal_window=idea.temporal_window,
+                source_provider=idea.source_provider,
             )
         )
 
@@ -275,6 +286,7 @@ async def promote_suggestion(
             term=s.term,
             notes=s.rationale,
             temporal_window=s.temporal_window,
+            source_provider=s.provider,
         )
         session.add(ki)
         await session.flush()
@@ -284,6 +296,39 @@ async def promote_suggestion(
     return SuggestionPromoteOut(
         suggestion_id=str(s.id), keyword_id=str(ki.id), term=ki.term
     )
+
+
+@router.post("/suggestions/promote-all")
+async def promote_all_suggestions(
+    _: User = Depends(require_user),
+    session: AsyncSession = Depends(db_session),
+):
+    """Promote every pending LLMSuggestion to a KeywordIdea (idempotent)."""
+    pending = (
+        await session.execute(
+            select(LLMSuggestion).where(LLMSuggestion.status == "pending")
+        )
+    ).scalars().all()
+    promoted = 0
+    for s in pending:
+        existing = await session.execute(
+            select(KeywordIdea).where(KeywordIdea.term == s.term)
+        )
+        ki = existing.scalar_one_or_none()
+        if ki is None:
+            ki = KeywordIdea(
+                term=s.term,
+                notes=s.rationale,
+                temporal_window=s.temporal_window,
+                source_provider=s.provider,
+            )
+            session.add(ki)
+            await session.flush()
+        s.status = "promoted"
+        s.promoted_keyword_id = ki.id
+        promoted += 1
+    await session.commit()
+    return {"promoted": promoted}
 
 
 @router.post("/suggestions/{suggestion_id}/dismiss", response_model=SuggestionOut)

@@ -21,6 +21,9 @@ class KeywordIdea(Base):
     temporal_window: Mapped[str] = mapped_column(
         String(10), nullable=False, default="week"
     )
+    # Where this idea came from: NULL = manual; 'anthropic' or 'gemini' when
+    # promoted from an LLMSuggestion (auto or manual).
+    source_provider: Mapped[str | None] = mapped_column(String(20))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

@@ -227,11 +227,12 @@ export type LLMSuggestion = {
   id: string;
   term: string;
   rationale: string | null;
-  provider: string;
+  provider: "anthropic" | "gemini";
   recurrence_score: number | string;
   status: "pending" | "promoted" | "auto_promoted" | "dismissed" | "expired";
   promoted_keyword_id: string | null;
   suggested_at: string;
+  temporal_window?: "day" | "week" | "month";
 };
 
 export type SourceMetric = {
@@ -256,4 +257,6 @@ export type RankingRow = {
   ml_avg_price: number | string | null;
   sparkline: SparkPoint[];
   top_listings: TopListing[];
+  temporal_window: "day" | "week" | "month";
+  source_provider: "anthropic" | "gemini" | null;
 };

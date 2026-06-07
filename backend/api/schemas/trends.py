@@ -14,6 +14,8 @@ class KeywordIdeaOut(BaseModel):
     id: str
     term: str
     notes: str | None
+    temporal_window: str = "week"
+    source_provider: str | None = None
     created_at: datetime
 
 
@@ -48,6 +50,8 @@ class RankingRow(BaseModel):
     ml_avg_price: Decimal | None
     sparkline: list[SparkPoint]
     top_listings: list[TopListing] = []
+    temporal_window: str = "week"
+    source_provider: str | None = None  # 'anthropic' | 'gemini' | None (manual)
 
 
 class RefreshOut(BaseModel):

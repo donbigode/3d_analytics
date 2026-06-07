@@ -149,6 +149,7 @@ async def _persist_candidates(
                     term=cand.term,
                     notes=cand.rationale,
                     temporal_window=cand.temporal_window,
+                    source_provider=provider_name,
                 )
                 session.add(ki)
                 await session.flush()

@@ -21,6 +21,10 @@
   let llmRefreshing = false;
   let llmBanner = "";
   let actingSuggestion: string | null = null;
+  let promotingAll = false;
+
+  type Window = "day" | "week" | "month" | "all";
+  let activeWindow: Window = "all";
 
   // create form
   let newTerm = "";
@@ -141,6 +145,25 @@
     }
   }
 
+  async function promoteAllSuggestions() {
+    if (suggestions.length === 0) return;
+    if (!confirm(`Promover todas as ${suggestions.length} sugestões pendentes?`)) return;
+    promotingAll = true;
+    llmBanner = "";
+    try {
+      const res = await api<{ promoted: number }>("/trends/suggestions/promote-all", {
+        method: "POST",
+      });
+      llmBanner = `${res.promoted} sugest${res.promoted === 1 ? "ão promovida" : "ões promovidas"}.`;
+      await load();
+    } catch (err) {
+      handleApiError(err);
+      llmBanner = errorMessage(err, "Falha ao promover sugestões.");
+    } finally {
+      promotingAll = false;
+    }
+  }
+
   async function dismissSuggestion(id: string) {
     actingSuggestion = id;
     try {
@@ -212,6 +235,25 @@
     expanded = expanded === id ? null : id;
   }
 
+  function windowLabel(w: string): string {
+    return ({ day: "Diário", week: "Semanal", month: "Mensal" } as Record<string, string>)[w] || w;
+  }
+  function providerLabel(p: string | null | undefined): string {
+    if (!p) return "Manual";
+    return ({ anthropic: "Claude", gemini: "Gemini" } as Record<string, string>)[p] || p;
+  }
+
+  $: filteredRanking = ranking.filter((r) =>
+    activeWindow === "all" ? true : r.temporal_window === activeWindow,
+  );
+  $: windowCounts = ranking.reduce(
+    (acc, r) => {
+      acc[r.temporal_window] = (acc[r.temporal_window] ?? 0) + 1;
+      return acc;
+    },
+    { day: 0, week: 0, month: 0 } as Record<string, number>,
+  );
+
   onMount(() => {
     if (requireAuth()) return;
     load();
@@ -231,6 +273,48 @@
 {#if listError}<div class="banner alert">{listError}</div>{/if}
 {#if refreshBanner}<div class="banner ok">{refreshBanner}</div>{/if}
 {#if llmBanner}<div class="banner ok">{llmBanner}</div>{/if}
+
+<section class="panel actions-panel">
+  <div class="panel-head">
+    <div class="heading">
+      <span class="page-eyebrow">Ações</span>
+      <h2 class="form-title">Disparar coleta</h2>
+    </div>
+  </div>
+  <div class="action-grid">
+    <button class="big-action llm" on:click={llmRefreshNow} disabled={llmRefreshing}>
+      <span class="big-action-eyebrow">LLM</span>
+      <span class="big-action-title">Buscar tendências com IA</span>
+      <span class="big-action-hint">
+        {llmRefreshing ? "Coletando…" : "Pede 10 candidatos (Claude ou Gemini) com janela dia/semana/mês"}
+      </span>
+    </button>
+    <button class="big-action coll" on:click={refreshNow} disabled={refreshing}>
+      <span class="big-action-eyebrow">Coleta</span>
+      <span class="big-action-title">Google Trends + Mercado Livre</span>
+      <span class="big-action-hint">
+        {refreshing ? "Coletando…" : "Refaz observações de TODOS os termos cadastrados"}
+      </span>
+    </button>
+    <button
+      class="big-action promote"
+      on:click={promoteAllSuggestions}
+      disabled={promotingAll || suggestions.length === 0}
+    >
+      <span class="big-action-eyebrow">Inbox</span>
+      <span class="big-action-title">
+        Adicionar {suggestions.length} sugest{suggestions.length === 1 ? "ão" : "ões"} ao radar
+      </span>
+      <span class="big-action-hint">
+        {promotingAll
+          ? "Promovendo…"
+          : suggestions.length === 0
+            ? "Nenhuma sugestão pendente"
+            : "Promove todas e dispara coleta no próximo ciclo"}
+      </span>
+    </button>
+  </div>
+</section>
 
 <section class="panel sources-panel">
   <div class="panel-head">
@@ -284,7 +368,12 @@
           <article class="suggestion">
             <header>
               <strong>{s.term}</strong>
-              <span class="mono provider">{s.provider}</span>
+              <div class="suggestion-tags">
+                {#if s.temporal_window}
+                  <span class="badge window {s.temporal_window}">{windowLabel(s.temporal_window)}</span>
+                {/if}
+                <span class="badge provider {s.provider}">{providerLabel(s.provider)}</span>
+              </div>
             </header>
             {#if s.rationale}<p class="rationale">{s.rationale}</p>{/if}
             <footer>
@@ -336,6 +425,20 @@
 <section class="panel">
   <div class="panel-head">
     <h2 class="section-title">Ranking <span class="count">· {ranking.length}</span></h2>
+    <div class="tabs">
+      <button class="tab" class:active={activeWindow === "all"} on:click={() => (activeWindow = "all")}>
+        Todos <span class="count">· {ranking.length}</span>
+      </button>
+      <button class="tab" class:active={activeWindow === "day"} on:click={() => (activeWindow = "day")}>
+        Diário <span class="count">· {windowCounts.day}</span>
+      </button>
+      <button class="tab" class:active={activeWindow === "week"} on:click={() => (activeWindow = "week")}>
+        Semanal <span class="count">· {windowCounts.week}</span>
+      </button>
+      <button class="tab" class:active={activeWindow === "month"} on:click={() => (activeWindow = "month")}>
+        Mensal <span class="count">· {windowCounts.month}</span>
+      </button>
+    </div>
   </div>
 
   {#if loading && ranking.length === 0}
@@ -349,9 +452,11 @@
         Mercado Livre. Depois o scheduler diário mantém o histórico em dia.
       </p>
     </div>
+  {:else if filteredRanking.length === 0}
+    <p class="empty">Nenhum termo nessa janela.</p>
   {:else}
     <div class="rank-list">
-      {#each ranking as row, i (row.id)}
+      {#each filteredRanking as row, i (row.id)}
         <article class="rank" class:expanded={expanded === row.id}>
           <div
             class="rank-head"
@@ -364,7 +469,11 @@
             <span class="rank-pos mono">{String(i + 1).padStart(2, "0")}</span>
             <div class="rank-term">
               <strong>{row.term}</strong>
-              <span class="muted">{row.top_listings.length} listings · clique para detalhar</span>
+              <div class="row-meta">
+                <span class="badge window {row.temporal_window}">{windowLabel(row.temporal_window)}</span>
+                <span class="badge provider {row.source_provider ?? 'manual'}">{providerLabel(row.source_provider)}</span>
+                <span class="muted">{row.top_listings.length} listings · clique para detalhar</span>
+              </div>
             </div>
             <svg class="spark" viewBox="0 0 120 32" preserveAspectRatio="none" aria-hidden="true">
               <path d={sparkPath(row.sparkline)} fill="none" stroke="currentColor" stroke-width="1.5" />
@@ -634,4 +743,98 @@
     color: var(--muted);
     letter-spacing: 0.06em;
   }
+
+  /* ----- prominent action buttons ----- */
+  .actions-panel { margin-bottom: 1.5rem; }
+  .action-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 0.7rem;
+    margin-top: 0.6rem;
+  }
+  .big-action {
+    text-align: left;
+    background: var(--paper);
+    border: 1px solid var(--line-strong);
+    padding: 0.95rem 1.05rem;
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    transition: background 120ms, border-color 120ms, transform 120ms;
+  }
+  .big-action:hover:not(:disabled) {
+    background: var(--bg);
+    border-color: var(--ink);
+  }
+  .big-action:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+  .big-action-eyebrow {
+    font-family: var(--font-mono);
+    font-size: 0.62rem;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  .big-action-title {
+    font-family: var(--font-display);
+    font-weight: 500;
+    font-size: 1.05rem;
+    letter-spacing: -0.005em;
+    line-height: 1.2;
+  }
+  .big-action-hint {
+    font-size: 0.78rem;
+    color: var(--muted);
+  }
+  .big-action.llm { border-left: 4px solid var(--brand); }
+  .big-action.coll { border-left: 4px solid var(--ok); }
+  .big-action.promote { border-left: 4px solid #c08400; }
+
+  /* ----- temporal tabs ----- */
+  .tabs { display: inline-flex; gap: 0.25rem; }
+  .tab {
+    background: transparent;
+    border: 1px solid var(--line);
+    padding: 0.3rem 0.65rem;
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--muted);
+    cursor: pointer;
+  }
+  .tab:hover { color: var(--ink); border-color: var(--line-strong); }
+  .tab.active {
+    background: var(--brand);
+    color: var(--paper);
+    border-color: var(--brand);
+  }
+  .tab .count { color: inherit; opacity: 0.65; }
+
+  /* ----- badges (window + provider) ----- */
+  .row-meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.4rem;
+    margin-top: 0.2rem;
+  }
+  .suggestion-tags { display: inline-flex; gap: 0.35rem; }
+  .badge {
+    font-family: var(--font-mono);
+    font-size: 0.6rem;
+    padding: 0.05rem 0.4rem;
+    border: 1px solid var(--line-strong);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+  .badge.window.day { color: var(--danger); border-color: var(--danger); }
+  .badge.window.week { color: var(--brand); border-color: var(--brand); }
+  .badge.window.month { color: var(--ok); border-color: var(--ok); }
+  .badge.provider.anthropic { background: #fef3c7; color: #92400e; border-color: #92400e; }
+  .badge.provider.gemini { background: #dbeafe; color: #1e3a8a; border-color: #1e3a8a; }
+  .badge.provider.manual { color: var(--muted); border-color: var(--line); }
 </style>
