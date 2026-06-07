@@ -17,7 +17,11 @@ from backend.core.security import hash_password
 from backend.infra.db import session as session_module
 from backend.infra.db.models import (
     Client,
+    MaterialConsumption,
     MaterialVersion,
+    Quote,
+    QuoteItem,
+    QuoteService,
     Service,
     Settings,
     Spool,
@@ -42,6 +46,10 @@ async def _isolated_engine_api():
             async with factory() as s:
                 # order matters: delete dependents before parents
                 for table in (
+                    MaterialConsumption.__table__,
+                    QuoteService.__table__,
+                    QuoteItem.__table__,
+                    Quote.__table__,
                     Spool.__table__,
                     Service.__table__,
                     MaterialVersion.__table__,
