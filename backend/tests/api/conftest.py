@@ -7,6 +7,8 @@ Mirrors the pattern from backend/tests/infra/conftest.py so that:
 
 from __future__ import annotations
 
+import sys
+
 import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -28,18 +30,26 @@ from backend.infra.db.models import (
     User,
     WatcherInboxFile,
 )
-from backend.settings import get_settings
 
 
 @pytest.fixture(autouse=True)
-async def _isolated_engine_api():
-    settings = get_settings()
-    engine = create_async_engine(settings.database_url, future=True, poolclass=NullPool)
+async def _isolated_engine_api(test_database_url):
+    engine = create_async_engine(test_database_url, future=True, poolclass=NullPool)
     factory = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     original_engine = session_module.engine
     original_factory = session_module.SessionFactory
     session_module.engine = engine
     session_module.SessionFactory = factory
+
+    # Patch any test module that imported SessionFactory by name
+    patched: list[tuple[object, str, object]] = []
+    for mod in list(sys.modules.values()):
+        if mod is None or not getattr(mod, "__name__", "").startswith("backend.tests."):
+            continue
+        if getattr(mod, "SessionFactory", None) is original_factory:
+            patched.append((mod, "SessionFactory", mod.SessionFactory))
+            mod.SessionFactory = factory
+
     try:
         yield
     finally:
@@ -64,6 +74,8 @@ async def _isolated_engine_api():
         except Exception:
             pass
         await engine.dispose()
+        for mod, attr, original in patched:
+            setattr(mod, attr, original)
         session_module.engine = original_engine
         session_module.SessionFactory = original_factory
 

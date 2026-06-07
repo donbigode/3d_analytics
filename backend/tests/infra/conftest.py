@@ -19,13 +19,9 @@ from sqlalchemy.pool import NullPool
 
 from backend.infra.db import session as session_module
 from backend.infra.db.models import WatcherInboxFile
-from backend.settings import get_settings
-
-
 @pytest.fixture(autouse=True)
-async def _isolated_engine():
-    settings = get_settings()
-    engine = create_async_engine(settings.database_url, future=True, poolclass=NullPool)
+async def _isolated_engine(test_database_url):
+    engine = create_async_engine(test_database_url, future=True, poolclass=NullPool)
     factory = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
 
     original_engine = session_module.engine
