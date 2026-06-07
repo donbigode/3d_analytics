@@ -27,11 +27,10 @@
 {% endif %}
 
 <div class="totals">
-  <div>Custo de produção: {{ currency }} {{ "%.2f"|format(totals.cost) }}</div>
   {% if quote.kind == "commercial" %}
-    <div>Markup: {{ totals.markup_pct }}%</div>
-    <div>Mínimo: {{ currency }} {{ "%.2f"|format(totals.min_charge) }}</div>
-    <div class="grand">Total a cobrar: {{ currency }} {{ "%.2f"|format(totals.total) }}</div>
+    <div class="grand">Total: {{ currency }} {{ "%.2f"|format(totals.total) }}</div>
+  {% else %}
+    <div class="grand">Custo total: {{ currency }} {{ "%.2f"|format(totals.cost) }}</div>
   {% endif %}
 </div>
 {% endblock %}
