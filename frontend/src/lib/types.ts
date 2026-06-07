@@ -47,6 +47,96 @@ export type Spool = {
   notes: string | null;
 };
 
+export type QuoteKind = "commercial" | "personal";
+export type QuoteStatus =
+  | "draft"
+  | "orcado"
+  | "aprovado"
+  | "produzido"
+  | "entregue"
+  | "cancelado";
+
+export type QuoteItem = {
+  id: string;
+  name: string;
+  filename: string;
+  gcode_meta: {
+    time_s?: number | null;
+    filament_m?: number | null;
+    material?: string | null;
+    machine?: string | null;
+  };
+  quantity: number;
+  subtotal: number | string;
+};
+
+export type QuoteServiceLine = {
+  id: string;
+  service_id: string;
+  quantity: number | string;
+  rate: number | string;
+  subtotal: number | string;
+};
+
+export type Quote = {
+  id: string;
+  kind: QuoteKind;
+  client_id: string | null;
+  status: QuoteStatus;
+  markup_pct: number | string;
+  min_charge: number | string;
+  notes: string | null;
+  items: QuoteItem[];
+  services: QuoteServiceLine[];
+  cost: number | string;
+  total: number | string;
+  created_at: string;
+  finalized_at: string | null;
+  approved_at: string | null;
+  produced_at: string | null;
+  delivered_at: string | null;
+};
+
+export type InboxItem = {
+  id: string;
+  original_path: string;
+  parsed_meta: {
+    time_s?: number | null;
+    filament_m?: number | null;
+    material?: string | null;
+    machine?: string | null;
+  } | null;
+  created_at: string | null;
+};
+
+export type DashboardOut = {
+  cards: {
+    receita: number | string;
+    despesa: number | string;
+    lucro: number | string;
+    margem_pct: number | string;
+    gasto_pessoal: number | string;
+    orcamentos_por_estado: Record<string, number>;
+    taxa_conversao_pct: number | string;
+    estoque: {
+      total_grams: number | string;
+      estimated_value: number | string;
+    };
+  };
+  charts: {
+    receita_vs_despesa: Array<{ period?: string; receita?: number; despesa?: number }>;
+    funil: { orcado: number; aprovado: number; produzido: number; entregue: number };
+    despesa_categorias: Record<string, number>;
+    orcado_vs_real: Array<{ quote_id: string; orcado: number; real: number; variancia_pct: number }>;
+  };
+  lists: {
+    ultimos_orcamentos: Array<{ id: string; kind: string; status: string; created_at: string | null }>;
+    parados: Array<{ id: string; approved_at: string | null }>;
+    spools_baixos: Array<{ id: string; material_code: string; remaining_grams: number }>;
+    inbox: Array<{ id: string; original_path: string; parsed_meta: unknown }>;
+  };
+};
+
 export type Settings = {
   energy_kwh_price: number | string;
   printer_power_w: number | string;

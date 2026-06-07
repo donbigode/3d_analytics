@@ -1,4 +1,4 @@
-.PHONY: up up-db down logs test test-fast lint shell create-user seed migrate
+.PHONY: up up-db down logs test test-fast lint shell create-user seed migrate e2e e2e-install fe-install fe-build fe-dev
 
 up:
 	docker compose up -d --build
@@ -33,5 +33,26 @@ create-user:
 	 read -sp "password: " password; \
 	 docker compose run --rm api python -m backend.cli create-user --name "$$name" --email "$$email" --password "$$password"
 
+# Idempotent dev seed: create t@t.com / pw if missing.
 seed:
-	docker compose run --rm api python -m backend.cli seed
+	docker compose run --rm api python -m backend.cli seed-dev
+
+# ---------- Frontend ----------
+fe-install:
+	cd frontend && npm install
+
+fe-build:
+	cd frontend && npm run build
+
+fe-dev:
+	cd frontend && npm run dev
+
+# ---------- E2E (Playwright) ----------
+# One-shot install of @playwright/test + browser. Safe to re-run.
+e2e-install:
+	cd frontend && npm install --save-dev @playwright/test && npx playwright install chromium
+
+# Run the happy-path E2E. Assumes `make up` is running (api on :8000) and that
+# a default seed user (t@t.com/pw) exists via `make seed`.
+e2e:
+	cd frontend && npx playwright test --config=../playwright.config.ts
