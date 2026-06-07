@@ -153,12 +153,43 @@ async def test_commercial_can_deliver_after_produce(auth_client):
 
 
 @pytest.mark.asyncio
-async def test_upload_unknown_material_returns_400(auth_client):
-    # No material seeded
+async def test_upload_unknown_material_creates_pending_item(auth_client):
+    # No material seeded — item is accepted as pending; finalize is blocked
+    # until material is registered and item resolved.
     r = await auth_client.post("/quotes", json={"kind": "commercial"})
     qid = r.json()["id"]
     files = {"file": ("x.gcode", GCODE_SAMPLE, "application/octet-stream")}
     r = await auth_client.post(
         f"/quotes/{qid}/items", files=files, data={"name": "X", "quantity": "1"}
     )
-    assert r.status_code == 400, r.text
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert body["pending_items"] == 1
+    item = body["items"][0]
+    assert item["material_pending"] is True
+    assert item["pending_material_code"] == "PLA"
+    # finalize must be blocked
+    r = await auth_client.post(f"/quotes/{qid}/transitions/finalize")
+    assert r.status_code == 409
+    # register material and resolve item
+    await auth_client.post(
+        "/materials",
+        json={
+            "material_code": "PLA",
+            "name": "PLA",
+            "density_g_cm3": "1.24",
+            "price_per_kg_ref": "100",
+            "failure_rate_pct": "0",
+        },
+    )
+    item_id = item["id"]
+    r = await auth_client.put(
+        f"/quotes/{qid}/items/{item_id}", json={"material_code": "PLA"}
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["items"][0]["material_pending"] is False
+    assert r.json()["pending_items"] == 0
+    # now finalize succeeds
+    r = await auth_client.post(f"/quotes/{qid}/transitions/finalize")
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "orcado"

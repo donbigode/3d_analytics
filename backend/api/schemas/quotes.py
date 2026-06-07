@@ -27,6 +27,14 @@ class QuoteItemOut(BaseModel):
     gcode_meta: dict
     quantity: int
     subtotal: Decimal
+    material_pending: bool = False
+    pending_material_code: str | None = None
+
+
+class QuoteItemUpdate(BaseModel):
+    name: str | None = None
+    quantity: int | None = None
+    material_code: str | None = None
 
 
 class QuoteServiceOut(BaseModel):
@@ -49,6 +57,7 @@ class QuoteOut(BaseModel):
     services: list[QuoteServiceOut]
     cost: Decimal
     total: Decimal
+    pending_items: int = 0
     created_at: datetime
     finalized_at: datetime | None
     approved_at: datetime | None

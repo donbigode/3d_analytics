@@ -14,7 +14,7 @@ class QuoteItem(Base):
     name: Mapped[str] = mapped_column(String(160), nullable=False)
     filename: Mapped[str] = mapped_column(String(255), nullable=False)
     gcode_meta: Mapped[dict] = mapped_column(JSONB, nullable=False)
-    material_version_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("material_versions.id"), nullable=False)
+    material_version_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("material_versions.id"), nullable=True)
     quantity: Mapped[int] = mapped_column(nullable=False, default=1)
     depreciation_rate_override: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
     failure_rate_override: Mapped[Decimal | None] = mapped_column(Numeric(5, 2))

@@ -6,7 +6,9 @@
   import { handleApiError, requireAuth } from "$lib/guard";
   import type {
     Client,
+    Material,
     Quote,
+    QuoteItem,
     Service,
     Spool,
   } from "$lib/types";
@@ -20,6 +22,20 @@
   let clients: Client[] = [];
   let services: Service[] = [];
   let spools: Spool[] = [];
+  let materials: Material[] = [];
+
+  // resolve pending material modal
+  let resolveItem: QuoteItem | null = null;
+  let resolveCode = "";
+  let resolveError = "";
+  let resolving = false;
+  let showQuickCreateMaterial = false;
+  let qcName = "";
+  let qcDensity = "1.24";
+  let qcPrice = "100";
+  let qcFailure = "5";
+  let qcSubmitting = false;
+  let qcError = "";
 
   // add item form
   let itemFile: FileList | null = null;
@@ -126,10 +142,11 @@
 
   async function loadRefs() {
     try {
-      [clients, services, spools] = await Promise.all([
+      [clients, services, spools, materials] = await Promise.all([
         api<Client[]>("/clients"),
         api<Service[]>("/services"),
         api<Spool[]>("/spools"),
+        api<Material[]>("/materials"),
       ]);
     } catch (err) {
       handleApiError(err);
@@ -207,6 +224,65 @@
       itemError = err instanceof Error ? err.message : "Falha ao adicionar peça.";
     } finally {
       addingItem = false;
+    }
+  }
+
+  function openResolve(it: QuoteItem) {
+    resolveItem = it;
+    resolveCode = it.pending_material_code || it.gcode_meta?.material || "";
+    resolveError = "";
+    showQuickCreateMaterial = false;
+    qcName = resolveCode || "";
+    qcDensity = "1.24";
+    qcPrice = "100";
+    qcFailure = "5";
+    qcError = "";
+  }
+
+  async function confirmResolve() {
+    if (!resolveItem || !resolveCode) return;
+    resolveError = "";
+    resolving = true;
+    try {
+      quote = await api<Quote>(`/quotes/${id}/items/${resolveItem.id}`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ material_code: resolveCode }),
+      });
+      resolveItem = null;
+    } catch (err) {
+      handleApiError(err);
+      resolveError = errorMessage(err, "Falha ao resolver material.");
+    } finally {
+      resolving = false;
+    }
+  }
+
+  async function quickCreateMaterial() {
+    if (!qcName) return;
+    qcError = "";
+    qcSubmitting = true;
+    try {
+      const mv = await api<Material>("/materials", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          material_code: qcName,
+          name: qcName,
+          density_g_cm3: qcDensity,
+          price_per_kg_ref: qcPrice,
+          failure_rate_pct: qcFailure,
+        }),
+      });
+      // refresh local materials list and set resolveCode to the new one
+      materials = [...materials, mv];
+      resolveCode = mv.material_code;
+      showQuickCreateMaterial = false;
+    } catch (err) {
+      handleApiError(err);
+      qcError = errorMessage(err, "Não foi possível criar o material.");
+    } finally {
+      qcSubmitting = false;
     }
   }
 
@@ -409,15 +485,23 @@
             </thead>
             <tbody>
               {#each quote.items as it (it.id)}
-                <tr>
+                <tr class:pending={it.material_pending}>
                   <td>{it.name}</td>
-                  <td class="mono">{it.gcode_meta?.material ?? "—"}</td>
+                  <td class="mono">
+                    {it.gcode_meta?.material ?? "—"}
+                    {#if it.material_pending}
+                      <span class="badge pending">pendente</span>
+                    {/if}
+                  </td>
                   <td class="right mono">{fmtNum(it.gcode_meta?.filament_m, 2)} m</td>
                   <td class="right mono">{fmtDur(it.gcode_meta?.time_s)}</td>
                   <td class="right mono">{it.quantity}</td>
                   <td class="right mono">{fmtMoney(it.subtotal)}</td>
                   {#if isDraft}
                     <td class="right">
+                      {#if it.material_pending}
+                        <button class="tiny" on:click={() => openResolve(it)}>resolver</button>
+                      {/if}
                       <button class="tiny danger" on:click={() => removeItem(it.id)}>remover</button>
                     </td>
                   {/if}
@@ -567,10 +651,14 @@
           {#if isDraft}
             <button
               on:click={() => transition("finalize")}
-              disabled={transitioning === "finalize" || quote.items.length === 0}
+              disabled={transitioning === "finalize" || quote.items.length === 0 || (quote.pending_items ?? 0) > 0}
+              title={(quote.pending_items ?? 0) > 0 ? `Resolva ${quote.pending_items} peça(s) com material pendente antes de finalizar` : ""}
             >
               {transitioning === "finalize" ? "Finalizando…" : "Finalizar"}
             </button>
+            {#if (quote.pending_items ?? 0) > 0}
+              <p class="hint warn">⚠ {quote.pending_items} peça(s) com material pendente</p>
+            {/if}
           {/if}
           {#if quote.kind === "commercial" && quote.status === "orcado"}
             <button on:click={() => transition("approve")} disabled={transitioning === "approve"}>
@@ -607,6 +695,70 @@
         </dl>
       </section>
     </aside>
+  </div>
+{/if}
+
+{#if resolveItem}
+  <div class="modal-backdrop" on:click|self={() => (resolveItem = null)}>
+    <div class="modal">
+      <h2>Resolver material pendente</h2>
+      <p class="dim">
+        O gcode declara material <strong class="mono">{resolveItem.pending_material_code ?? "?"}</strong>,
+        que ainda não está cadastrado. Escolha um material existente ou crie um novo agora.
+      </p>
+      {#if resolveError}<div class="alert">{resolveError}</div>{/if}
+
+      {#if !showQuickCreateMaterial}
+        <label class="field">
+          Material
+          <select bind:value={resolveCode}>
+            <option value="">— escolher —</option>
+            {#each materials as m}
+              <option value={m.material_code}>{m.name} ({m.material_code})</option>
+            {/each}
+          </select>
+        </label>
+        <p class="hint">
+          Não está na lista? <button class="link" type="button" on:click={() => (showQuickCreateMaterial = true)}>Cadastrar {resolveItem.pending_material_code ?? "novo material"}</button>
+        </p>
+        <div class="modal-actions">
+          <button class="ghost" on:click={() => (resolveItem = null)} disabled={resolving}>
+            Cancelar
+          </button>
+          <button on:click={confirmResolve} disabled={resolving || !resolveCode}>
+            {resolving ? "Salvando…" : "Aplicar"}
+          </button>
+        </div>
+      {:else}
+        <div class="form-grid">
+          <label class="field">
+            Código
+            <input bind:value={qcName} placeholder="ex: PETG-CF" required />
+          </label>
+          <label class="field">
+            Densidade (g/cm³)
+            <input type="number" step="0.001" bind:value={qcDensity} required />
+          </label>
+          <label class="field">
+            Preço por kg (R$)
+            <input type="number" step="0.01" bind:value={qcPrice} required />
+          </label>
+          <label class="field">
+            Taxa de falha (%)
+            <input type="number" step="0.01" bind:value={qcFailure} required />
+          </label>
+        </div>
+        {#if qcError}<div class="alert">{qcError}</div>{/if}
+        <div class="modal-actions">
+          <button class="ghost" on:click={() => (showQuickCreateMaterial = false)} disabled={qcSubmitting}>
+            Voltar
+          </button>
+          <button on:click={quickCreateMaterial} disabled={qcSubmitting || !qcName}>
+            {qcSubmitting ? "Criando…" : "Cadastrar"}
+          </button>
+        </div>
+      {/if}
+    </div>
   </div>
 {/if}
 
@@ -732,6 +884,30 @@
     font-size: 0.74rem;
     letter-spacing: 0.16em;
     text-transform: uppercase;
+  }
+  tr.pending td { background: rgba(245, 158, 11, 0.08); }
+  .badge.pending {
+    display: inline-block;
+    margin-left: 0.4rem;
+    padding: 0.05rem 0.4rem;
+    border-radius: 999px;
+    background: #fef3c7;
+    color: #92400e;
+    font-size: 0.7em;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    font-weight: 600;
+  }
+  .hint.warn { color: #92400e; font-size: 0.85em; margin: 0.25rem 0 0; }
+  .hint { color: #6b7280; font-size: 0.85em; }
+  button.link {
+    background: none;
+    border: none;
+    padding: 0;
+    color: var(--brand, #111827);
+    text-decoration: underline;
+    cursor: pointer;
+    font-size: inherit;
   }
   .item-form, .svc-form {
     grid-template-columns: 2fr 2fr 1fr;

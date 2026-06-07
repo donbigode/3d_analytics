@@ -6,7 +6,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import Response
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.api.deps import db_session, require_user
@@ -14,6 +14,7 @@ from backend.api.schemas.quotes import (
     ProduceRequest,
     QuoteCreate,
     QuoteItemOut,
+    QuoteItemUpdate,
     QuoteOut,
     QuoteServiceOut,
     QuoteUpdate,
@@ -81,8 +82,13 @@ async def _get_settings_row(session: AsyncSession) -> Settings:
 
 async def _build_item_input(
     session: AsyncSession, it: QuoteItem, settings_row: Settings
-) -> ItemInput:
+) -> ItemInput | None:
+    """Return ItemInput for cost calc, or None if the item has no resolved material (pending)."""
+    if not it.material_version_id:
+        return None
     mv = await session.get(MaterialVersion, it.material_version_id)
+    if not mv:
+        return None
     deprec = it.depreciation_rate_override or settings_row.printer_depreciation_per_hour
     failure = it.failure_rate_override or mv.failure_rate_pct
     meta = GcodeMeta(
@@ -110,10 +116,15 @@ async def _quote_out(session: AsyncSession, q: Quote) -> QuoteOut:
 
     item_inputs: list[ItemInput] = []
     item_subtotals: list[Decimal] = []
+    pending_items = 0
     for it in items:
         ii = await _build_item_input(session, it, s)
-        item_inputs.append(ii)
-        item_subtotals.append(compute_item_cost(ii))
+        if ii is None:
+            pending_items += 1
+            item_subtotals.append(Decimal("0"))
+        else:
+            item_inputs.append(ii)
+            item_subtotals.append(compute_item_cost(ii))
 
     service_lines = [
         ServiceLine(quantity=sv.quantity, rate=sv.rate, is_material=False)
@@ -137,6 +148,10 @@ async def _quote_out(session: AsyncSession, q: Quote) -> QuoteOut:
             gcode_meta=it.gcode_meta,
             quantity=it.quantity,
             subtotal=item_subtotals[idx].quantize(Decimal("0.01")),
+            material_pending=(it.material_version_id is None),
+            pending_material_code=(
+                (it.gcode_meta.get("material") if it.material_version_id is None else None)
+            ),
         )
         for idx, it in enumerate(items)
     ]
@@ -163,6 +178,7 @@ async def _quote_out(session: AsyncSession, q: Quote) -> QuoteOut:
         services=services_out,
         cost=cost.quantize(Decimal("0.01")),
         total=total.quantize(Decimal("0.01")),
+        pending_items=pending_items,
         created_at=q.created_at,
         finalized_at=q.finalized_at,
         approved_at=q.approved_at,
@@ -276,8 +292,9 @@ async def add_item(
 
     material_code = meta.material or "PLA"
     mv = await material_repo.current(session, material_code)
-    if not mv:
-        raise HTTPException(400, f"material {material_code} not registered")
+    # If material not registered, item is accepted with material_version_id=NULL
+    # (pending). User can resolve via PUT /quotes/{id}/items/{item_id} after
+    # registering the material. Finalize is blocked while there are pending items.
 
     rel_path = save_gcode(q.id, file.filename or "upload.gcode", content)
     item = QuoteItem(
@@ -290,12 +307,48 @@ async def add_item(
             "material": meta.material,
             "machine": meta.machine,
         },
-        material_version_id=mv.id,
+        material_version_id=mv.id if mv else None,
         quantity=quantity,
     )
     session.add(item)
     await session.commit()
     await session.refresh(q)
+    return await _quote_out(session, q)
+
+
+@router.put("/{quote_id}/items/{item_id}", response_model=QuoteOut)
+async def update_item(
+    quote_id: UUID,
+    item_id: UUID,
+    payload: QuoteItemUpdate,
+    _: User = Depends(require_user),
+    session: AsyncSession = Depends(db_session),
+):
+    q = await session.get(Quote, quote_id)
+    if not q:
+        raise HTTPException(404)
+    if q.status != QuoteStatus.DRAFT:
+        raise HTTPException(409, "quote not editable")
+    it = await session.get(QuoteItem, item_id)
+    if not it or it.quote_id != quote_id:
+        raise HTTPException(404)
+    if payload.name is not None:
+        it.name = payload.name
+    if payload.quantity is not None:
+        if payload.quantity < 1:
+            raise HTTPException(400, "quantity must be >= 1")
+        it.quantity = payload.quantity
+    if payload.material_code is not None:
+        mv = await material_repo.current(session, payload.material_code)
+        if not mv:
+            raise HTTPException(400, f"material {payload.material_code} not registered")
+        it.material_version_id = mv.id
+        # also update gcode_meta.material to reflect the chosen code, so the
+        # next time the user looks at the item the badge is gone
+        meta = dict(it.gcode_meta or {})
+        meta["material"] = payload.material_code
+        it.gcode_meta = meta
+    await session.commit()
     return await _quote_out(session, q)
 
 
@@ -382,6 +435,27 @@ async def t_finalize(
         raise HTTPException(404)
     if q.status != QuoteStatus.DRAFT:
         raise HTTPException(409, "quote is not in draft")
+    pending = await session.scalar(
+        select(func.count(QuoteItem.id)).where(
+            QuoteItem.quote_id == q.id,
+            QuoteItem.material_version_id.is_(None),
+        )
+    )
+    if pending and pending > 0:
+        codes = await session.execute(
+            select(QuoteItem.gcode_meta).where(
+                QuoteItem.quote_id == q.id,
+                QuoteItem.material_version_id.is_(None),
+            )
+        )
+        pending_codes = {
+            (m or {}).get("material") or "?" for m in codes.scalars()
+        }
+        raise HTTPException(
+            409,
+            f"there are {pending} item(s) with unregistered materials: "
+            f"{', '.join(sorted(pending_codes))}. Register them and resolve each item before finalizing.",
+        )
     q.finalized_at = _now()
     if q.kind == QuoteKind.PERSONAL:
         q.status = QuoteStatus.PRODUZIDO
@@ -509,8 +583,11 @@ async def get_pdf(
     item_subtotals: list[Decimal] = []
     for it in items:
         ii = await _build_item_input(session, it, s)
-        item_inputs.append(ii)
-        item_subtotals.append(compute_item_cost(ii))
+        if ii is None:
+            item_subtotals.append(Decimal("0"))
+        else:
+            item_inputs.append(ii)
+            item_subtotals.append(compute_item_cost(ii))
     service_lines = [
         ServiceLine(quantity=sv.quantity, rate=sv.rate, is_material=False)
         for sv in services

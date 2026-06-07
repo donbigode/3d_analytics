@@ -68,6 +68,8 @@ export type QuoteItem = {
   };
   quantity: number;
   subtotal: number | string;
+  material_pending?: boolean;
+  pending_material_code?: string | null;
 };
 
 export type QuoteServiceLine = {
@@ -90,6 +92,7 @@ export type Quote = {
   services: QuoteServiceLine[];
   cost: number | string;
   total: number | string;
+  pending_items?: number;
   created_at: string;
   finalized_at: string | null;
   approved_at: string | null;
