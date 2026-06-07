@@ -29,6 +29,7 @@ services:
     volumes:
       - ./backend:/app/backend
       - ./migrations:/app/migrations
+      - ./pyproject.toml:/app/pyproject.toml
       - storage:/data/storage
       - watch:/data/watch
     ports:
