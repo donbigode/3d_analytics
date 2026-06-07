@@ -1,0 +1,40 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: app
+      POSTGRES_DB: app
+    volumes:
+      - dbdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+asyncpg://app:app@db:5432/app
+      SESSION_SECRET: dev-secret-change-me
+      WATCH_DIR: /data/watch
+      STORAGE_DIR: /data/storage
+      CORS_ORIGINS: "http://localhost:5173,http://localhost:8000"
+    volumes:
+      - ./backend:/app/backend
+      - ./migrations:/app/migrations
+      - storage:/data/storage
+      - watch:/data/watch
+    ports:
+      - "8000:8000"
+
+volumes:
+  dbdata:
+  storage:
+  watch:
