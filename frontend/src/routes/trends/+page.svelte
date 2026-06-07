@@ -2,12 +2,25 @@
   import { onMount } from "svelte";
   import { api, errorMessage } from "$lib/api";
   import { handleApiError, requireAuth } from "$lib/guard";
-  import type { KeywordIdea, RankingRow, SparkPoint } from "$lib/types";
+  import type {
+    KeywordIdea,
+    LLMSuggestion,
+    RankingRow,
+    SourceMetric,
+    SourceMetricsOut,
+    SparkPoint,
+  } from "$lib/types";
 
   let ideas: KeywordIdea[] = [];
   let ranking: RankingRow[] = [];
+  let sources: SourceMetric[] = [];
+  let suggestions: LLMSuggestion[] = [];
   let loading = true;
   let listError = "";
+
+  let llmRefreshing = false;
+  let llmBanner = "";
+  let actingSuggestion: string | null = null;
 
   // create form
   let newTerm = "";
@@ -25,12 +38,16 @@
     loading = true;
     listError = "";
     try {
-      const [i, r] = await Promise.all([
+      const [i, r, s, su] = await Promise.all([
         api<KeywordIdea[]>("/trends/ideas"),
         api<RankingRow[]>("/trends/ranking"),
+        api<SourceMetricsOut>("/trends/sources"),
+        api<LLMSuggestion[]>("/trends/suggestions?status=pending"),
       ]);
       ideas = i;
       ranking = r;
+      sources = s.sources;
+      suggestions = su;
     } catch (err) {
       handleApiError(err);
       listError = errorMessage(err, "Falha ao carregar tendências.");
@@ -91,6 +108,72 @@
     }
   }
 
+  async function llmRefreshNow() {
+    llmRefreshing = true;
+    llmBanner = "";
+    try {
+      const res = await api<{ status: string; items_created: number; error: string | null }>(
+        "/trends/llm-refresh",
+        { method: "POST" },
+      );
+      llmBanner = res.status === "error"
+        ? `Falhou: ${res.error}`
+        : `LLM gerou ${res.items_created} sugest${res.items_created === 1 ? "ão" : "ões"}.`;
+      await load();
+    } catch (err) {
+      handleApiError(err);
+      llmBanner = errorMessage(err, "Falha na coleta LLM.");
+    } finally {
+      llmRefreshing = false;
+    }
+  }
+
+  async function promoteSuggestion(id: string) {
+    actingSuggestion = id;
+    try {
+      await api(`/trends/suggestions/${id}/promote`, { method: "POST" });
+      await load();
+    } catch (err) {
+      handleApiError(err);
+      listError = errorMessage(err, "Falha ao promover sugestão.");
+    } finally {
+      actingSuggestion = null;
+    }
+  }
+
+  async function dismissSuggestion(id: string) {
+    actingSuggestion = id;
+    try {
+      await api(`/trends/suggestions/${id}/dismiss`, { method: "POST" });
+      await load();
+    } catch (err) {
+      handleApiError(err);
+      listError = errorMessage(err, "Falha ao descartar sugestão.");
+    } finally {
+      actingSuggestion = null;
+    }
+  }
+
+  function fmtRelative(s: string | null): string {
+    if (!s) return "—";
+    const t = new Date(s).getTime();
+    const diff = Math.max(0, Date.now() - t);
+    if (diff < 60_000) return "agora";
+    if (diff < 3600_000) return `há ${Math.floor(diff / 60_000)}min`;
+    if (diff < 86400_000) return `há ${Math.floor(diff / 3600_000)}h`;
+    return `há ${Math.floor(diff / 86400_000)}d`;
+  }
+
+  function sourceLabel(s: string): string {
+    return ({
+      google_trends: "Google Trends",
+      mercadolivre: "Mercado Livre",
+      anthropic: "Anthropic Claude",
+      gemini: "Google Gemini",
+      llm: "Coleta LLM (job)",
+    } as Record<string, string>)[s] || s;
+  }
+
   function num(v: number | string | null | undefined): number | null {
     if (v === null || v === undefined) return null;
     const n = typeof v === "string" ? parseFloat(v) : v;
@@ -147,6 +230,80 @@
 
 {#if listError}<div class="banner alert">{listError}</div>{/if}
 {#if refreshBanner}<div class="banner ok">{refreshBanner}</div>{/if}
+{#if llmBanner}<div class="banner ok">{llmBanner}</div>{/if}
+
+<section class="panel sources-panel">
+  <div class="panel-head">
+    <div class="heading">
+      <span class="page-eyebrow">Fontes de dados</span>
+      <h2 class="form-title">Status das integrações</h2>
+    </div>
+    <a class="tiny ghost" href="/config">Gerenciar chaves →</a>
+  </div>
+  <div class="source-grid">
+    {#each sources as src (src.source)}
+      <article class="src" class:off={!src.enabled}>
+        <header>
+          <span class="src-name">{sourceLabel(src.source)}</span>
+          <span class="dot" class:on={src.enabled} aria-hidden="true"></span>
+        </header>
+        <dl>
+          <dt>Última</dt>
+          <dd class="mono">
+            {fmtRelative(src.last_run_at)}
+            {#if src.last_status}<span class="status-tag {src.last_status}">{src.last_status}</span>{/if}
+          </dd>
+          <dt>Itens 24h</dt>
+          <dd class="mono">{src.items_created_24h}</dd>
+          <dt>Execuções 24h</dt>
+          <dd class="mono">{src.runs_24h}</dd>
+          <dt>Erros 7d</dt>
+          <dd class="mono">{src.errors_7d}</dd>
+        </dl>
+      </article>
+    {/each}
+  </div>
+</section>
+
+{#if suggestions.length > 0 || llmBanner}
+  <section class="panel">
+    <div class="panel-head">
+      <div class="heading">
+        <span class="page-eyebrow">Inbox de sugestões</span>
+        <h2 class="form-title">Sugestões do LLM ({suggestions.length} pendentes)</h2>
+      </div>
+      <button class="tiny ghost" on:click={llmRefreshNow} disabled={llmRefreshing}>
+        {llmRefreshing ? "Coletando…" : "Coletar agora"}
+      </button>
+    </div>
+    {#if suggestions.length === 0}
+      <p class="empty">Nenhuma sugestão pendente. Auto-promovidas viraram termos direto.</p>
+    {:else}
+      <div class="suggestion-list">
+        {#each suggestions as s (s.id)}
+          <article class="suggestion">
+            <header>
+              <strong>{s.term}</strong>
+              <span class="mono provider">{s.provider}</span>
+            </header>
+            {#if s.rationale}<p class="rationale">{s.rationale}</p>{/if}
+            <footer>
+              <span class="mono recurrence">recorrência {Number(s.recurrence_score).toFixed(2)}</span>
+              <div class="actions">
+                <button class="tiny ghost" on:click={() => dismissSuggestion(s.id)} disabled={actingSuggestion === s.id}>
+                  Descartar
+                </button>
+                <button class="tiny" on:click={() => promoteSuggestion(s.id)} disabled={actingSuggestion === s.id}>
+                  {actingSuggestion === s.id ? "Promovendo…" : "Adicionar ao radar"}
+                </button>
+              </div>
+            </footer>
+          </article>
+        {/each}
+      </div>
+    {/if}
+  </section>
+{/if}
 
 <section class="panel">
   <div class="panel-head">
@@ -369,5 +526,112 @@
     .rank-head { grid-template-columns: 32px 1fr 28px; gap: 0.6rem; }
     .spark, .metrics { grid-column: 1 / -1; }
     .metrics { padding-left: 44px; }
+  }
+
+  /* --------- sources panel --------- */
+  .sources-panel { margin-bottom: 1.5rem; }
+  .source-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 0.7rem;
+    margin-top: 0.6rem;
+  }
+  .src {
+    border: 1px solid var(--line);
+    padding: 0.7rem 0.9rem;
+    background: var(--paper);
+  }
+  .src.off { opacity: 0.55; }
+  .src header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 0.4rem;
+  }
+  .src-name {
+    font-family: var(--font-display);
+    font-weight: 500;
+    font-size: 0.95rem;
+    letter-spacing: -0.005em;
+  }
+  .dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--muted);
+  }
+  .dot.on { background: var(--ok); }
+  .src dl {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0.18rem 0.7rem;
+    margin: 0;
+  }
+  .src dt {
+    font-family: var(--font-mono);
+    font-size: 0.62rem;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  .src dd { margin: 0; font-size: 0.78rem; }
+  .status-tag {
+    margin-left: 0.4rem;
+    font-family: var(--font-mono);
+    font-size: 0.6rem;
+    padding: 0.05rem 0.3rem;
+    border: 1px solid var(--line-strong);
+  }
+  .status-tag.success { color: var(--ok); border-color: var(--ok); }
+  .status-tag.error { color: var(--danger); border-color: var(--danger); }
+  .status-tag.running { color: var(--brand); border-color: var(--brand); }
+
+  /* --------- suggestions --------- */
+  .suggestion-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    margin-top: 0.5rem;
+  }
+  .suggestion {
+    border: 1px solid var(--line-strong);
+    padding: 0.85rem 1rem;
+    background: var(--paper);
+  }
+  .suggestion header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.6rem;
+  }
+  .suggestion strong {
+    font-family: var(--font-display);
+    font-weight: 500;
+    font-size: 1.05rem;
+  }
+  .suggestion .provider {
+    font-size: 0.62rem;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--muted);
+    border: 1px solid var(--line);
+    padding: 0.05rem 0.35rem;
+  }
+  .rationale {
+    color: var(--muted);
+    font-size: 0.88rem;
+    margin: 0.35rem 0 0.5rem;
+  }
+  .suggestion footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-top: 1px dashed var(--line);
+    padding-top: 0.5rem;
+    margin-top: 0.3rem;
+  }
+  .recurrence {
+    font-size: 0.7rem;
+    color: var(--muted);
+    letter-spacing: 0.06em;
   }
 </style>

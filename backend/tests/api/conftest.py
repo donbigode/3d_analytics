@@ -20,8 +20,10 @@ from backend.infra.db import session as session_module
 from backend.infra.db.models import (
     CalibrationInsight,
     Client,
+    DataSourceRun,
     KeywordIdea,
     KeywordObservation,
+    LLMSuggestion,
     MaterialConsumption,
     MaterialVersion,
     Quote,
@@ -69,8 +71,10 @@ async def _isolated_engine_api(test_database_url):
                     Service.__table__,
                     MaterialVersion.__table__,
                     Client.__table__,
+                    LLMSuggestion.__table__,  # FK to KeywordIdea — delete first
                     KeywordObservation.__table__,
                     KeywordIdea.__table__,
+                    DataSourceRun.__table__,
                     User.__table__,
                     Settings.__table__,
                     CalibrationInsight.__table__,

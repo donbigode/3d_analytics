@@ -223,6 +223,30 @@ export type TopListing = {
   permalink: string | null;
 };
 
+export type LLMSuggestion = {
+  id: string;
+  term: string;
+  rationale: string | null;
+  provider: string;
+  recurrence_score: number | string;
+  status: "pending" | "promoted" | "auto_promoted" | "dismissed" | "expired";
+  promoted_keyword_id: string | null;
+  suggested_at: string;
+};
+
+export type SourceMetric = {
+  source: string;
+  enabled: boolean;
+  last_run_at: string | null;
+  last_status: string | null;
+  runs_24h: number;
+  items_created_24h: number;
+  errors_7d: number;
+  avg_duration_ms_7d: number | null;
+};
+
+export type SourceMetricsOut = { sources: SourceMetric[] };
+
 export type RankingRow = {
   id: string;
   term: string;

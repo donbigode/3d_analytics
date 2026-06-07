@@ -19,3 +19,12 @@ class Settings(Base):
     stalled_quote_alert_days: Mapped[int] = mapped_column(Integer, nullable=False, default=7)
     low_spool_threshold_g: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False, default=Decimal("100"))
     printer_hours_per_day: Mapped[int] = mapped_column(Integer, nullable=False, default=22)
+
+    # LLM provider configuration (used by the trend radar to generate keyword
+    # suggestions). API keys are stored in plaintext on the singleton row —
+    # this DB isn't multi-tenant and the keys are needed in plaintext at call
+    # time. GET /settings masks them in the response.
+    anthropic_api_key: Mapped[str | None] = mapped_column(String(200))
+    gemini_api_key: Mapped[str | None] = mapped_column(String(200))
+    preferred_llm_provider: Mapped[str] = mapped_column(String(20), nullable=False, default="anthropic")
+    llm_suggestions_enabled: Mapped[bool] = mapped_column(default=False, nullable=False)
