@@ -12,6 +12,7 @@ class SettingsIn(BaseModel):
     brand_color_primary: str | None = None
     stalled_quote_alert_days: int | None = None
     low_spool_threshold_g: Decimal | None = None
+    printer_hours_per_day: int | None = None
 
 
 class SettingsOut(BaseModel):
@@ -25,3 +26,4 @@ class SettingsOut(BaseModel):
     brand_color_primary: str
     stalled_quote_alert_days: int
     low_spool_threshold_g: Decimal
+    printer_hours_per_day: int

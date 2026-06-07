@@ -20,9 +20,16 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    # TODO(W5 F2): typically adds settings.printer_hours_per_day (INT, default 22).
-    pass
+    op.add_column(
+        'settings',
+        sa.Column(
+            'printer_hours_per_day',
+            sa.Integer(),
+            nullable=False,
+            server_default='22',
+        ),
+    )
 
 
 def downgrade() -> None:
-    pass
+    op.drop_column('settings', 'printer_hours_per_day')

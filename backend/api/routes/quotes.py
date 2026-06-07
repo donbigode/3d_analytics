@@ -76,6 +76,7 @@ async def _get_settings_row(session: AsyncSession) -> Settings:
             brand_color_primary="#111827",
             stalled_quote_alert_days=7,
             low_spool_threshold_g=Decimal("100"),
+            printer_hours_per_day=22,
         )
     return s
 

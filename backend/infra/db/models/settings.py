@@ -18,3 +18,4 @@ class Settings(Base):
     brand_color_primary: Mapped[str] = mapped_column(String(9), nullable=False, default="#111827")
     stalled_quote_alert_days: Mapped[int] = mapped_column(Integer, nullable=False, default=7)
     low_spool_threshold_g: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False, default=Decimal("100"))
+    printer_hours_per_day: Mapped[int] = mapped_column(Integer, nullable=False, default=22)

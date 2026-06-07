@@ -11,6 +11,7 @@ class AppSettings(BaseSettings):
     cors_origins: str = "http://localhost:5173"
     pwd_argon2_time_cost: int = 2
     pwd_argon2_memory_cost: int = 65536
+    trends_enabled: bool = False
 
 
 def get_settings() -> AppSettings:

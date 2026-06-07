@@ -1,4 +1,7 @@
+from backend.infra.db.models.calibration_insight import CalibrationInsight
 from backend.infra.db.models.client import Client
+from backend.infra.db.models.keyword_idea import KeywordIdea
+from backend.infra.db.models.keyword_observation import KeywordObservation
 from backend.infra.db.models.material import MaterialVersion
 from backend.infra.db.models.material_consumption import MaterialConsumption
 from backend.infra.db.models.quote import Quote
@@ -11,6 +14,8 @@ from backend.infra.db.models.user import User
 from backend.infra.db.models.watcher_inbox_file import WatcherInboxFile
 
 __all__ = [
-    "Client", "MaterialVersion", "MaterialConsumption", "Quote", "QuoteItem",
-    "QuoteService", "Service", "Settings", "Spool", "User", "WatcherInboxFile",
+    "CalibrationInsight", "Client", "KeywordIdea", "KeywordObservation",
+    "MaterialVersion", "MaterialConsumption",
+    "Quote", "QuoteItem", "QuoteService", "Service", "Settings", "Spool",
+    "User", "WatcherInboxFile",
 ]

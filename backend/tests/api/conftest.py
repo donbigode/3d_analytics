@@ -18,7 +18,10 @@ from backend.app import app
 from backend.core.security import hash_password
 from backend.infra.db import session as session_module
 from backend.infra.db.models import (
+    CalibrationInsight,
     Client,
+    KeywordIdea,
+    KeywordObservation,
     MaterialConsumption,
     MaterialVersion,
     Quote,
@@ -66,8 +69,11 @@ async def _isolated_engine_api(test_database_url):
                     Service.__table__,
                     MaterialVersion.__table__,
                     Client.__table__,
+                    KeywordObservation.__table__,
+                    KeywordIdea.__table__,
                     User.__table__,
                     Settings.__table__,
+                    CalibrationInsight.__table__,
                 ):
                     await s.execute(table.delete())
                 await s.commit()

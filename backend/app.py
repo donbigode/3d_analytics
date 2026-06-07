@@ -41,3 +41,11 @@ async def _startup_watcher() -> None:
     s = get_settings()
     if s.watch_dir:
         app.state.watcher_task = start_background_task(s.watch_dir)
+
+
+@app.on_event("startup")
+async def _startup_trends() -> None:
+    from backend.infra.scheduler.trends import start_background_task as start_trends
+    s = get_settings()
+    if s.trends_enabled:
+        app.state.trends_task = start_trends()

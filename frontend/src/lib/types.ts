@@ -140,6 +140,31 @@ export type DashboardOut = {
   };
 };
 
+export type CalibrationScopeKind = "material_failure" | "material_price";
+export type CalibrationInsightStatus = "open" | "applied" | "dismissed";
+
+export type CalibrationInsight = {
+  id: string;
+  scope_kind: CalibrationScopeKind;
+  scope_ref: string;
+  observed_value: number | string;
+  current_value: number | string;
+  suggested_value: number | string;
+  delta_pct: number | string;
+  sample_size: number;
+  status: CalibrationInsightStatus;
+  computed_at: string;
+};
+
+export type CalibrationInsightApplyResult = {
+  id: string;
+  status: CalibrationInsightStatus;
+  material_code: string;
+  field: string;
+  previous_value: number | string;
+  new_value: number | string;
+};
+
 export type Settings = {
   energy_kwh_price: number | string;
   printer_power_w: number | string;
@@ -151,4 +176,60 @@ export type Settings = {
   brand_color_primary: string;
   stalled_quote_alert_days: number;
   low_spool_threshold_g: number | string;
+  printer_hours_per_day?: number;
+};
+
+export type ForecastJob = {
+  quote_id: string;
+  name: string;
+  hours: number | string;
+  eta: string;
+};
+
+export type ForecastOut = {
+  hours_per_day: number | string;
+  queue_hours: number | string;
+  queue_jobs: number;
+  days_until_clear: number;
+  next_available_at: string;
+  jobs: ForecastJob[];
+};
+
+export type QuoteEtaOut = {
+  quote_id: string;
+  in_queue: boolean;
+  position: number | null;
+  hours: number | string;
+  eta: string | null;
+  next_available_at: string;
+};
+
+export type KeywordIdea = {
+  id: string;
+  term: string;
+  notes: string | null;
+  created_at: string;
+};
+
+export type SparkPoint = {
+  taken_at: string;
+  value: number | string;
+};
+
+export type TopListing = {
+  title: string;
+  price: number | null;
+  sold: number;
+  permalink: string | null;
+};
+
+export type RankingRow = {
+  id: string;
+  term: string;
+  score: number | string;
+  interest: number | string | null;
+  ml_volume: number | string | null;
+  ml_avg_price: number | string | null;
+  sparkline: SparkPoint[];
+  top_listings: TopListing[];
 };
