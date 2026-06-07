@@ -26,6 +26,7 @@ from backend.infra.db.models import (
     Settings,
     Spool,
     User,
+    WatcherInboxFile,
 )
 from backend.settings import get_settings
 
@@ -49,6 +50,7 @@ async def _isolated_engine_api():
                     MaterialConsumption.__table__,
                     QuoteService.__table__,
                     QuoteItem.__table__,
+                    WatcherInboxFile.__table__,
                     Quote.__table__,
                     Spool.__table__,
                     Service.__table__,

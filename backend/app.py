@@ -6,6 +6,7 @@ from backend.api.routes import (
     auth, users, clients, materials, services, spools,
     settings as settings_routes, quotes, dashboard, inbox, health,
 )
+from backend.infra.watcher.runner import start_background_task
 
 settings = get_settings()
 app = FastAPI(title="3D Analytics", version="0.1.0")
@@ -29,3 +30,10 @@ app.include_router(settings_routes.router, prefix="/settings", tags=["settings"]
 app.include_router(quotes.router, prefix="/quotes", tags=["quotes"])
 app.include_router(dashboard.router, prefix="/dashboard", tags=["dashboard"])
 app.include_router(inbox.router, prefix="/inbox", tags=["inbox"])
+
+
+@app.on_event("startup")
+async def _startup_watcher() -> None:
+    s = get_settings()
+    if s.watch_dir:
+        app.state.watcher_task = start_background_task(s.watch_dir)
