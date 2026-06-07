@@ -1,4 +1,4 @@
-.PHONY: up up-db down logs test test-fast lint shell create-user seed migrate e2e e2e-install fe-install fe-build fe-dev
+.PHONY: up up-db down logs restart-api test test-fast lint shell create-user seed migrate e2e e2e-install fe-install fe-build fe-dev
 
 up:
 	docker compose up -d --build
@@ -11,6 +11,12 @@ down:
 
 logs:
 	docker compose logs -f api
+
+# Restart just the api container. With --reload in compose this is now rare,
+# but useful when you change pyproject.toml (new deps require image rebuild)
+# or compose-level config.
+restart-api:
+	docker compose restart api
 
 test:
 	docker compose run --rm api pytest -v

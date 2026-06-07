@@ -26,6 +26,9 @@ services:
       WATCH_DIR: /data/watch
       STORAGE_DIR: /data/storage
       CORS_ORIGINS: "http://localhost:5173,http://localhost:8000"
+      # Docker Desktop on macOS doesn't reliably forward inotify events
+      # over bind mounts; polling makes uvicorn --reload work in this setup.
+      WATCHFILES_FORCE_POLLING: "true"
     volumes:
       - ./backend:/app/backend
       - ./migrations:/app/migrations
@@ -34,6 +37,9 @@ services:
       - watch:/data/watch
     ports:
       - "8000:8000"
+    # dev: hot-reload on backend/ + migrations/ changes. In prod, override
+    # this command to drop --reload.
+    command: ["sh", "-c", "alembic upgrade head && uvicorn backend.app:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/backend --reload-dir /app/migrations"]
 
 volumes:
   dbdata:
