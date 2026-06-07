@@ -92,6 +92,7 @@ class SourceMetric(BaseModel):
     enabled: bool
     last_run_at: datetime | None
     last_status: str | None
+    last_error: str | None
     runs_24h: int
     items_created_24h: int
     errors_7d: int

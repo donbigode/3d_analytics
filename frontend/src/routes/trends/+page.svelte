@@ -344,6 +344,9 @@
           <dt>Erros 7d</dt>
           <dd class="mono">{src.errors_7d}</dd>
         </dl>
+        {#if src.last_error}
+          <p class="src-error" title={src.last_error}>{src.last_error}</p>
+        {/if}
       </article>
     {/each}
   </div>
@@ -693,6 +696,21 @@
   .status-tag.success { color: var(--ok); border-color: var(--ok); }
   .status-tag.error { color: var(--danger); border-color: var(--danger); }
   .status-tag.running { color: var(--brand); border-color: var(--brand); }
+  .src-error {
+    margin: 0.5rem 0 0;
+    padding: 0.35rem 0.5rem;
+    border: 1px solid var(--danger);
+    border-left-width: 3px;
+    background: #fff1f0;
+    color: var(--danger);
+    font-size: 0.72rem;
+    line-height: 1.3;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+  }
 
   /* --------- suggestions --------- */
   .suggestion-list {

@@ -240,6 +240,7 @@ export type SourceMetric = {
   enabled: boolean;
   last_run_at: string | null;
   last_status: string | null;
+  last_error: string | null;
   runs_24h: number;
   items_created_24h: number;
   errors_7d: number;

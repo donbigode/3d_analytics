@@ -25,14 +25,17 @@ class SuggestionCandidate:
 class LLMProvider(Protocol):
     """Provider contract.
 
-    Implementations must be safe to call from async code (use ``asyncio.to_thread``
-    if the underlying SDK is sync) and must NOT raise on transient errors — they
-    return empty lists and let the caller log via DataSourceRun.
+    Implementations are safe from async code (use ``asyncio.to_thread`` if the
+    underlying SDK is sync) and never raise. They return a tuple of
+    ``(candidates, error)`` — when ``error`` is not None, the scheduler logs a
+    failed DataSourceRun with that message instead of pretending success.
     """
 
     name: str
 
-    async def suggest_trends(self, *, locale: str = "pt-BR", count: int = 10) -> list[SuggestionCandidate]:
+    async def suggest_trends(
+        self, *, locale: str = "pt-BR", count: int = 10
+    ) -> tuple[list[SuggestionCandidate], str | None]:
         ...
 
     async def synthesize_narrative(self, *, observations_summary: str) -> str | None:

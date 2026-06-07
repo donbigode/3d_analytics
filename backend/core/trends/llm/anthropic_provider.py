@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 class AnthropicProvider(LLMProvider):
     name = "anthropic"
 
-    def __init__(self, api_key: str, model: str = "claude-sonnet-4-6") -> None:
+    def __init__(self, api_key: str, model: str = "claude-haiku-4-5-20251001") -> None:
         from anthropic import Anthropic  # imported lazily so tests w/o key don't break
 
         self._client = Anthropic(api_key=api_key)
@@ -27,7 +27,7 @@ class AnthropicProvider(LLMProvider):
 
     async def suggest_trends(
         self, *, locale: str = "pt-BR", count: int = 10
-    ) -> list[SuggestionCandidate]:
+    ) -> tuple[list[SuggestionCandidate], str | None]:
         user = SUGGEST_USER_TEMPLATE.format(count=count)
         try:
             resp = await asyncio.to_thread(
@@ -38,11 +38,15 @@ class AnthropicProvider(LLMProvider):
                 messages=[{"role": "user", "content": user}],
             )
         except Exception as e:  # noqa: BLE001
-            logger.warning("anthropic.suggest_trends failed: %s", e)
-            return []
+            msg = _short_error("anthropic", e)
+            logger.warning("anthropic.suggest_trends failed: %s", msg)
+            return [], msg
 
         text = "".join(block.text for block in resp.content if block.type == "text")
-        return _parse_suggestions(text)
+        parsed = _parse_suggestions(text)
+        if not parsed:
+            return [], "anthropic returned no parseable candidates"
+        return parsed, None
 
     async def synthesize_narrative(self, *, observations_summary: str) -> str | None:
         user = NARRATIVE_USER_TEMPLATE.format(observations_summary=observations_summary)
@@ -58,6 +62,24 @@ class AnthropicProvider(LLMProvider):
             logger.warning("anthropic.synthesize_narrative failed: %s", e)
             return None
         return "".join(block.text for block in resp.content if block.type == "text").strip() or None
+
+
+def _short_error(provider: str, exc: Exception) -> str:
+    """Compact, user-facing error message — strips stack noise."""
+    body = str(exc)
+    # SDKs often nest the useful bit in a message field; pull it out when present.
+    for marker in ("'message':", '"message":'):
+        if marker in body:
+            tail = body.split(marker, 1)[1]
+            # Strip leading whitespace/quotes and stop at the next quote.
+            tail = tail.lstrip(" '\"")
+            end = tail.find("'")
+            if end == -1:
+                end = tail.find('"')
+            if end > 0:
+                return f"{provider}: {tail[:end]}"
+    # Generic fallback: first 200 chars.
+    return f"{provider}: {body[:200]}"
 
 
 _VALID_WINDOWS = {"day", "week", "month"}

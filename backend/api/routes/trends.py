@@ -425,12 +425,27 @@ async def list_sources(
         ]
         avg_duration_ms_7d = int(sum(durations) / len(durations)) if durations else None
 
+        # Most recent error message — null when last run was a success.
+        last_error_msg = None
+        last_error_run = await session.execute(
+            select(DataSourceRun)
+            .where(DataSourceRun.source == source, DataSourceRun.status == "error")
+            .order_by(desc(DataSourceRun.started_at))
+            .limit(1)
+        )
+        last_err = last_error_run.scalar_one_or_none()
+        if last_err and (
+            last is None or last_err.started_at >= last.started_at
+        ):
+            last_error_msg = last_err.error_message
+
         rows.append(
             SourceMetric(
                 source=source,
                 enabled=enabled,
                 last_run_at=last.started_at if last else None,
                 last_status=last.status if last else None,
+                last_error=last_error_msg,
                 runs_24h=runs_24h,
                 items_created_24h=items_created_24h,
                 errors_7d=errors_7d,

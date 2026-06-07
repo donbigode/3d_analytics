@@ -26,7 +26,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.trends.embeddings import embed
-from backend.core.trends.llm import SuggestionCandidate, resolve_provider
+from backend.core.trends.llm import SuggestionCandidate, resolve_chain
 from backend.infra.db import session as session_module
 from backend.infra.db.models import (
     DataSourceRun,
@@ -43,55 +43,77 @@ LOOKBACK_DAYS = 30
 
 
 async def collect_llm_once(*, count: int = 10) -> dict:
-    """Run one collection pass. Returns a small dict of stats."""
-    started_at = datetime.now(timezone.utc)
+    """Run one collection pass with fallback. Returns a stats dict.
+
+    Tries the preferred provider first; if it returns an error, tries the
+    other one. Each provider attempt logs its own DataSourceRun, so the UI
+    can show the failure chain. The function's return reports the FIRST
+    successful provider (or the LAST error if both failed).
+    """
     async with session_module.SessionFactory() as session:
         settings_row = await session.get(Settings, 1)
         if settings_row is None:
-            return _record_run(session, "llm", started_at, "error",
-                               error="settings row missing", items=0)
+            return await _record_and_return(
+                session, "llm", datetime.now(timezone.utc), "error",
+                error="settings row missing", items=0,
+            )
 
-        provider = resolve_provider(
+        chain = resolve_chain(
             preferred=settings_row.preferred_llm_provider,
             anthropic_key=settings_row.anthropic_api_key,
             gemini_key=settings_row.gemini_api_key,
         )
-        if provider is None:
+        if not chain:
             return await _record_and_return(
-                session, "llm", started_at, "error",
-                error="no LLM provider configured", items=0,
+                session, "llm", datetime.now(timezone.utc), "error",
+                error="no LLM provider configured (set Anthropic or Gemini key in /config)",
+                items=0,
             )
 
-        try:
-            candidates = await provider.suggest_trends(count=count)
-        except Exception as e:  # noqa: BLE001
-            return await _record_and_return(
-                session, provider.name, started_at, "error",
-                error=str(e), items=0,
-            )
+        last_error: str | None = None
+        for provider in chain:
+            started_at = datetime.now(timezone.utc)
+            try:
+                candidates, err = await provider.suggest_trends(count=count)
+            except Exception as e:  # noqa: BLE001 — defensive belt+suspenders
+                err = str(e)
+                candidates = []
 
-        if not candidates:
+            if err is not None and not candidates:
+                # Log per-provider error so the UI shows the chain attempts.
+                await _record_and_return(
+                    session, provider.name, started_at, "error",
+                    error=err, items=0,
+                )
+                last_error = err
+                continue
+
+            # Got candidates — embed and persist.
+            texts = [_text_for(c) for c in candidates]
+            embeddings = await embed(texts)
+            prior = await _load_recent_suggestions(session)
+            created = await _persist_candidates(
+                session, provider.name, candidates, embeddings, prior
+            )
             return await _record_and_return(
                 session, provider.name, started_at, "success",
-                error=None, items=0, metadata={"note": "provider returned no candidates"},
+                error=None, items=len(created),
+                metadata={
+                    "auto_promoted": sum(1 for s in created if s.status == "auto_promoted"),
+                    "pending": sum(1 for s in created if s.status == "pending"),
+                    "chain_position": chain.index(provider),
+                    "chain_size": len(chain),
+                },
             )
 
-        # Embed terms + rationale together for richer recurrence signal.
-        texts = [_text_for(c) for c in candidates]
-        embeddings = await embed(texts)
-
-        prior = await _load_recent_suggestions(session)
-        created = await _persist_candidates(
-            session, provider.name, candidates, embeddings, prior
-        )
-        return await _record_and_return(
-            session, provider.name, started_at, "success",
-            error=None, items=len(created),
-            metadata={
-                "auto_promoted": sum(1 for s in created if s.status == "auto_promoted"),
-                "pending": sum(1 for s in created if s.status == "pending"),
-            },
-        )
+        # All providers in the chain failed.
+        return {
+            "source": "llm",
+            "status": "error",
+            "items_created": 0,
+            "error": last_error or "all providers failed",
+            "metadata": {"chain_size": len(chain)},
+        }
 
 
 def _text_for(c: SuggestionCandidate) -> str:
