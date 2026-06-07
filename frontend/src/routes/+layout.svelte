@@ -21,6 +21,9 @@
     { href: "/materials", label: "Materiais", match: (p: string) => p.startsWith("/materials") },
     { href: "/services", label: "Serviços", match: (p: string) => p.startsWith("/services") },
     { href: "/spools", label: "Estoque", match: (p: string) => p.startsWith("/spools") },
+    { href: "/insights", label: "Insights", match: (p: string) => p.startsWith("/insights") },
+    { href: "/capacity", label: "Capacidade", match: (p: string) => p.startsWith("/capacity") },
+    { href: "/trends", label: "Tendências", match: (p: string) => p.startsWith("/trends") },
     { href: "/settings", label: "Ajustes", match: (p: string) => p.startsWith("/settings") },
   ];
 
