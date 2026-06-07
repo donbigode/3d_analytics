@@ -271,7 +271,11 @@ async def promote_suggestion(
     existing = await session.execute(select(KeywordIdea).where(KeywordIdea.term == s.term))
     ki = existing.scalar_one_or_none()
     if ki is None:
-        ki = KeywordIdea(term=s.term, notes=s.rationale)
+        ki = KeywordIdea(
+            term=s.term,
+            notes=s.rationale,
+            temporal_window=s.temporal_window,
+        )
         session.add(ki)
         await session.flush()
     s.status = "promoted"
@@ -321,7 +325,14 @@ async def list_sources(
 
     sources_config: list[tuple[str, bool]] = [
         ("google_trends", True),
-        ("mercadolivre", True),
+        (
+            "mercadolivre",
+            bool(
+                settings_row
+                and settings_row.meli_app_id
+                and settings_row.meli_client_secret
+            ),
+        ),
         ("anthropic", bool(settings_row and settings_row.anthropic_api_key)),
         ("gemini", bool(settings_row and settings_row.gemini_api_key)),
         ("llm", bool(settings_row and settings_row.llm_suggestions_enabled)),

@@ -16,6 +16,11 @@ class KeywordIdea(Base):
     id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
     term: Mapped[str] = mapped_column(String(120), nullable=False, unique=True)
     notes: Mapped[str | None] = mapped_column(Text)
+    # Temporal lens applied to Google Trends queries: day | week | month.
+    # Defaults to 'week' for legacy rows and manual additions.
+    temporal_window: Mapped[str] = mapped_column(
+        String(10), nullable=False, default="week"
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

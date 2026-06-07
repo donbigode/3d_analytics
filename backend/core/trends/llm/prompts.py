@@ -1,4 +1,12 @@
-"""Shared prompts for the LLM providers."""
+"""Shared prompts for the LLM providers.
+
+The system distinguishes three temporal windows so the downstream pipeline
+(Google Trends + ML) can query each candidate with the matching timeframe.
+
+  - ``day``    — bursts in the last 24-48h (memes, virais, eventos)
+  - ``week``   — termos quentes nos últimos 7 dias (estações curtas, lançamentos)
+  - ``month``  — tendências estruturais (sazonais, demanda crescente)
+"""
 from __future__ import annotations
 
 SUGGEST_SYSTEM = (
@@ -7,19 +15,25 @@ SUGGEST_SYSTEM = (
     "no Google Trends BR e na busca do Mercado Livre, focando em produtos que "
     "podem ser impressos em PLA/PETG e vendidos como produto final ou peça de "
     "reposição. Evite termos genéricos como 'suporte' ou 'organizador'; prefira "
-    "combinações específicas como 'porta celular cabeceira gato'."
+    "combinações específicas como 'porta celular cabeceira gato'.\n\n"
+    "Para cada termo, classifique a JANELA TEMPORAL em que a tendência se manifesta: "
+    "'day' (24-48h, virais e bursts), 'week' (últimos 7 dias, estações curtas) ou "
+    "'month' (estruturais, sazonais)."
 )
 
 SUGGEST_USER_TEMPLATE = (
     "Liste {count} termos de busca em português brasileiro com alto potencial "
-    "de venda nas próximas 2 semanas. Para cada termo, escreva uma justificativa "
-    "curta (até 1 linha). Responda APENAS em JSON, no formato:\n"
+    "de venda. Distribua aproximadamente: ~30% janela 'day', ~40% 'week' e ~30% 'month'. "
+    "Para cada termo, escreva uma justificativa curta (até 1 linha). "
+    "Responda APENAS em JSON, no formato:\n"
     "{{\n"
     '  "items": [\n'
-    '    {{"term": "...", "rationale": "..."}},\n'
+    '    {{"term": "...", "rationale": "...", "temporal_window": "day|week|month"}},\n'
     '    ...\n'
     "  ]\n"
-    "}}"
+    "}}\n\n"
+    "Importante: o campo temporal_window é obrigatório e deve ser exatamente um dos três valores: "
+    "'day', 'week' ou 'month'."
 )
 
 NARRATIVE_SYSTEM = (

@@ -60,6 +60,9 @@ class AnthropicProvider(LLMProvider):
         return "".join(block.text for block in resp.content if block.type == "text").strip() or None
 
 
+_VALID_WINDOWS = {"day", "week", "month"}
+
+
 def _parse_suggestions(text: str) -> list[SuggestionCandidate]:
     """Best-effort JSON parsing of suggestion responses."""
     text = text.strip()
@@ -92,5 +95,12 @@ def _parse_suggestions(text: str) -> list[SuggestionCandidate]:
         if not term:
             continue
         rationale = (it.get("rationale") or "").strip() or None
-        out.append(SuggestionCandidate(term=term, rationale=rationale))
+        window = (it.get("temporal_window") or "").strip().lower()
+        if window not in _VALID_WINDOWS:
+            window = "week"
+        out.append(
+            SuggestionCandidate(
+                term=term, rationale=rationale, temporal_window=window
+            )
+        )
     return out

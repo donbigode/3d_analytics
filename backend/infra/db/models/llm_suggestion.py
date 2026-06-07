@@ -33,7 +33,10 @@ class LLMSuggestion(Base):
 
     id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
     term: Mapped[str] = mapped_column(String(160), nullable=False)
-    rationale: Mapped[str | None] = mapped_column(Text)  # LLM's stated reason
+    rationale: Mapped[str | None] = mapped_column(Text)
+    temporal_window: Mapped[str] = mapped_column(
+        String(10), nullable=False, default="week"
+    )  # LLM's stated reason
     provider: Mapped[str] = mapped_column(String(20), nullable=False)  # anthropic | gemini
     embedding: Mapped[list[float] | None] = mapped_column(Vector(EMBEDDING_DIM))
     raw_response: Mapped[dict | None] = mapped_column(JSONB)

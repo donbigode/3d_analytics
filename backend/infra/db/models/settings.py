@@ -1,5 +1,6 @@
+from datetime import datetime
 from decimal import Decimal
-from sqlalchemy import String, Numeric, Integer
+from sqlalchemy import DateTime, Integer, Numeric, String
 from sqlalchemy.orm import Mapped, mapped_column
 from backend.infra.db.base import Base
 
@@ -28,3 +29,11 @@ class Settings(Base):
     gemini_api_key: Mapped[str | None] = mapped_column(String(200))
     preferred_llm_provider: Mapped[str] = mapped_column(String(20), nullable=False, default="anthropic")
     llm_suggestions_enabled: Mapped[bool] = mapped_column(default=False, nullable=False)
+
+    # Mercado Livre OAuth client_credentials (App-Auth). Public API now
+    # requires Bearer auth even for read endpoints. User registers an app at
+    # https://developers.mercadolivre.com.br/devcenter to get these.
+    meli_app_id: Mapped[str | None] = mapped_column(String(80))
+    meli_client_secret: Mapped[str | None] = mapped_column(String(200))
+    meli_access_token: Mapped[str | None] = mapped_column(String(400))
+    meli_token_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

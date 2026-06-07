@@ -10,6 +10,10 @@
     anthropic_key_preview: string | null;
     gemini_configured: boolean;
     gemini_key_preview: string | null;
+    meli_configured: boolean;
+    meli_app_id_preview: string | null;
+    meli_secret_preview: string | null;
+    meli_token_active: boolean;
   };
 
   let providers: Providers | null = null;
@@ -19,6 +23,8 @@
   // form drafts
   let anthropicInput = "";
   let geminiInput = "";
+  let meliAppIdInput = "";
+  let meliSecretInput = "";
   let preferred = "anthropic";
   let suggestionsEnabled = false;
   let saving = false;
@@ -74,6 +80,20 @@
   }
   async function clearGemini() {
     await save({ gemini_api_key: "" });
+  }
+  async function saveMeli() {
+    const payload: Record<string, unknown> = {};
+    if (meliAppIdInput) payload.meli_app_id = meliAppIdInput;
+    if (meliSecretInput) payload.meli_client_secret = meliSecretInput;
+    if (Object.keys(payload).length === 0) return;
+    await save(payload);
+    if (!saveError) {
+      meliAppIdInput = "";
+      meliSecretInput = "";
+    }
+  }
+  async function clearMeli() {
+    await save({ meli_app_id: "", meli_client_secret: "" });
   }
   async function savePrefs() {
     await save({
@@ -157,6 +177,49 @@
       </button>
       {#if providers.gemini_configured}
         <button class="ghost danger" on:click={clearGemini} disabled={saving}>Limpar</button>
+      {/if}
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head">
+      <span class="page-eyebrow">Marketplace · Mercado Livre</span>
+      <h2 class="section-title">App OAuth (client_credentials)</h2>
+    </div>
+    <p class="status mono">
+      Status:
+      <strong class:on={providers.meli_configured}>
+        {providers.meli_configured ? "configurado" : "não configurado"}
+      </strong>
+      {#if providers.meli_app_id_preview}
+        · App ID <span class="mask">{providers.meli_app_id_preview}</span>
+      {/if}
+      {#if providers.meli_token_active}
+        · <span class="mask token-on">token ativo</span>
+      {/if}
+    </p>
+    <p class="hint">
+      A API pública do ML exige OAuth desde 2024. Crie uma app em
+      <a href="https://developers.mercadolivre.com.br/devcenter" target="_blank" rel="noreferrer">developers.mercadolivre.com.br/devcenter</a>
+      e cole o <strong>App ID</strong> + <strong>Client Secret</strong> aqui.
+      O sistema obtém o access token automaticamente.
+    </p>
+    <div class="form-grid">
+      <label class="field">
+        App ID
+        <input bind:value={meliAppIdInput} placeholder="ex: 1234567890" autocomplete="off" />
+      </label>
+      <label class="field">
+        Client Secret
+        <input bind:value={meliSecretInput} type="password" placeholder="cole o secret" autocomplete="off" />
+      </label>
+    </div>
+    <div class="actions">
+      <button on:click={saveMeli} disabled={saving || (!meliAppIdInput && !meliSecretInput)}>
+        {saving ? "Salvando…" : "Salvar Mercado Livre"}
+      </button>
+      {#if providers.meli_configured}
+        <button class="ghost danger" on:click={clearMeli} disabled={saving}>Limpar</button>
       {/if}
     </div>
   </section>

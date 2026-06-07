@@ -145,7 +145,11 @@ async def _persist_candidates(
             )
             ki = existing.scalar_one_or_none()
             if ki is None:
-                ki = KeywordIdea(term=cand.term, notes=cand.rationale)
+                ki = KeywordIdea(
+                    term=cand.term,
+                    notes=cand.rationale,
+                    temporal_window=cand.temporal_window,
+                )
                 session.add(ki)
                 await session.flush()
             promoted_id = ki.id
@@ -158,6 +162,7 @@ async def _persist_candidates(
             recurrence_score=Decimal(f"{max_sim:.4f}"),
             status="auto_promoted" if auto else "pending",
             promoted_keyword_id=promoted_id,
+            temporal_window=cand.temporal_window,
         )
         session.add(row)
         out.append(row)

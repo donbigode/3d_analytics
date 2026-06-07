@@ -7,10 +7,19 @@ from typing import Protocol
 
 @dataclass(frozen=True)
 class SuggestionCandidate:
-    """One keyword candidate emitted by an LLM."""
+    """One keyword candidate emitted by an LLM.
+
+    `temporal_window` is one of ``day | week | month`` and drives the
+    Google Trends timeframe in the downstream collection step:
+      - day   → last 1 day
+      - week  → last 7 days
+      - month → last 30 days
+    Defaults to 'week' when the LLM omits or returns a value we don't recognise.
+    """
 
     term: str
     rationale: str | None = None
+    temporal_window: str = "week"
 
 
 class LLMProvider(Protocol):

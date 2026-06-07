@@ -9,41 +9,47 @@ from decimal import Decimal
 import pytest
 
 
-async def _stub_google_high(term: str):
+async def _stub_google_high(term: str, *, window: str = "month"):
     return Decimal("80")
 
 
-async def _stub_google_low(term: str):
+async def _stub_google_low(term: str, *, window: str = "month"):
     return Decimal("10")
 
 
-async def _stub_google_none(term: str):
+async def _stub_google_none(term: str, *, window: str = "month"):
     return None
 
 
-async def _stub_ml_high(term, *, client=None):
-    return {
-        "sold_quantity": Decimal("1500"),
-        "avg_price": Decimal("90.00"),
-        "top_listings": [
-            {"title": "Porta celular cabeceira A", "price": 89.9, "sold": 250},
-            {"title": "Porta celular cabeceira B", "price": 75.0, "sold": 120},
-        ],
-        "sample_size": 20,
-    }
+async def _stub_ml_high(term, *, creds=None, client=None):
+    return (
+        {
+            "sold_quantity": Decimal("1500"),
+            "avg_price": Decimal("90.00"),
+            "top_listings": [
+                {"title": "Porta celular cabeceira A", "price": 89.9, "sold": 250},
+                {"title": "Porta celular cabeceira B", "price": 75.0, "sold": 120},
+            ],
+            "sample_size": 20,
+        },
+        None,
+    )
 
 
-async def _stub_ml_low(term, *, client=None):
-    return {
-        "sold_quantity": Decimal("5"),
-        "avg_price": Decimal("20.00"),
-        "top_listings": [],
-        "sample_size": 1,
-    }
+async def _stub_ml_low(term, *, creds=None, client=None):
+    return (
+        {
+            "sold_quantity": Decimal("5"),
+            "avg_price": Decimal("20.00"),
+            "top_listings": [],
+            "sample_size": 1,
+        },
+        None,
+    )
 
 
-async def _stub_ml_empty(term, *, client=None):
-    return {}
+async def _stub_ml_empty(term, *, creds=None, client=None):
+    return ({}, None)
 
 
 @pytest.mark.asyncio
@@ -115,24 +121,30 @@ async def test_ranking_sorts_descending(auth_client, monkeypatch):
 
     call_order: list[str] = []
 
-    async def gt_dispatch(term: str):
+    async def gt_dispatch(term: str, *, window: str = "month"):
         call_order.append(term)
         return Decimal("90") if term == "hot termo" else Decimal("5")
 
-    async def ml_dispatch(term: str, *, client=None):
+    async def ml_dispatch(term: str, *, creds=None, client=None):
         if term == "hot termo":
-            return {
-                "sold_quantity": Decimal("2000"),
-                "avg_price": Decimal("80"),
-                "top_listings": [{"title": "X", "price": 80.0, "sold": 200}],
-                "sample_size": 20,
-            }
-        return {
-            "sold_quantity": Decimal("2"),
-            "avg_price": Decimal("10"),
-            "top_listings": [],
-            "sample_size": 1,
-        }
+            return (
+                {
+                    "sold_quantity": Decimal("2000"),
+                    "avg_price": Decimal("80"),
+                    "top_listings": [{"title": "X", "price": 80.0, "sold": 200}],
+                    "sample_size": 20,
+                },
+                None,
+            )
+        return (
+            {
+                "sold_quantity": Decimal("2"),
+                "avg_price": Decimal("10"),
+                "top_listings": [],
+                "sample_size": 1,
+            },
+            None,
+        )
 
     monkeypatch.setattr(gt, "fetch_interest", gt_dispatch)
     monkeypatch.setattr(ml, "fetch_volume", ml_dispatch)

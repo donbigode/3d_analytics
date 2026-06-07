@@ -19,11 +19,11 @@ async def test_sources_empty_state(auth_client):
     body = r.json()
     names = [s["source"] for s in body["sources"]]
     assert {"google_trends", "mercadolivre", "anthropic", "gemini", "llm"}.issubset(names)
-    # All disabled or default — except Google Trends + ML which are always
-    # marked enabled (free, no key required).
+    # Google Trends is the only source enabled by default (no creds needed).
+    # ML requires OAuth credentials since 2024, so it starts disabled too.
     by_name = {s["source"]: s for s in body["sources"]}
     assert by_name["google_trends"]["enabled"] is True
-    assert by_name["mercadolivre"]["enabled"] is True
+    assert by_name["mercadolivre"]["enabled"] is False
     assert by_name["anthropic"]["enabled"] is False
 
 
