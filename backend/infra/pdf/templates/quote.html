@@ -1,0 +1,37 @@
+{% extends "_base.html" %}
+{% block content %}
+<h1>{{ "Ficha de custo" if quote.kind == "personal" else "Orçamento" }} #{{ quote.id }}</h1>
+{% if quote.client %}<p>Cliente: <strong>{{ quote.client }}</strong></p>{% endif %}
+<p>Status: {{ quote.status }}</p>
+
+<h3>Peças</h3>
+<table>
+  <thead><tr><th>Peça</th><th>Filamento (m)</th><th>Tempo (s)</th><th>Qtd</th><th>Subtotal</th></tr></thead>
+  <tbody>
+  {% for it in items %}
+    <tr><td>{{ it.name }}</td><td>{{ "%.2f"|format(it.filament_m) }}</td><td>{{ it.time_s }}</td><td>{{ it.qty }}</td><td>{{ currency }} {{ "%.2f"|format(it.subtotal) }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+{% if services %}
+<h3>Serviços</h3>
+<table>
+  <thead><tr><th>Serviço</th><th>Quantidade</th><th>Taxa</th><th>Subtotal</th></tr></thead>
+  <tbody>
+  {% for s in services %}
+    <tr><td>{{ s.name }}</td><td>{{ s.qty }}</td><td>{{ currency }} {{ "%.2f"|format(s.rate) }}</td><td>{{ currency }} {{ "%.2f"|format(s.subtotal) }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+<div class="totals">
+  <div>Custo de produção: {{ currency }} {{ "%.2f"|format(totals.cost) }}</div>
+  {% if quote.kind == "commercial" %}
+    <div>Markup: {{ totals.markup_pct }}%</div>
+    <div>Mínimo: {{ currency }} {{ "%.2f"|format(totals.min_charge) }}</div>
+    <div class="grand">Total a cobrar: {{ currency }} {{ "%.2f"|format(totals.total) }}</div>
+  {% endif %}
+</div>
+{% endblock %}
