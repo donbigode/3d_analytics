@@ -25,6 +25,7 @@ export type Material = {
 // Canonical list — surfaces in the materials form's select.
 export const MATERIAL_TYPES = [
   "PLA",
+  "HYPER-PLA",
   "PLA-CF",
   "PETG",
   "PETG-CF",
