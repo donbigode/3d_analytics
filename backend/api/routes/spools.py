@@ -13,9 +13,9 @@ router = APIRouter()
 def _out(s: Spool) -> SpoolOut:
     return SpoolOut(
         id=str(s.id),
-        material_code=s.material_code,
-        supplier=s.supplier,
-        batch_code=s.batch_code,
+        material_type=s.material_type,
+        purchased_from=s.purchased_from,
+        purchase_url=s.purchase_url,
         purchased_at=s.purchased_at,
         purchased_price=s.purchased_price,
         initial_grams=s.initial_grams,

@@ -46,10 +46,10 @@ async def promote(
     rec = await session.get(WatcherInboxFile, inbox_id)
     if not rec or rec.status != WatcherInboxStatus.PENDING:
         raise HTTPException(404)
-    mat_code = (rec.parsed_meta or {}).get("material") or "PLA"
-    mv = await material_repo.current(session, mat_code)
-    if not mv:
-        raise HTTPException(400, f"material {mat_code} not registered")
+    mat_type = (rec.parsed_meta or {}).get("material") or "PLA"
+    # Auto-resolve only when unique; otherwise the new item starts pending
+    # and the user picks a material on the quote edit page.
+    mv = await material_repo.auto_resolve_for_gcode(session, mat_type)
     q = Quote(
         kind=payload.kind,
         user_id=user.id,
@@ -63,7 +63,7 @@ async def promote(
         name=payload.name or (rec.original_path.rsplit("/", 1)[-1]),
         filename=rec.original_path,
         gcode_meta=rec.parsed_meta or {},
-        material_version_id=mv.id,
+        material_version_id=mv.id if mv else None,
         quantity=1,
     )
     session.add(it)

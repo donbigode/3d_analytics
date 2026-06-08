@@ -10,8 +10,10 @@ export type Client = {
 
 export type Material = {
   id: string;
-  material_code: string;
+  material_type: string;         // PLA, PETG, ABS, ASA, PLA-CF, TPU, …
   name: string;
+  manufacturer: string | null;
+  color: string | null;
   density_g_cm3: number | string;
   price_per_kg_ref: number | string;
   failure_rate_pct: number | string;
@@ -19,6 +21,20 @@ export type Material = {
   effective_from: string;
   effective_to: string | null;
 };
+
+// Canonical list — surfaces in the materials form's select.
+export const MATERIAL_TYPES = [
+  "PLA",
+  "PLA-CF",
+  "PETG",
+  "PETG-CF",
+  "ABS",
+  "ASA",
+  "TPU",
+  "Nylon",
+  "Resina",
+  "Outro",
+] as const;
 
 export type ServiceKind = "labor" | "purge" | "other";
 export type ServiceUnit = "min" | "hour" | "g";
@@ -36,9 +52,9 @@ export type SpoolStatus = "open" | "empty" | "discarded";
 
 export type Spool = {
   id: string;
-  material_code: string;
-  supplier: string | null;
-  batch_code: string | null;
+  material_type: string;
+  purchased_from: string | null;
+  purchase_url: string | null;
   purchased_at: string;
   purchased_price: number | string;
   initial_grams: number | string;

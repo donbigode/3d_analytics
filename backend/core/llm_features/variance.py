@@ -47,7 +47,7 @@ async def explain_variance(
         real_grams = float(sum((c.grams_used for c in cons), Decimal(0)))
         real_cost = float(sum((c.grams_used * c.unit_cost_snapshot for c in cons), Decimal(0)))
         slot = by_material.setdefault(
-            mv.material_code,
+            mv.material_type,
             {
                 "real_grams": 0.0,
                 "real_cost": 0.0,

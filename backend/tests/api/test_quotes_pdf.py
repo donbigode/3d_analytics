@@ -6,7 +6,7 @@ async def test_pdf_after_finalize(auth_client):
     await auth_client.post(
         "/materials",
         json={
-            "material_code": "PLA",
+            "material_type": "PLA",
             "name": "PLA",
             "density_g_cm3": "1.24",
             "price_per_kg_ref": "100",

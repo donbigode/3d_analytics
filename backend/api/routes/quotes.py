@@ -297,11 +297,11 @@ async def add_item(
     except ValueError as e:
         raise HTTPException(400, str(e))
 
-    material_code = meta.material or "PLA"
-    mv = await material_repo.current(session, material_code)
-    # If material not registered, item is accepted with material_version_id=NULL
-    # (pending). User can resolve via PUT /quotes/{id}/items/{item_id} after
-    # registering the material. Finalize is blocked while there are pending items.
+    material_type = meta.material or "PLA"
+    # Auto-resolve only when exactly one current material matches the polymer
+    # type. With multiple manufacturers/colors registered, leave the item
+    # pending so the user picks one explicitly.
+    mv = await material_repo.auto_resolve_for_gcode(session, material_type)
 
     rel_path = save_gcode(q.id, file.filename or "upload.gcode", content)
     item = QuoteItem(
@@ -348,13 +348,27 @@ async def update_item(
         if payload.quantity < 1:
             raise HTTPException(400, "quantity must be >= 1")
         it.quantity = payload.quantity
-    if payload.material_code is not None:
-        mv = await material_repo.current(session, payload.material_code)
+    if payload.material_id is not None:
+        try:
+            mv = await material_repo.get_by_id(session, UUID(payload.material_id))
+        except ValueError:
+            raise HTTPException(400, "material_id must be a valid UUID")
         if not mv:
-            raise HTTPException(400, f"material {payload.material_code} not registered")
+            raise HTTPException(400, "material not found")
         it.material_version_id = mv.id
-        # also update gcode_meta.material to reflect the chosen code, so the
-        # next time the user looks at the item the badge is gone
+        meta = dict(it.gcode_meta or {})
+        meta["material"] = mv.material_type
+        it.gcode_meta = meta
+    elif payload.material_code is not None:
+        # Back-compat: auto-resolve by polymer type when unique.
+        mv = await material_repo.auto_resolve_for_gcode(session, payload.material_code)
+        if not mv:
+            raise HTTPException(
+                400,
+                f"cannot uniquely resolve material '{payload.material_code}' "
+                "(zero or multiple registered) — send material_id instead",
+            )
+        it.material_version_id = mv.id
         meta = dict(it.gcode_meta or {})
         meta["material"] = payload.material_code
         it.gcode_meta = meta

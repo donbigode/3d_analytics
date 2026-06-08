@@ -18,9 +18,9 @@
   let loading = true;
   let listError = "";
 
-  let material_code = "";
-  let supplier = "";
-  let batch_code = "";
+  let material_id = "";
+  let purchased_from = "";
+  let purchase_url = "";
   let purchased_at = new Date().toISOString().slice(0, 10);
   let purchased_price = "";
   let initial_grams = "";
@@ -46,7 +46,7 @@
       ]);
       rows = s;
       materials = m;
-      if (!material_code && materials[0]) material_code = materials[0].material_code;
+      if (!material_id && materials[0]) material_id = materials[0].id;
     } catch (err) {
       handleApiError(err);
       listError = errorMessage(err, "Falha ao carregar bobinas.");
@@ -59,13 +59,14 @@
     formError = "";
     submitting = true;
     try {
+      const mat = materials.find((m) => m.id === material_id);
       await api<Spool>("/spools", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          material_code,
-          supplier: supplier || null,
-          batch_code: batch_code || null,
+          material_type: mat?.material_type ?? "",
+          purchased_from: purchased_from || null,
+          purchase_url: purchase_url || null,
           purchased_at: new Date(purchased_at).toISOString(),
           purchased_price,
           initial_grams,
@@ -74,7 +75,7 @@
           notes: notes || null,
         }),
       });
-      supplier = batch_code = purchased_price = initial_grams = remaining_grams = notes = "";
+      purchased_from = purchase_url = purchased_price = initial_grams = remaining_grams = notes = "";
       status = "open";
       purchased_at = new Date().toISOString().slice(0, 10);
       await load();
@@ -95,9 +96,9 @@
         method: "PUT",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          material_code: editing.material_code,
-          supplier: editing.supplier || null,
-          batch_code: editing.batch_code || null,
+          material_type: editing.material_type,
+          purchased_from: editing.purchased_from || null,
+          purchase_url: editing.purchase_url || null,
           purchased_at: editing.purchased_at,
           purchased_price: editing.purchased_price,
           initial_grams: editing.initial_grams,
@@ -152,19 +153,21 @@
 >
   <label class="field">
     Material
-    <select bind:value={material_code} required>
+    <select bind:value={material_id} required>
       {#each materials as m}
-        <option value={m.material_code}>{m.material_code} — {m.name}</option>
+        <option value={m.id}>
+          {m.material_type}{m.manufacturer ? ` · ${m.manufacturer}` : ""}{m.color ? ` · ${m.color}` : ""}
+        </option>
       {/each}
     </select>
   </label>
   <label class="field">
-    Fornecedor
-    <input bind:value={supplier} placeholder="3D Lab, Voolt…" />
+    Onde comprou
+    <input bind:value={purchased_from} placeholder="3D Lab, Voolt, MercadoLivre…" />
   </label>
-  <label class="field">
-    Lote
-    <input bind:value={batch_code} placeholder="opcional" />
+  <label class="field full">
+    Link da compra (opcional)
+    <input bind:value={purchase_url} type="url" placeholder="https://…" />
   </label>
   <label class="field">
     Comprado em
@@ -214,9 +217,8 @@
   {#if listError}<div class="alert">{listError}</div>{/if}
   <Table
     columns={[
-      { key: "material_code", label: "Material", mono: true, width: "10ch" },
-      { key: "supplier", label: "Fornecedor" },
-      { key: "batch_code", label: "Lote", mono: true },
+      { key: "material_type", label: "Material", mono: true, width: "10ch" },
+      { key: "purchased_from", label: "Comprado em" },
       {
         key: "remaining_grams",
         label: "Restante (g)",
@@ -248,8 +250,8 @@
         {@const low = lowThreshold > 0 && Number(r.remaining_grams) <= lowThreshold}
         <div class="bar-row" class:low>
           <div class="bar-label">
-            <span class="mono">{r.material_code}</span>
-            <span class="muted">· {r.supplier ?? "—"}{r.batch_code ? ` · ${r.batch_code}` : ""}</span>
+            <span class="mono">{r.material_type}</span>
+            <span class="muted">· {r.purchased_from ?? "—"}</span>
           </div>
           <div class="bar-track" aria-hidden="true">
             <div class="bar-fill" style:width="{pct}%"></div>
@@ -269,19 +271,21 @@
       <form on:submit|preventDefault={saveEdit} class="form-grid">
         <label class="field">
           Material
-          <select bind:value={editing.material_code}>
+          <select bind:value={editing.material_type}>
             {#each materials as m}
-              <option value={m.material_code}>{m.material_code} — {m.name}</option>
+              <option value={m.material_type}>
+                {m.material_type}{m.manufacturer ? ` · ${m.manufacturer}` : ""}{m.color ? ` · ${m.color}` : ""}
+              </option>
             {/each}
           </select>
         </label>
         <label class="field">
-          Fornecedor
-          <input bind:value={editing.supplier} />
+          Onde comprou
+          <input bind:value={editing.purchased_from} />
         </label>
-        <label class="field">
-          Lote
-          <input bind:value={editing.batch_code} />
+        <label class="field full">
+          Link da compra
+          <input bind:value={editing.purchase_url} type="url" />
         </label>
         <label class="field">
           Comprado em

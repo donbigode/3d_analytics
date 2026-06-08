@@ -8,14 +8,23 @@ from backend.infra.db.base import Base
 
 
 class MaterialVersion(Base):
+    """SCD2 row for a (material_type, manufacturer, color) product line.
+
+    ``material_type`` is the polymer family that matches what the gcode
+    declares (PLA, PETG, ABS, ASA, PLA-CF, TPU…). ``manufacturer`` and
+    ``color`` distinguish concrete products from each other.
+    """
+
     __tablename__ = "material_versions"
     __table_args__ = (
-        Index("ix_material_current", "material_code", "is_current"),
+        Index("ix_material_current", "material_type", "is_current"),
     )
 
     id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
-    material_code: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    material_type: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(120), nullable=False)
+    manufacturer: Mapped[str | None] = mapped_column(String(120))
+    color: Mapped[str | None] = mapped_column(String(80))
     density_g_cm3: Mapped[Decimal] = mapped_column(Numeric(6, 3), nullable=False)
     price_per_kg_ref: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
     failure_rate_pct: Mapped[Decimal] = mapped_column(Numeric(5, 2), nullable=False, default=0)

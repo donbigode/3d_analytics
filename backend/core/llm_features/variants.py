@@ -24,7 +24,7 @@ async def suggest_variants(session: AsyncSession, item: QuoteItem) -> dict:
             select(MaterialVersion).where(MaterialVersion.is_current.is_(True))
         )
     ).scalars().all()
-    material_codes = sorted({m.material_code for m in available_materials})
+    material_codes = sorted({m.material_type for m in available_materials})
 
     user_prompt = (
         f"Peça base: {item.name}\n"

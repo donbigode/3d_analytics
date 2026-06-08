@@ -4,9 +4,8 @@ import pytest
 @pytest.mark.asyncio
 async def test_spools_crud_and_adjust(auth_client):
     r = await auth_client.post("/spools", json={
-        "material_code": "PLA",
-        "supplier": "Acme",
-        "batch_code": "B1",
+        "material_type": "PLA",
+        "purchased_from": "Acme",
         "purchased_at": "2026-06-01T00:00:00Z",
         "purchased_price": "100",
         "initial_grams": "1000",
@@ -32,7 +31,7 @@ async def test_spools_crud_and_adjust(auth_client):
 @pytest.mark.asyncio
 async def test_spool_remaining_cannot_exceed_initial(auth_client):
     r = await auth_client.post("/spools", json={
-        "material_code": "PLA",
+        "material_type": "PLA",
         "purchased_at": "2026-06-01T00:00:00Z",
         "purchased_price": "100",
         "initial_grams": "1000",

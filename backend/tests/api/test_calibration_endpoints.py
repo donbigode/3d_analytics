@@ -22,7 +22,7 @@ async def _seed_material_failure_scenario(user_id):
     """Insert PLA + 6 quote items + 6 consumptions with ~15% extra waste."""
     async with session_module.SessionFactory() as s:
         mv = MaterialVersion(
-            material_code="PLA",
+            material_type="PLA",
             name="PLA",
             density_g_cm3=Decimal("1.24"),
             price_per_kg_ref=Decimal("100"),
@@ -31,9 +31,8 @@ async def _seed_material_failure_scenario(user_id):
         )
         s.add(mv)
         spool = Spool(
-            material_code="PLA",
-            supplier=None,
-            batch_code=None,
+            material_type="PLA",
+            purchased_from=None,
             purchased_at=datetime.now(timezone.utc),
             purchased_price=Decimal("100"),
             initial_grams=Decimal("1000"),
@@ -133,8 +132,11 @@ async def test_apply_creates_new_material_version(auth_client):
     assert Decimal(body["previous_value"]) == Decimal("0")
     assert Decimal(body["new_value"]) == Decimal(suggested)
 
-    # verify a new SCD2 version exists
-    r = await auth_client.get("/materials/PLA/history")
+    # verify a new SCD2 version exists — look up via the current PLA material
+    r = await auth_client.get("/materials")
+    pla_ids = [m["id"] for m in r.json() if m["material_type"] == "PLA"]
+    assert pla_ids, "no current PLA found"
+    r = await auth_client.get(f"/materials/{pla_ids[0]}/history")
     assert r.status_code == 200
     history = r.json()
     assert len(history) == 2

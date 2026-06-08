@@ -37,6 +37,11 @@ class QuoteItemOut(BaseModel):
 class QuoteItemUpdate(BaseModel):
     name: str | None = None
     quantity: int | None = None
+    # UUID of the chosen MaterialVersion (preferred). Used when the user
+    # resolves a pending item or switches to a different product line.
+    material_id: str | None = None
+    # Legacy: polymer type string. Still accepted — auto-resolves when there's
+    # exactly one current material of that type; rejects with 400 otherwise.
     material_code: str | None = None
     model_source_url: str | None = None
     model_source_author: str | None = None

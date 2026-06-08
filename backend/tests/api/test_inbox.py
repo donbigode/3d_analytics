@@ -22,7 +22,7 @@ async def test_inbox_list_and_promote(auth_client):
     r_mat = await auth_client.post(
         "/materials",
         json={
-            "material_code": "PLA",
+            "material_type": "PLA",
             "name": "PLA",
             "density_g_cm3": "1.24",
             "price_per_kg_ref": "100",
@@ -107,7 +107,10 @@ async def test_promote_already_assigned_returns_404(auth_client):
 
 
 @pytest.mark.asyncio
-async def test_promote_without_registered_material_returns_400(auth_client):
+async def test_promote_without_registered_material_creates_pending(auth_client):
+    """Since the pending-material workflow, promoting an inbox row whose
+    material isn't registered creates the quote anyway with the item in a
+    pending state. The user resolves it later from the quote edit page."""
     async with session_module.SessionFactory() as s:
         rec = WatcherInboxFile(
             file_hash="nomat",
@@ -120,8 +123,11 @@ async def test_promote_without_registered_material_returns_400(auth_client):
         inbox_id = str(rec.id)
 
     r = await auth_client.post(f"/inbox/{inbox_id}/promote", json={"kind": "personal"})
-    assert r.status_code == 400
-    assert "PETG" in r.json()["detail"]
+    assert r.status_code == 200, r.text
+    # quote was created; the QuoteItem (added by the inbox flow) is pending
+    qid = r.json()["id"]
+    q = (await auth_client.get(f"/quotes/{qid}")).json()
+    assert q["pending_items"] >= 1
 
 
 @pytest.mark.asyncio

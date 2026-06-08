@@ -92,7 +92,7 @@ async def _build_context(session: AsyncSession) -> str:
     )
     lines.append(f"Drafts criados hoje: {new_drafts_today}.")
     if low_spools:
-        names = ", ".join(f"{s.material_code} {int(s.remaining_grams)}g" for s in low_spools[:5])
+        names = ", ".join(f"{s.material_type} {int(s.remaining_grams)}g" for s in low_spools[:5])
         lines.append(f"Spools abaixo do limiar ({int(low_threshold)}g): {names}.")
     if pending_inbox:
         names = ", ".join(

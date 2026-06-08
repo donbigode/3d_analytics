@@ -4,8 +4,10 @@ from pydantic import BaseModel
 
 
 class MaterialCreate(BaseModel):
-    material_code: str
+    material_type: str          # PLA, PETG, ABS, ASA, PLA-CF, TPU, …
     name: str
+    manufacturer: str | None = None
+    color: str | None = None
     density_g_cm3: Decimal
     price_per_kg_ref: Decimal
     failure_rate_pct: Decimal = Decimal("0")
@@ -13,6 +15,8 @@ class MaterialCreate(BaseModel):
 
 class MaterialUpdate(BaseModel):
     name: str | None = None
+    manufacturer: str | None = None
+    color: str | None = None
     density_g_cm3: Decimal | None = None
     price_per_kg_ref: Decimal | None = None
     failure_rate_pct: Decimal | None = None
@@ -20,8 +24,10 @@ class MaterialUpdate(BaseModel):
 
 class MaterialOut(BaseModel):
     id: str
-    material_code: str
+    material_type: str
     name: str
+    manufacturer: str | None
+    color: str | None
     density_g_cm3: Decimal
     price_per_kg_ref: Decimal
     failure_rate_pct: Decimal

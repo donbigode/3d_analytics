@@ -62,7 +62,7 @@ async def _load_facts(session: AsyncSession) -> tuple[
     mv_by_id = {mv.id: mv for mv in mvs}
     materials = [
         MaterialFact(
-            material_code=mv.material_code,
+            material_code=mv.material_type,
             density_g_cm3=Decimal(mv.density_g_cm3),
             price_per_kg_ref=Decimal(mv.price_per_kg_ref),
             failure_rate_pct=Decimal(mv.failure_rate_pct),
@@ -90,7 +90,7 @@ async def _load_facts(session: AsyncSession) -> tuple[
         item_facts.append(
             ItemFact(
                 item_id=str(it.id),
-                material_code=mv.material_code,
+                material_code=mv.material_type,
                 filament_m=Decimal(str(filament_m)),
                 quantity=int(it.quantity),
             )
@@ -173,21 +173,25 @@ async def apply_insight(
     if row.status != "open":
         raise HTTPException(409, f"insight already {row.status}")
 
-    mv = await material_repo.current(session, row.scope_ref)
-    if not mv:
+    # scope_ref is material_type. When multiple current materials share the
+    # same polymer family we apply the suggestion to each of them — the
+    # calibration insight is aggregated at the type level.
+    matches = await material_repo.current_by_type(session, row.scope_ref)
+    if not matches:
         raise HTTPException(409, f"material {row.scope_ref} not found")
 
+    previous = Decimal(matches[0].failure_rate_pct if row.scope_kind == "material_failure" else matches[0].price_per_kg_ref)
     if row.scope_kind == "material_failure":
-        previous = Decimal(mv.failure_rate_pct)
-        await material_repo.new_version(
-            session, row.scope_ref, failure_rate_pct=row.suggested_value
-        )
+        for mv in matches:
+            await material_repo.new_version(
+                session, mv.id, failure_rate_pct=row.suggested_value
+            )
         field = "failure_rate_pct"
     elif row.scope_kind == "material_price":
-        previous = Decimal(mv.price_per_kg_ref)
-        await material_repo.new_version(
-            session, row.scope_ref, price_per_kg_ref=row.suggested_value
-        )
+        for mv in matches:
+            await material_repo.new_version(
+                session, mv.id, price_per_kg_ref=row.suggested_value
+            )
         field = "price_per_kg_ref"
     else:
         raise HTTPException(400, f"unknown scope_kind {row.scope_kind}")

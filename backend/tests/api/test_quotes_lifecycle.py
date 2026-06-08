@@ -9,7 +9,7 @@ async def _seed_material(client):
     await client.post(
         "/materials",
         json={
-            "material_code": "PLA",
+            "material_type": "PLA",
             "name": "PLA",
             "density_g_cm3": "1.24",
             "price_per_kg_ref": "100",
@@ -53,7 +53,7 @@ async def test_produce_consumes_spool(auth_client):
     r = await auth_client.post(
         "/spools",
         json={
-            "material_code": "PLA",
+            "material_type": "PLA",
             "purchased_at": "2026-06-01T00:00:00Z",
             "purchased_price": "100",
             "initial_grams": "1000",
@@ -92,7 +92,7 @@ async def test_produce_insufficient_spool_returns_409(auth_client):
     r = await auth_client.post(
         "/spools",
         json={
-            "material_code": "PLA",
+            "material_type": "PLA",
             "purchased_at": "2026-06-01T00:00:00Z",
             "purchased_price": "100",
             "initial_grams": "1",
@@ -125,7 +125,7 @@ async def test_commercial_can_deliver_after_produce(auth_client):
     r = await auth_client.post(
         "/spools",
         json={
-            "material_code": "PLA",
+            "material_type": "PLA",
             "purchased_at": "2026-06-01T00:00:00Z",
             "purchased_price": "100",
             "initial_grams": "1000",
@@ -175,7 +175,7 @@ async def test_upload_unknown_material_creates_pending_item(auth_client):
     await auth_client.post(
         "/materials",
         json={
-            "material_code": "PLA",
+            "material_type": "PLA",
             "name": "PLA",
             "density_g_cm3": "1.24",
             "price_per_kg_ref": "100",
