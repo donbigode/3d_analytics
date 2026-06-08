@@ -179,11 +179,13 @@ async def ranking(
         interest_o = _latest_by(obs, "google_trends", "interest_score")
         vol_o = _latest_by(obs, "mercadolivre", "sold_quantity")
         price_o = _latest_by(obs, "mercadolivre", "avg_price")
+        wiki_o = _latest_by(obs, "wikipedia", "pageviews_mean")
 
         interest = interest_o.value if interest_o else None
         vol = vol_o.value if vol_o else None
         price = price_o.value if price_o else None
-        s = compute_score(interest, vol, price)
+        wiki = wiki_o.value if wiki_o else None
+        s = compute_score(interest, vol, price, wiki_views=wiki)
 
         # Sparkline = chronological interest_score points over last 30d.
         sparkline = [
@@ -212,6 +214,7 @@ async def ranking(
                 term=idea.term,
                 score=s,
                 interest=interest,
+                wiki_views=wiki,
                 ml_volume=vol,
                 ml_avg_price=price,
                 sparkline=sparkline,
@@ -370,6 +373,7 @@ async def list_sources(
 
     sources_config: list[tuple[str, bool]] = [
         ("google_trends", True),
+        ("wikipedia", True),
         (
             "mercadolivre",
             bool(

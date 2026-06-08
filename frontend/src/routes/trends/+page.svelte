@@ -191,6 +191,7 @@
     return ({
       google_trends: "Google Trends",
       mercadolivre: "Mercado Livre",
+      wikipedia: "Wikipedia (PT-BR)",
       anthropic: "Anthropic Claude",
       gemini: "Google Gemini",
       openai: "OpenAI GPT",
@@ -489,6 +490,7 @@
             <div class="metrics">
               <span class="metric"><dt>Score</dt><dd class="mono accent">{fmtNum(row.score, 1)}</dd></span>
               <span class="metric"><dt>Interesse</dt><dd class="mono">{fmtNum(row.interest, 0)}</dd></span>
+              <span class="metric"><dt>Wiki/dia</dt><dd class="mono">{fmtNum(row.wiki_views, 0)}</dd></span>
               <span class="metric"><dt>Vendidos</dt><dd class="mono">{fmtNum(row.ml_volume, 0)}</dd></span>
               <span class="metric"><dt>Preço médio</dt><dd class="mono">{fmtMoney(row.ml_avg_price)}</dd></span>
             </div>

@@ -254,6 +254,7 @@ export type RankingRow = {
   term: string;
   score: number | string;
   interest: number | string | null;
+  wiki_views?: number | string | null;
   ml_volume: number | string | null;
   ml_avg_price: number | string | null;
   sparkline: SparkPoint[];

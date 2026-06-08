@@ -46,12 +46,13 @@ class RankingRow(BaseModel):
     term: str
     score: Decimal
     interest: Decimal | None
+    wiki_views: Decimal | None = None
     ml_volume: Decimal | None
     ml_avg_price: Decimal | None
     sparkline: list[SparkPoint]
     top_listings: list[TopListing] = []
     temporal_window: str = "week"
-    source_provider: str | None = None  # 'anthropic' | 'gemini' | None (manual)
+    source_provider: str | None = None  # 'anthropic' | 'gemini' | 'openai' | None (manual)
 
 
 class RefreshOut(BaseModel):

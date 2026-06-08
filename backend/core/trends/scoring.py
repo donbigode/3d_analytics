@@ -23,6 +23,7 @@ from decimal import Decimal
 
 
 _VOLUME_CEILING = math.log10(1 + 10_000)
+_WIKI_CEILING = math.log10(1 + 10_000)   # 10k mean daily views = saturated
 _PRICE_CEILING = Decimal("200")
 
 
@@ -30,17 +31,24 @@ def score(
     interest: Decimal | None,
     ml_volume: Decimal | None,
     ml_avg_price: Decimal | None,
+    *,
+    wiki_views: Decimal | None = None,
 ) -> Decimal:
-    """Combine the three signals into a 0..100 opportunity score.
+    """Combine the signals into a 0..100 opportunity score.
 
-    See module docstring for the formula. Returns a quantized Decimal with
-    2 decimal places. All-None inputs yield 0.
+    Interest source: Google Trends if available, otherwise log-normalized
+    Wikipedia pageviews (PT-BR) as a free fallback. See module docstring.
     """
 
     interest_part = Decimal("0")
     if interest is not None:
         clipped = max(Decimal("0"), min(Decimal("100"), Decimal(interest)))
         interest_part = (clipped / Decimal("100")) * Decimal("50")
+    elif wiki_views is not None and wiki_views > 0:
+        # Log-scale 0..1 then weight to 50.
+        log_w = math.log10(1 + float(wiki_views)) / _WIKI_CEILING
+        log_w = min(1.0, max(0.0, log_w))
+        interest_part = Decimal(str(log_w)) * Decimal("50")
 
     volume_part = Decimal("0")
     if ml_volume is not None and ml_volume > 0:

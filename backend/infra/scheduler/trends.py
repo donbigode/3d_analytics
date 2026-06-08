@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.trends.sources import google_trends as gt_source
 from backend.core.trends.sources import mercadolivre as ml_source
+from backend.core.trends.sources import wikipedia as wiki_source
 from backend.infra.db import session as _db_session
 from backend.infra.db.models import KeywordIdea, KeywordObservation, Settings
 
@@ -63,6 +64,24 @@ async def _collect_for_idea(
                 source="google_trends",
                 metric="interest_score",
                 value=Decimal(interest),
+                raw_payload={"window": window},
+            )
+        )
+        inserted += 1
+
+    # --- Wikipedia pageviews (PT-BR) ---
+    try:
+        wiki_views = await wiki_source.fetch_interest(idea.term, window=window)
+    except Exception as exc:
+        logger.warning("wikipedia raised for %s: %s", idea.term, exc)
+        wiki_views = None
+    if wiki_views is not None:
+        session.add(
+            KeywordObservation(
+                keyword_id=idea.id,
+                source="wikipedia",
+                metric="pageviews_mean",
+                value=Decimal(wiki_views),
                 raw_payload={"window": window},
             )
         )

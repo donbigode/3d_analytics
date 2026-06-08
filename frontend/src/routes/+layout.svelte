@@ -44,6 +44,12 @@
       ],
     },
     {
+      label: "Recursos",
+      items: [
+        { href: "/projects", label: "Sites de modelos", match: (p) => p.startsWith("/projects") },
+      ],
+    },
+    {
       label: "Configuração",
       items: [
         { href: "/settings", label: "Ajustes", match: (p) => p.startsWith("/settings") },
