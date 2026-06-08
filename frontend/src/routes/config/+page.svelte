@@ -10,6 +10,8 @@
     anthropic_key_preview: string | null;
     gemini_configured: boolean;
     gemini_key_preview: string | null;
+    openai_configured: boolean;
+    openai_key_preview: string | null;
     meli_configured: boolean;
     meli_app_id_preview: string | null;
     meli_secret_preview: string | null;
@@ -23,6 +25,7 @@
   // form drafts
   let anthropicInput = "";
   let geminiInput = "";
+  let openaiInput = "";
   let meliAppIdInput = "";
   let meliSecretInput = "";
   let preferred = "anthropic";
@@ -80,6 +83,13 @@
   }
   async function clearGemini() {
     await save({ gemini_api_key: "" });
+  }
+  async function saveOpenai() {
+    await save({ openai_api_key: openaiInput });
+    if (!saveError) openaiInput = "";
+  }
+  async function clearOpenai() {
+    await save({ openai_api_key: "" });
   }
   async function saveMeli() {
     const payload: Record<string, unknown> = {};
@@ -183,6 +193,34 @@
 
   <section class="panel">
     <div class="panel-head">
+      <span class="page-eyebrow">LLM · OpenAI</span>
+      <h2 class="section-title">GPT</h2>
+    </div>
+    <p class="status mono">
+      Status:
+      <strong class:on={providers.openai_configured}>
+        {providers.openai_configured ? "configurada" : "não configurada"}
+      </strong>
+      {#if providers.openai_key_preview}· <span class="mask">{providers.openai_key_preview}</span>{/if}
+    </p>
+    <div class="form-grid">
+      <label class="field full">
+        Nova chave de API
+        <input bind:value={openaiInput} type="password" placeholder="sk-..." autocomplete="off" />
+      </label>
+    </div>
+    <div class="actions">
+      <button on:click={saveOpenai} disabled={saving || !openaiInput}>
+        {saving ? "Salvando…" : "Salvar OpenAI"}
+      </button>
+      {#if providers.openai_configured}
+        <button class="ghost danger" on:click={clearOpenai} disabled={saving}>Limpar</button>
+      {/if}
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head">
       <span class="page-eyebrow">Marketplace · Mercado Livre</span>
       <h2 class="section-title">App OAuth (client_credentials)</h2>
     </div>
@@ -235,6 +273,7 @@
         <select bind:value={preferred}>
           <option value="anthropic">Anthropic (Claude)</option>
           <option value="gemini">Google Gemini</option>
+          <option value="openai">OpenAI (GPT)</option>
         </select>
       </label>
       <label class="field check">

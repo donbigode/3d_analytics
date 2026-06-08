@@ -380,6 +380,7 @@ async def list_sources(
         ),
         ("anthropic", bool(settings_row and settings_row.anthropic_api_key)),
         ("gemini", bool(settings_row and settings_row.gemini_api_key)),
+        ("openai", bool(settings_row and settings_row.openai_api_key)),
         ("llm", bool(settings_row and settings_row.llm_suggestions_enabled)),
     ]
 

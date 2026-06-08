@@ -193,6 +193,7 @@
       mercadolivre: "Mercado Livre",
       anthropic: "Anthropic Claude",
       gemini: "Google Gemini",
+      openai: "OpenAI GPT",
       llm: "Coleta LLM (job)",
     } as Record<string, string>)[s] || s;
   }
@@ -240,7 +241,11 @@
   }
   function providerLabel(p: string | null | undefined): string {
     if (!p) return "Manual";
-    return ({ anthropic: "Claude", gemini: "Gemini" } as Record<string, string>)[p] || p;
+    return ({
+      anthropic: "Claude",
+      gemini: "Gemini",
+      openai: "GPT",
+    } as Record<string, string>)[p] || p;
   }
 
   $: filteredRanking = ranking.filter((r) =>
@@ -854,5 +859,6 @@
   .badge.window.month { color: var(--ok); border-color: var(--ok); }
   .badge.provider.anthropic { background: #fef3c7; color: #92400e; border-color: #92400e; }
   .badge.provider.gemini { background: #dbeafe; color: #1e3a8a; border-color: #1e3a8a; }
+  .badge.provider.openai { background: #dcfce7; color: #166534; border-color: #166534; }
   .badge.provider.manual { color: var(--muted); border-color: var(--line); }
 </style>

@@ -58,6 +58,25 @@ async def test_providers_toggle_enabled_and_preferred(auth_client):
 async def test_providers_invalid_preferred_returns_400(auth_client):
     r = await auth_client.put(
         "/config/providers",
-        json={"preferred_llm_provider": "openai"},
+        json={"preferred_llm_provider": "cohere"},
     )
     assert r.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_providers_openai_set_and_clear(auth_client):
+    r = await auth_client.put(
+        "/config/providers", json={"openai_api_key": "sk-proj-test-123"}
+    )
+    body = r.json()
+    assert body["openai_configured"] is True
+    assert body["openai_key_preview"].startswith("sk-p")
+    # Mark openai as preferred
+    r = await auth_client.put(
+        "/config/providers", json={"preferred_llm_provider": "openai"}
+    )
+    assert r.status_code == 200
+    assert r.json()["preferred_llm_provider"] == "openai"
+    # Clear
+    r = await auth_client.put("/config/providers", json={"openai_api_key": ""})
+    assert r.json()["openai_configured"] is False

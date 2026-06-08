@@ -62,11 +62,12 @@ async def collect_llm_once(*, count: int = 10) -> dict:
             preferred=settings_row.preferred_llm_provider,
             anthropic_key=settings_row.anthropic_api_key,
             gemini_key=settings_row.gemini_api_key,
+            openai_key=settings_row.openai_api_key,
         )
         if not chain:
             return await _record_and_return(
                 session, "llm", datetime.now(timezone.utc), "error",
-                error="no LLM provider configured (set Anthropic or Gemini key in /config)",
+                error="no LLM provider configured (set Anthropic, Gemini or OpenAI key in /config)",
                 items=0,
             )
 

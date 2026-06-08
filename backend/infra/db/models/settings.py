@@ -27,6 +27,7 @@ class Settings(Base):
     # time. GET /settings masks them in the response.
     anthropic_api_key: Mapped[str | None] = mapped_column(String(200))
     gemini_api_key: Mapped[str | None] = mapped_column(String(200))
+    openai_api_key: Mapped[str | None] = mapped_column(String(200))
     preferred_llm_provider: Mapped[str] = mapped_column(String(20), nullable=False, default="anthropic")
     llm_suggestions_enabled: Mapped[bool] = mapped_column(default=False, nullable=False)
 

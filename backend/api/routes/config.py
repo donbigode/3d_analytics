@@ -53,6 +53,8 @@ async def get_providers(
         anthropic_key_preview=_mask(s.anthropic_api_key),
         gemini_configured=bool(s.gemini_api_key),
         gemini_key_preview=_mask(s.gemini_api_key),
+        openai_configured=bool(s.openai_api_key),
+        openai_key_preview=_mask(s.openai_api_key),
         meli_configured=bool(s.meli_app_id and s.meli_client_secret),
         meli_app_id_preview=_mask(s.meli_app_id),
         meli_secret_preview=_mask(s.meli_client_secret),
@@ -68,8 +70,8 @@ async def put_providers(
 ):
     s = await _get_settings_row(session)
     if payload.preferred_llm_provider is not None:
-        if payload.preferred_llm_provider not in {"anthropic", "gemini"}:
-            raise HTTPException(400, "preferred_llm_provider must be 'anthropic' or 'gemini'")
+        if payload.preferred_llm_provider not in {"anthropic", "gemini", "openai"}:
+            raise HTTPException(400, "preferred_llm_provider must be 'anthropic', 'gemini' or 'openai'")
         s.preferred_llm_provider = payload.preferred_llm_provider
     if payload.llm_suggestions_enabled is not None:
         s.llm_suggestions_enabled = payload.llm_suggestions_enabled
@@ -78,6 +80,8 @@ async def put_providers(
         s.anthropic_api_key = payload.anthropic_api_key or None
     if payload.gemini_api_key is not None:
         s.gemini_api_key = payload.gemini_api_key or None
+    if payload.openai_api_key is not None:
+        s.openai_api_key = payload.openai_api_key or None
     if payload.meli_app_id is not None:
         s.meli_app_id = payload.meli_app_id or None
         # Clear cached token when credentials change so next collect refreshes.
@@ -101,6 +105,8 @@ async def put_providers(
         anthropic_key_preview=_mask(s.anthropic_api_key),
         gemini_configured=bool(s.gemini_api_key),
         gemini_key_preview=_mask(s.gemini_api_key),
+        openai_configured=bool(s.openai_api_key),
+        openai_key_preview=_mask(s.openai_api_key),
         meli_configured=bool(s.meli_app_id and s.meli_client_secret),
         meli_app_id_preview=_mask(s.meli_app_id),
         meli_secret_preview=_mask(s.meli_client_secret),

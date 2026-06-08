@@ -227,7 +227,7 @@ export type LLMSuggestion = {
   id: string;
   term: string;
   rationale: string | null;
-  provider: "anthropic" | "gemini";
+  provider: "anthropic" | "gemini" | "openai";
   recurrence_score: number | string;
   status: "pending" | "promoted" | "auto_promoted" | "dismissed" | "expired";
   promoted_keyword_id: string | null;
@@ -259,5 +259,5 @@ export type RankingRow = {
   sparkline: SparkPoint[];
   top_listings: TopListing[];
   temporal_window: "day" | "week" | "month";
-  source_provider: "anthropic" | "gemini" | null;
+  source_provider: "anthropic" | "gemini" | "openai" | null;
 };
