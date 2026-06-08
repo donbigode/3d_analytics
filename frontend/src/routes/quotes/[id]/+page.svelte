@@ -7,10 +7,14 @@
   import type {
     Client,
     Material,
+    MarkupSuggestionOut,
+    PricingOut,
     Quote,
     QuoteItem,
     Service,
     Spool,
+    VarianceOut,
+    VariantsOut,
   } from "$lib/types";
 
   $: id = $page.params.id;
@@ -61,6 +65,67 @@
   let editNotes = "";
   let savingMeta = false;
   let metaError = "";
+
+  // ---- IA panel state ----
+  let llmBusy: "markup" | "variance" | "pricing" | "variants" | null = null;
+  let llmError = "";
+  let markupSuggestion: MarkupSuggestionOut | null = null;
+  let varianceResult: VarianceOut | null = null;
+  let pricingResult: PricingOut | null = null;
+  let variantsResult: VariantsOut | null = null;
+  let variantsForItem = "";
+
+  async function askMarkup() {
+    if (!quote) return;
+    llmBusy = "markup"; llmError = "";
+    try {
+      markupSuggestion = await api<MarkupSuggestionOut>(`/llm/markup/${quote.id}`, { method: "POST" });
+    } catch (err) {
+      handleApiError(err);
+      llmError = errorMessage(err, "Falha ao consultar IA.");
+    } finally { llmBusy = null; }
+  }
+  async function applyMarkup() {
+    if (!quote || !markupSuggestion) return;
+    const v = Number(markupSuggestion.suggested_markup_pct);
+    if (!Number.isFinite(v)) return;
+    editMarkup = v;
+    await saveMeta();
+  }
+
+  async function askVariance() {
+    if (!quote) return;
+    llmBusy = "variance"; llmError = "";
+    try {
+      varianceResult = await api<VarianceOut>(`/llm/variance/${quote.id}`, { method: "POST" });
+    } catch (err) {
+      handleApiError(err);
+      llmError = errorMessage(err, "Falha ao consultar IA.");
+    } finally { llmBusy = null; }
+  }
+
+  async function askPricing() {
+    if (!quote) return;
+    llmBusy = "pricing"; llmError = "";
+    try {
+      pricingResult = await api<PricingOut>(`/llm/pricing/${quote.id}`, { method: "POST" });
+    } catch (err) {
+      handleApiError(err);
+      llmError = errorMessage(err, "Falha ao consultar IA.");
+    } finally { llmBusy = null; }
+  }
+
+  async function askVariants(itemId: string) {
+    if (!quote) return;
+    variantsForItem = itemId;
+    llmBusy = "variants"; llmError = "";
+    try {
+      variantsResult = await api<VariantsOut>(`/llm/variants/items/${itemId}`, { method: "POST" });
+    } catch (err) {
+      handleApiError(err);
+      llmError = errorMessage(err, "Falha ao consultar IA.");
+    } finally { llmBusy = null; }
+  }
 
   // transition state
   let transitioning = "";
@@ -527,6 +592,10 @@
                       {#if it.material_pending}
                         <button class="tiny" on:click={() => openResolve(it)}>resolver</button>
                       {/if}
+                      <button class="tiny ghost" on:click={() => askVariants(it.id)}
+                              disabled={llmBusy === "variants" && variantsForItem === it.id}>
+                        {llmBusy === "variants" && variantsForItem === it.id ? "✨…" : "✨ variantes"}
+                      </button>
                       <button class="tiny danger" on:click={() => removeItem(it.id)}>remover</button>
                     </td>
                   {/if}
@@ -667,6 +736,79 @@
           <dd class="big mono">{fmtMoney(quote.total)}</dd>
         </dl>
       </section>
+
+      <section class="panel ai-panel">
+        <div class="panel-head">
+          <span class="page-eyebrow">Assistente IA</span>
+          <h2 class="section-title">Sugestões</h2>
+        </div>
+        {#if llmError}<div class="alert">{llmError}</div>{/if}
+
+        <div class="ai-actions">
+          {#if quote.kind === "commercial" && isDraft}
+            <button class="tiny ghost" on:click={askMarkup} disabled={llmBusy === "markup"}>
+              {llmBusy === "markup" ? "Pensando…" : "F3 · Sugerir markup"}
+            </button>
+            <button class="tiny ghost" on:click={askPricing} disabled={llmBusy === "pricing"}>
+              {llmBusy === "pricing" ? "Pensando…" : "F5 · Sugerir preço"}
+            </button>
+          {/if}
+          {#if quote.status === "produzido" || quote.status === "entregue"}
+            <button class="tiny ghost" on:click={askVariance} disabled={llmBusy === "variance"}>
+              {llmBusy === "variance" ? "Pensando…" : "F4 · Analisar variância"}
+            </button>
+          {/if}
+        </div>
+
+        {#if markupSuggestion}
+          <div class="ai-result">
+            <strong>Markup sugerido: {fmtNum(markupSuggestion.suggested_markup_pct, 0)}%</strong>
+            {#if markupSuggestion.complexity}
+              <span class="tag muted">{markupSuggestion.complexity}</span>
+            {/if}
+            {#if markupSuggestion.rationale}<p class="dim">{markupSuggestion.rationale}</p>{/if}
+            {#if isDraft && quote.kind === "commercial"}
+              <button class="tiny" on:click={applyMarkup}>Aplicar</button>
+            {/if}
+          </div>
+        {/if}
+
+        {#if pricingResult}
+          <div class="ai-result">
+            <strong>Preço sugerido: {fmtMoney(pricingResult.suggested_price)}</strong>
+            <span class="tag muted">faixa {fmtMoney(pricingResult.floor)}–{fmtMoney(pricingResult.ceiling)}</span>
+            {#if pricingResult.rationale}<p class="dim">{pricingResult.rationale}</p>{/if}
+          </div>
+        {/if}
+
+        {#if varianceResult}
+          <div class="ai-result">
+            <strong>Variância: {fmtNum(varianceResult.variance_pct, 1)}%</strong>
+            <span class="tag muted">
+              orçado {fmtMoney(varianceResult.orcado)} → real {fmtMoney(varianceResult.real)}
+            </span>
+            <p>{varianceResult.explanation}</p>
+          </div>
+        {/if}
+      </section>
+
+      {#if variantsResult && variantsResult.variants.length > 0}
+        <section class="panel ai-panel">
+          <div class="panel-head">
+            <span class="page-eyebrow">Assistente IA · F6</span>
+            <h2 class="section-title">Variantes sugeridas</h2>
+          </div>
+          <ul class="variants-list">
+            {#each variantsResult.variants as v}
+              <li>
+                <strong>{v.name}</strong>
+                {#if v.material}<span class="tag brand">{v.material}</span>{/if}
+                {#if v.angle}<p class="dim">{v.angle}</p>{/if}
+              </li>
+            {/each}
+          </ul>
+        </section>
+      {/if}
 
       <section class="panel actions-panel">
         <div class="panel-head">
@@ -934,6 +1076,54 @@
     cursor: pointer;
     font-size: inherit;
   }
+  .ai-panel { border-left: 4px solid var(--brand); }
+  .ai-actions { display: flex; flex-wrap: wrap; gap: 0.4rem; margin: 0.4rem 0 0.6rem; }
+  .ai-result {
+    border-top: 1px dashed var(--line);
+    padding-top: 0.6rem;
+    margin-top: 0.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+  }
+  .ai-result .tag {
+    align-self: flex-start;
+    font-family: var(--font-mono);
+    font-size: 0.65rem;
+    padding: 0.1rem 0.4rem;
+    border: 1px solid var(--line);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+  .ai-result .tag.muted { color: var(--muted); }
+  .ai-result p { margin: 0; color: var(--ink); font-size: 0.92rem; }
+  .ai-result .dim { color: var(--muted); }
+
+  .variants-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+  .variants-list li {
+    border-bottom: 1px dashed var(--line);
+    padding-bottom: 0.4rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+  }
+  .variants-list .tag.brand {
+    align-self: flex-start;
+    font-family: var(--font-mono);
+    font-size: 0.65rem;
+    padding: 0.1rem 0.4rem;
+    background: var(--brand);
+    color: var(--paper);
+    text-transform: uppercase;
+  }
+  .variants-list .dim { color: var(--muted); font-size: 0.85em; }
   .item-form, .svc-form {
     grid-template-columns: 2fr 2fr 1fr;
   }

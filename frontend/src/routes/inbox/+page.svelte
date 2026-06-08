@@ -3,7 +3,7 @@
   import { goto } from "$app/navigation";
   import { api, errorMessage } from "$lib/api";
   import { handleApiError, requireAuth } from "$lib/guard";
-  import type { Client, InboxItem, QuoteKind } from "$lib/types";
+  import type { AutoNameOut, Client, InboxItem, QuoteKind } from "$lib/types";
 
   let rows: InboxItem[] = [];
   let clients: Client[] = [];
@@ -16,6 +16,30 @@
   let pName = "";
   let pSubmitting = false;
   let pError = "";
+
+  let namingId: string | null = null;
+  let nameError = "";
+
+  async function suggestName(r: InboxItem) {
+    namingId = r.id;
+    nameError = "";
+    try {
+      const out = await api<AutoNameOut>(`/llm/auto-name/${r.id}`, { method: "POST" });
+      pName = out.name;
+      if (!promoting) {
+        // open the promote modal pre-filled with the suggestion
+        promoting = r;
+        pKind = "commercial";
+        pClient = "";
+        pError = "";
+      }
+    } catch (err) {
+      handleApiError(err);
+      nameError = errorMessage(err, "Falha ao gerar nome.");
+    } finally {
+      namingId = null;
+    }
+  }
 
   function basename(p: string): string {
     return p.split("/").pop() ?? p;
@@ -153,6 +177,9 @@
             <td class="right mono">{fmtDur(r.parsed_meta?.time_s)}</td>
             <td class="mono dim">{fmtDate(r.created_at)}</td>
             <td class="right">
+              <button class="tiny ghost" on:click={() => suggestName(r)} disabled={namingId === r.id}>
+                {namingId === r.id ? "✨ pensando…" : "✨ nome"}
+              </button>
               <button class="tiny" on:click={() => openPromote(r)}>promover</button>
               <button class="tiny danger" on:click={() => discard(r)}>descartar</button>
             </td>

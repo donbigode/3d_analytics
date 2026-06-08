@@ -3,7 +3,7 @@
   import { api, errorMessage } from "$lib/api";
   import { handleApiError, requireAuth } from "$lib/guard";
   import { user } from "$lib/stores/user";
-  import type { DashboardOut } from "$lib/types";
+  import type { DashboardOut, DigestOut } from "$lib/types";
   import Card from "$lib/components/Card.svelte";
   import Funnel from "$lib/components/Funnel.svelte";
   import Pie from "$lib/components/Pie.svelte";
@@ -11,6 +11,23 @@
   let data: DashboardOut | null = null;
   let loading = true;
   let pageError = "";
+
+  let digest: DigestOut | null = null;
+  let digestLoading = false;
+  let digestError = "";
+
+  async function loadDigest(force = false) {
+    digestLoading = true;
+    digestError = "";
+    try {
+      digest = await api<DigestOut>(`/llm/digest${force ? "?force=true" : ""}`);
+    } catch (err) {
+      handleApiError(err);
+      digestError = errorMessage(err, "Falha ao gerar resumo.");
+    } finally {
+      digestLoading = false;
+    }
+  }
 
   // filters
   type Period = "7d" | "30d" | "month" | "year" | "all";
@@ -124,6 +141,7 @@
   onMount(() => {
     if (requireAuth()) return;
     load();
+    loadDigest();
   });
 </script>
 
@@ -170,6 +188,30 @@
   {#if pageError}<div class="alert">{pageError}</div>{/if}
 
   {#if data}
+    <section class="panel digest-panel">
+      <div class="panel-head">
+        <div>
+          <span class="page-eyebrow">F1 · IA · resumo</span>
+          <h2 class="form-title">Brief do dia</h2>
+        </div>
+        <button class="tiny ghost" on:click={() => loadDigest(true)} disabled={digestLoading}>
+          {digestLoading ? "Gerando…" : digest ? "Regenerar" : "Gerar"}
+        </button>
+      </div>
+      {#if digestError}
+        <p class="alert">{digestError}</p>
+      {:else if digest}
+        <p class="digest-body">{digest.body}</p>
+        <p class="digest-meta mono">
+          via {digest.provider}{digest.cached ? " · cache" : " · novo"}
+        </p>
+      {:else if digestLoading}
+        <p class="empty">Gerando resumo…</p>
+      {:else}
+        <p class="empty">Nenhum resumo gerado hoje. Clique em "Gerar".</p>
+      {/if}
+    </section>
+
     <section class="cards-grid">
       <Card eyebrow="C1" label="Receita comercial" value={fmtMoney(data.cards.receita)} accent />
       <Card eyebrow="C2" label="Despesa comercial real" value={fmtMoney(data.cards.despesa)} />
@@ -440,6 +482,23 @@
   .cmp-table td.under { color: var(--ok); }
   .cmp-table a { color: var(--ink); text-decoration: none; }
   .cmp-table a:hover { text-decoration: underline; }
+
+  .digest-panel { margin-bottom: 1.2rem; border-left: 4px solid var(--brand); }
+  .digest-body {
+    font-family: var(--font-display);
+    font-size: 1.02rem;
+    line-height: 1.45;
+    color: var(--ink);
+    margin: 0.4rem 0 0.3rem;
+  }
+  .digest-meta {
+    color: var(--muted);
+    font-size: 0.7rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+  }
+  .alert { color: var(--danger); }
+  .empty { color: var(--muted); font-style: italic; }
   .lists-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));

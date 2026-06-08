@@ -260,6 +260,56 @@ export type SourceMetric = {
 
 export type SourceMetricsOut = { sources: SourceMetric[] };
 
+export type DigestOut = {
+  date: string;
+  provider: string;
+  body: string;
+  cached: boolean;
+  created_at: string;
+};
+
+export type AutoNameOut = {
+  inbox_id: string;
+  name: string;
+  confidence: number | null;
+  why: string | null;
+};
+
+export type MarkupSuggestionOut = {
+  quote_id: string;
+  suggested_markup_pct: number | string;
+  complexity: string | null;
+  rationale: string | null;
+};
+
+export type VarianceOut = {
+  quote_id: string;
+  orcado: number | string;
+  real: number | string;
+  variance_pct: number | string;
+  explanation: string;
+};
+
+export type PricingOut = {
+  quote_id: string;
+  cost: number | string;
+  suggested_price: number | string;
+  floor: number | string;
+  ceiling: number | string;
+  rationale: string | null;
+};
+
+export type VariantSuggestion = {
+  name: string;
+  material: string | null;
+  angle: string | null;
+};
+
+export type VariantsOut = {
+  item_id: string;
+  variants: VariantSuggestion[];
+};
+
 export type RankingRow = {
   id: string;
   term: string;
