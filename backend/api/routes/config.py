@@ -46,6 +46,11 @@ async def get_providers(
         and s.meli_token_expires_at
         and s.meli_token_expires_at > datetime.now(timezone.utc)
     )
+    reddit_active = bool(
+        s.reddit_access_token
+        and s.reddit_token_expires_at
+        and s.reddit_token_expires_at > datetime.now(timezone.utc)
+    )
     return ProvidersOut(
         preferred_llm_provider=s.preferred_llm_provider,
         llm_suggestions_enabled=s.llm_suggestions_enabled,
@@ -59,6 +64,10 @@ async def get_providers(
         meli_app_id_preview=_mask(s.meli_app_id),
         meli_secret_preview=_mask(s.meli_client_secret),
         meli_token_active=meli_active,
+        reddit_configured=bool(s.reddit_client_id and s.reddit_client_secret),
+        reddit_client_id_preview=_mask(s.reddit_client_id),
+        reddit_secret_preview=_mask(s.reddit_client_secret),
+        reddit_token_active=reddit_active,
     )
 
 
@@ -91,12 +100,25 @@ async def put_providers(
         s.meli_client_secret = payload.meli_client_secret or None
         s.meli_access_token = None
         s.meli_token_expires_at = None
+    if payload.reddit_client_id is not None:
+        s.reddit_client_id = payload.reddit_client_id or None
+        s.reddit_access_token = None
+        s.reddit_token_expires_at = None
+    if payload.reddit_client_secret is not None:
+        s.reddit_client_secret = payload.reddit_client_secret or None
+        s.reddit_access_token = None
+        s.reddit_token_expires_at = None
     await session.commit()
     await session.refresh(s)
     meli_active = bool(
         s.meli_access_token
         and s.meli_token_expires_at
         and s.meli_token_expires_at > datetime.now(timezone.utc)
+    )
+    reddit_active = bool(
+        s.reddit_access_token
+        and s.reddit_token_expires_at
+        and s.reddit_token_expires_at > datetime.now(timezone.utc)
     )
     return ProvidersOut(
         preferred_llm_provider=s.preferred_llm_provider,
@@ -111,4 +133,8 @@ async def put_providers(
         meli_app_id_preview=_mask(s.meli_app_id),
         meli_secret_preview=_mask(s.meli_client_secret),
         meli_token_active=meli_active,
+        reddit_configured=bool(s.reddit_client_id and s.reddit_client_secret),
+        reddit_client_id_preview=_mask(s.reddit_client_id),
+        reddit_secret_preview=_mask(s.reddit_client_secret),
+        reddit_token_active=reddit_active,
     )

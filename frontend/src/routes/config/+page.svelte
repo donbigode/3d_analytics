@@ -16,6 +16,10 @@
     meli_app_id_preview: string | null;
     meli_secret_preview: string | null;
     meli_token_active: boolean;
+    reddit_configured: boolean;
+    reddit_client_id_preview: string | null;
+    reddit_secret_preview: string | null;
+    reddit_token_active: boolean;
   };
 
   let providers: Providers | null = null;
@@ -28,6 +32,8 @@
   let openaiInput = "";
   let meliAppIdInput = "";
   let meliSecretInput = "";
+  let redditIdInput = "";
+  let redditSecretInput = "";
   let preferred = "anthropic";
   let suggestionsEnabled = false;
   let saving = false;
@@ -104,6 +110,20 @@
   }
   async function clearMeli() {
     await save({ meli_app_id: "", meli_client_secret: "" });
+  }
+  async function saveReddit() {
+    const payload: Record<string, unknown> = {};
+    if (redditIdInput) payload.reddit_client_id = redditIdInput;
+    if (redditSecretInput) payload.reddit_client_secret = redditSecretInput;
+    if (Object.keys(payload).length === 0) return;
+    await save(payload);
+    if (!saveError) {
+      redditIdInput = "";
+      redditSecretInput = "";
+    }
+  }
+  async function clearReddit() {
+    await save({ reddit_client_id: "", reddit_client_secret: "" });
   }
   async function savePrefs() {
     await save({
@@ -258,6 +278,49 @@
       </button>
       {#if providers.meli_configured}
         <button class="ghost danger" on:click={clearMeli} disabled={saving}>Limpar</button>
+      {/if}
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head">
+      <span class="page-eyebrow">Comunidade · Reddit</span>
+      <h2 class="section-title">App OAuth (client_credentials)</h2>
+    </div>
+    <p class="status mono">
+      Status:
+      <strong class:on={providers.reddit_configured}>
+        {providers.reddit_configured ? "configurado" : "não configurado"}
+      </strong>
+      {#if providers.reddit_client_id_preview}
+        · Client ID <span class="mask">{providers.reddit_client_id_preview}</span>
+      {/if}
+      {#if providers.reddit_token_active}
+        · <span class="mask token-on">token ativo</span>
+      {/if}
+    </p>
+    <p class="hint">
+      Reddit fechou a busca anônima em 2024-2025. Crie um app
+      <strong>type=script</strong> em
+      <a href="https://www.reddit.com/prefs/apps" target="_blank" rel="noreferrer">reddit.com/prefs/apps</a>,
+      cole o <strong>client_id</strong> (string curta abaixo do nome do app) e o <strong>secret</strong>.
+    </p>
+    <div class="form-grid">
+      <label class="field">
+        Client ID
+        <input bind:value={redditIdInput} placeholder="ex: ab1cd2EFgh3i" autocomplete="off" />
+      </label>
+      <label class="field">
+        Client Secret
+        <input bind:value={redditSecretInput} type="password" placeholder="cole o secret" autocomplete="off" />
+      </label>
+    </div>
+    <div class="actions">
+      <button on:click={saveReddit} disabled={saving || (!redditIdInput && !redditSecretInput)}>
+        {saving ? "Salvando…" : "Salvar Reddit"}
+      </button>
+      {#if providers.reddit_configured}
+        <button class="ghost danger" on:click={clearReddit} disabled={saving}>Limpar</button>
       {/if}
     </div>
   </section>

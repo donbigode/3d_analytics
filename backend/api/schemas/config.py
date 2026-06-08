@@ -15,6 +15,11 @@ class ProvidersOut(BaseModel):
     meli_app_id_preview: str | None
     meli_secret_preview: str | None
     meli_token_active: bool  # True if access_token present and not expired
+    # Reddit OAuth credentials
+    reddit_configured: bool
+    reddit_client_id_preview: str | None
+    reddit_secret_preview: str | None
+    reddit_token_active: bool
 
 
 class ProvidersUpdate(BaseModel):
@@ -25,3 +30,5 @@ class ProvidersUpdate(BaseModel):
     llm_suggestions_enabled: bool | None = None
     meli_app_id: str | None = None
     meli_client_secret: str | None = None
+    reddit_client_id: str | None = None
+    reddit_client_secret: str | None = None

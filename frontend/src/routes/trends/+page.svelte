@@ -192,6 +192,7 @@
       google_trends: "Google Trends",
       mercadolivre: "Mercado Livre",
       wikipedia: "Wikipedia (PT-BR)",
+      reddit: "Reddit (sem auth)",
       anthropic: "Anthropic Claude",
       gemini: "Google Gemini",
       openai: "OpenAI GPT",

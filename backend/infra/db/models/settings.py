@@ -38,3 +38,10 @@ class Settings(Base):
     meli_client_secret: Mapped[str | None] = mapped_column(String(200))
     meli_access_token: Mapped[str | None] = mapped_column(String(400))
     meli_token_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    # Reddit OAuth client_credentials. Public /search.json was closed off; you
+    # need an app registered at https://www.reddit.com/prefs/apps (type=script).
+    reddit_client_id: Mapped[str | None] = mapped_column(String(80))
+    reddit_client_secret: Mapped[str | None] = mapped_column(String(200))
+    reddit_access_token: Mapped[str | None] = mapped_column(String(400))
+    reddit_token_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

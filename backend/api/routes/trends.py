@@ -375,6 +375,14 @@ async def list_sources(
         ("google_trends", True),
         ("wikipedia", True),
         (
+            "reddit",
+            bool(
+                settings_row
+                and settings_row.reddit_client_id
+                and settings_row.reddit_client_secret
+            ),
+        ),
+        (
             "mercadolivre",
             bool(
                 settings_row

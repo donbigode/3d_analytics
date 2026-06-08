@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.trends.sources import google_trends as gt_source
 from backend.core.trends.sources import mercadolivre as ml_source
+from backend.core.trends.sources import reddit as reddit_source
 from backend.core.trends.sources import wikipedia as wiki_source
 from backend.infra.db import session as _db_session
 from backend.infra.db.models import KeywordIdea, KeywordObservation, Settings
@@ -40,11 +41,23 @@ def _build_meli_creds(settings_row: Settings | None) -> ml_source.MeliCredential
     )
 
 
+def _build_reddit_creds(settings_row: Settings | None) -> reddit_source.RedditCredentials | None:
+    if not settings_row or not settings_row.reddit_client_id or not settings_row.reddit_client_secret:
+        return None
+    return reddit_source.RedditCredentials(
+        client_id=settings_row.reddit_client_id,
+        client_secret=settings_row.reddit_client_secret,
+        access_token=settings_row.reddit_access_token,
+        token_expires_at=settings_row.reddit_token_expires_at,
+    )
+
+
 async def _collect_for_idea(
     session: AsyncSession,
     idea: KeywordIdea,
     *,
     meli_creds: ml_source.MeliCredentials | None,
+    reddit_creds: reddit_source.RedditCredentials | None,
     settings_row: Settings | None,
 ) -> int:
     """Fetch + persist observations for a single keyword idea. Returns count."""
@@ -86,6 +99,53 @@ async def _collect_for_idea(
             )
         )
         inserted += 1
+
+    # --- Reddit (OAuth client_credentials) ---
+    try:
+        rd, rd_token_update = await reddit_source.fetch_engagement(
+            idea.term, creds=reddit_creds
+        )
+    except Exception as exc:
+        logger.warning("reddit raised for %s: %s", idea.term, exc)
+        rd, rd_token_update = {}, None
+
+    if rd_token_update and settings_row is not None:
+        settings_row.reddit_access_token = rd_token_update.access_token
+        settings_row.reddit_token_expires_at = rd_token_update.expires_at
+        reddit_creds = reddit_source.RedditCredentials(
+            client_id=reddit_creds.client_id if reddit_creds else "",
+            client_secret=reddit_creds.client_secret if reddit_creds else "",
+            access_token=rd_token_update.access_token,
+            token_expires_at=rd_token_update.expires_at,
+        )
+
+    if rd:
+        posts_score = rd.get("posts_score")
+        posts_comments = rd.get("posts_comments")
+        if posts_score is not None:
+            session.add(
+                KeywordObservation(
+                    keyword_id=idea.id,
+                    source="reddit",
+                    metric="posts_score",
+                    value=Decimal(posts_score),
+                    raw_payload={
+                        "posts_count": rd.get("posts_count", 0),
+                        "top_posts": rd.get("top_posts", []),
+                    },
+                )
+            )
+            inserted += 1
+        if posts_comments is not None:
+            session.add(
+                KeywordObservation(
+                    keyword_id=idea.id,
+                    source="reddit",
+                    metric="posts_comments",
+                    value=Decimal(posts_comments),
+                )
+            )
+            inserted += 1
 
     # --- Mercado Livre ---
     try:
@@ -143,13 +203,18 @@ async def collect_once() -> int:
     async with _db_session.SessionFactory() as session:
         settings_row = await session.get(Settings, 1)
         meli_creds = _build_meli_creds(settings_row)
+        reddit_creds = _build_reddit_creds(settings_row)
 
         result = await session.execute(select(KeywordIdea))
         ideas = list(result.scalars())
         for i, idea in enumerate(ideas):
             try:
                 total += await _collect_for_idea(
-                    session, idea, meli_creds=meli_creds, settings_row=settings_row
+                    session,
+                    idea,
+                    meli_creds=meli_creds,
+                    reddit_creds=reddit_creds,
+                    settings_row=settings_row,
                 )
             except Exception as exc:
                 logger.exception("collect failed for %s: %s", idea.term, exc)
