@@ -70,6 +70,9 @@ export type QuoteItem = {
   subtotal: number | string;
   material_pending?: boolean;
   pending_material_code?: string | null;
+  model_source_url?: string | null;
+  model_source_author?: string | null;
+  model_source_license?: string | null;
 };
 
 export type QuoteServiceLine = {
@@ -127,7 +130,7 @@ export type DashboardOut = {
     };
   };
   charts: {
-    receita_vs_despesa: Array<{ period?: string; receita?: number; despesa?: number }>;
+    receita_vs_despesa: Array<{ period: string; receita: number; despesa: number }>;
     funil: { orcado: number; aprovado: number; produzido: number; entregue: number };
     despesa_categorias: Record<string, number>;
     orcado_vs_real: Array<{ quote_id: string; orcado: number; real: number; variancia_pct: number }>;

@@ -20,6 +20,8 @@
     reddit_client_id_preview: string | null;
     reddit_secret_preview: string | null;
     reddit_token_active: boolean;
+    youtube_configured: boolean;
+    youtube_key_preview: string | null;
   };
 
   let providers: Providers | null = null;
@@ -34,6 +36,7 @@
   let meliSecretInput = "";
   let redditIdInput = "";
   let redditSecretInput = "";
+  let youtubeInput = "";
   let preferred = "anthropic";
   let suggestionsEnabled = false;
   let saving = false;
@@ -124,6 +127,13 @@
   }
   async function clearReddit() {
     await save({ reddit_client_id: "", reddit_client_secret: "" });
+  }
+  async function saveYoutube() {
+    await save({ youtube_api_key: youtubeInput });
+    if (!saveError) youtubeInput = "";
+  }
+  async function clearYoutube() {
+    await save({ youtube_api_key: "" });
   }
   async function savePrefs() {
     await save({
@@ -278,6 +288,40 @@
       </button>
       {#if providers.meli_configured}
         <button class="ghost danger" on:click={clearMeli} disabled={saving}>Limpar</button>
+      {/if}
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head">
+      <span class="page-eyebrow">Vídeo · YouTube</span>
+      <h2 class="section-title">YouTube Data API</h2>
+    </div>
+    <p class="status mono">
+      Status:
+      <strong class:on={providers.youtube_configured}>
+        {providers.youtube_configured ? "configurada" : "não configurada"}
+      </strong>
+      {#if providers.youtube_key_preview}· <span class="mask">{providers.youtube_key_preview}</span>{/if}
+    </p>
+    <p class="hint">
+      Crie a chave em
+      <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noreferrer">console.cloud.google.com/apis/credentials</a>,
+      habilite a <strong>YouTube Data API v3</strong>. Free tier dá 10.000
+      unidades por dia — suficiente pra ~90 termos no nosso uso.
+    </p>
+    <div class="form-grid">
+      <label class="field full">
+        Nova chave de API
+        <input bind:value={youtubeInput} type="password" placeholder="AIza..." autocomplete="off" />
+      </label>
+    </div>
+    <div class="actions">
+      <button on:click={saveYoutube} disabled={saving || !youtubeInput}>
+        {saving ? "Salvando…" : "Salvar YouTube"}
+      </button>
+      {#if providers.youtube_configured}
+        <button class="ghost danger" on:click={clearYoutube} disabled={saving}>Limpar</button>
       {/if}
     </div>
   </section>

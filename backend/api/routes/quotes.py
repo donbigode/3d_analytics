@@ -153,6 +153,9 @@ async def _quote_out(session: AsyncSession, q: Quote) -> QuoteOut:
             pending_material_code=(
                 (it.gcode_meta.get("material") if it.material_version_id is None else None)
             ),
+            model_source_url=it.model_source_url,
+            model_source_author=it.model_source_author,
+            model_source_license=it.model_source_license,
         )
         for idx, it in enumerate(items)
     ]
@@ -273,6 +276,9 @@ async def add_item(
     file: UploadFile = File(...),
     name: str = Form(...),
     quantity: int = Form(1),
+    model_source_url: str | None = Form(None),
+    model_source_author: str | None = Form(None),
+    model_source_license: str | None = Form(None),
     _: User = Depends(require_user),
     session: AsyncSession = Depends(db_session),
 ):
@@ -310,6 +316,9 @@ async def add_item(
         },
         material_version_id=mv.id if mv else None,
         quantity=quantity,
+        model_source_url=model_source_url or None,
+        model_source_author=model_source_author or None,
+        model_source_license=model_source_license or None,
     )
     session.add(item)
     await session.commit()
@@ -349,6 +358,12 @@ async def update_item(
         meta = dict(it.gcode_meta or {})
         meta["material"] = payload.material_code
         it.gcode_meta = meta
+    if payload.model_source_url is not None:
+        it.model_source_url = payload.model_source_url or None
+    if payload.model_source_author is not None:
+        it.model_source_author = payload.model_source_author or None
+    if payload.model_source_license is not None:
+        it.model_source_license = payload.model_source_license or None
     await session.commit()
     return await _quote_out(session, q)
 
@@ -616,6 +631,9 @@ async def get_pdf(
                 "time_s": it.gcode_meta.get("time_s") or 0,
                 "qty": it.quantity,
                 "subtotal": float(item_subtotals[idx]),
+                "model_source_url": it.model_source_url,
+                "model_source_author": it.model_source_author,
+                "model_source_license": it.model_source_license,
             }
         )
     service_dicts = []

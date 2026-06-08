@@ -42,6 +42,25 @@ def _q2(d: Decimal) -> Decimal:
     return d.quantize(Decimal("0.01"))
 
 
+def _bucket_mode(period_from: datetime, period_to: datetime) -> str:
+    """Pick day/week/month granularity for the receita_vs_despesa chart."""
+    span = (period_to - period_from).days
+    if span <= 14:
+        return "day"
+    if span <= 60:
+        return "week"
+    return "month"
+
+
+def _bucket_key(dt: datetime, mode: str) -> str:
+    if mode == "day":
+        return dt.strftime("%Y-%m-%d")
+    if mode == "week":
+        iso = dt.isocalendar()
+        return f"{iso.year}-W{iso.week:02d}"
+    return dt.strftime("%Y-%m")
+
+
 @router.get("", response_model=DashboardOut)
 async def dashboard(
     _: User = Depends(require_user),
@@ -78,6 +97,17 @@ async def dashboard(
     despesa = Decimal(0)
     gasto_pessoal = Decimal(0)
     estado_counts: dict[str, int] = {st.value: 0 for st in QuoteStatus}
+
+    # Charts G1 + G3 + G6 are built up during the same loop.
+    bucket_mode = _bucket_mode(period_from, period_to)
+    rev_exp_buckets: dict[str, dict[str, Decimal]] = {}
+    cat_totals = {
+        "filamento": Decimal(0),
+        "energia": Decimal(0),
+        "mao_obra": Decimal(0),
+        "depreciacao": Decimal(0),
+    }
+    orcado_vs_real_rows: list[dict] = []
 
     for q in quotes:
         # status is stored as str-enum value
@@ -124,46 +154,86 @@ async def dashboard(
         if total < q.min_charge:
             total = q.min_charge
 
+        # Real filament — used by despesa, gasto_pessoal, G6 and category chart.
+        async def _real_filament_for(items_list) -> Decimal:
+            total = Decimal(0)
+            for it_inner in items_list:
+                cons = (
+                    await session.execute(
+                        select(MaterialConsumption).where(
+                            MaterialConsumption.quote_item_id == it_inner.id
+                        )
+                    )
+                ).scalars().all()
+                for c in cons:
+                    total += c.grams_used * c.unit_cost_snapshot
+            return total
+
         # Receita comercial: quotes commercial with status >= aprovado in period
-        if q.kind == QuoteKind.COMMERCIAL.value and status_key in (
+        is_commercial_revenue = q.kind == QuoteKind.COMMERCIAL.value and status_key in (
             QuoteStatus.APROVADO.value,
             QuoteStatus.PRODUZIDO.value,
             QuoteStatus.ENTREGUE.value,
-        ):
+        )
+        if is_commercial_revenue:
             receita += total
+            # G1: bucket by approved_at (when the money "started flowing")
+            ts = q.approved_at or q.created_at
+            if ts is not None:
+                bk = _bucket_key(ts, bucket_mode)
+                slot = rev_exp_buckets.setdefault(
+                    bk, {"receita": Decimal(0), "despesa": Decimal(0)}
+                )
+                slot["receita"] += total
 
         # Despesa real: commercial produzido+ uses MaterialConsumption snapshots
-        if q.kind == QuoteKind.COMMERCIAL.value and status_key in (
+        is_commercial_produced = q.kind == QuoteKind.COMMERCIAL.value and status_key in (
             QuoteStatus.PRODUZIDO.value,
             QuoteStatus.ENTREGUE.value,
-        ):
-            real_filament = Decimal(0)
-            for it in items:
-                cons = (
-                    await session.execute(
-                        select(MaterialConsumption).where(
-                            MaterialConsumption.quote_item_id == it.id
-                        )
-                    )
-                ).scalars().all()
-                for c in cons:
-                    real_filament += c.grams_used * c.unit_cost_snapshot
-            despesa += real_filament + item_energy + item_dep + services_cost
+        )
+        if is_commercial_produced:
+            real_filament = await _real_filament_for(items)
+            real_cost = real_filament + item_energy + item_dep + services_cost
+            despesa += real_cost
+
+            # G3: despesa por categoria (real)
+            cat_totals["filamento"] += real_filament
+            cat_totals["energia"] += item_energy
+            cat_totals["mao_obra"] += services_cost
+            cat_totals["depreciacao"] += item_dep
+
+            # G1: bucket by produced_at
+            ts = q.produced_at or q.created_at
+            if ts is not None:
+                bk = _bucket_key(ts, bucket_mode)
+                slot = rev_exp_buckets.setdefault(
+                    bk, {"receita": Decimal(0), "despesa": Decimal(0)}
+                )
+                slot["despesa"] += real_cost
+
+            # G6: orçado (catalog-priced cost) vs real (consumption-based)
+            variancia = Decimal(0)
+            if cost_orcado > 0:
+                variancia = (real_cost - cost_orcado) / cost_orcado * Decimal(100)
+            orcado_vs_real_rows.append(
+                {
+                    "quote_id": str(q.id),
+                    "orcado": float(_q2(cost_orcado)),
+                    "real": float(_q2(real_cost)),
+                    "variancia_pct": float(_q2(variancia)),
+                }
+            )
 
         # Gasto pessoal: personal produzido
         if q.kind == QuoteKind.PERSONAL.value and status_key == QuoteStatus.PRODUZIDO.value:
-            real_filament = Decimal(0)
-            for it in items:
-                cons = (
-                    await session.execute(
-                        select(MaterialConsumption).where(
-                            MaterialConsumption.quote_item_id == it.id
-                        )
-                    )
-                ).scalars().all()
-                for c in cons:
-                    real_filament += c.grams_used * c.unit_cost_snapshot
-            gasto_pessoal += real_filament + item_energy + item_dep + services_cost
+            real_filament_p = await _real_filament_for(items)
+            real_cost_p = real_filament_p + item_energy + item_dep + services_cost
+            gasto_pessoal += real_cost_p
+            # Personal also contributes to category breakdown (it's still an expense)
+            cat_totals["filamento"] += real_filament_p
+            cat_totals["energia"] += item_energy
+            cat_totals["mao_obra"] += services_cost
+            cat_totals["depreciacao"] += item_dep
 
     lucro = receita - despesa
     margem = (lucro / receita * Decimal(100)) if receita > 0 else Decimal(0)
@@ -262,7 +332,14 @@ async def dashboard(
             ),
         ),
         charts=DashboardCharts(
-            receita_vs_despesa=[],  # MVP: empty; group by week in next iteration
+            receita_vs_despesa=[
+                {
+                    "period": bk,
+                    "receita": float(_q2(v["receita"])),
+                    "despesa": float(_q2(v["despesa"])),
+                }
+                for bk, v in sorted(rev_exp_buckets.items())
+            ],
             funil={
                 "orcado": orcado_n,
                 "aprovado": estado_counts.get(QuoteStatus.APROVADO.value, 0),
@@ -270,12 +347,13 @@ async def dashboard(
                 "entregue": estado_counts.get(QuoteStatus.ENTREGUE.value, 0),
             },
             despesa_categorias={
-                "filamento": 0,
-                "energia": 0,
-                "mao_obra": 0,
-                "depreciacao": 0,
+                k: float(_q2(v)) for k, v in cat_totals.items()
             },
-            orcado_vs_real=[],
+            orcado_vs_real=sorted(
+                orcado_vs_real_rows,
+                key=lambda r: abs(r["variancia_pct"]),
+                reverse=True,
+            ),
         ),
         lists=DashboardLists(
             ultimos_orcamentos=ultimos,

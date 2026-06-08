@@ -1,16 +1,20 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { goto } from "$app/navigation";
   import { requireAuth } from "$lib/guard";
   import {
     CATEGORY_LABEL,
     PROJECT_SITES,
     TIER_LABEL,
+    type ProjectSite,
     type SiteCategory,
     type Tier,
   } from "$lib/data/project-sites";
 
   type Filter = "all" | SiteCategory;
   let filter: Filter = "all";
+  let active: ProjectSite | null = null;
+  let modelUrl = "";
 
   $: filtered = filter === "all"
     ? PROJECT_SITES
@@ -26,6 +30,26 @@
 
   function tierClass(t: Tier): string {
     return ({ free: "tier-free", freemium: "tier-mid", paid: "tier-paid" })[t];
+  }
+
+  function openSite(s: ProjectSite) {
+    active = s;
+    modelUrl = "";
+  }
+
+  function closeModal() {
+    active = null;
+    modelUrl = "";
+  }
+
+  function createQuoteFromSite() {
+    if (!active) return;
+    const params = new URLSearchParams();
+    if (modelUrl.trim()) {
+      params.set("model_source_url", modelUrl.trim());
+    }
+    params.set("model_source_site", active.name);
+    goto(`/quotes/new?${params.toString()}`);
   }
 
   onMount(() => {
@@ -62,7 +86,7 @@
 
 <section class="grid">
   {#each filtered as s (s.slug)}
-    <a class="site-card" href={s.url} target="_blank" rel="noreferrer noopener">
+    <button class="site-card" type="button" on:click={() => openSite(s)}>
       <header>
         <div class="title-row">
           <h3>{s.name}</h3>
@@ -76,13 +100,59 @@
       <ul class="highlights">
         {#each s.highlights as h}<li>{h}</li>{/each}
       </ul>
+      <ul class="materials">
+        {#each s.recommended_materials as m}<li>{m}</li>{/each}
+      </ul>
       <footer>
         <span class="mono url">{s.url.replace(/^https?:\/\//, "")}</span>
         <span class="arrow" aria-hidden="true">↗</span>
       </footer>
-    </a>
+    </button>
   {/each}
 </section>
+
+{#if active}
+  <div class="modal-backdrop" role="dialog" aria-modal="true" on:click={closeModal}>
+    <div class="modal" on:click|stopPropagation>
+      <header class="modal-head">
+        <div>
+          <span class="cat">{CATEGORY_LABEL[active.category]}</span>
+          <h2>{active.name}</h2>
+          <p class="tagline">{active.tagline}</p>
+        </div>
+        <button class="ghost" type="button" on:click={closeModal} aria-label="Fechar">×</button>
+      </header>
+
+      <p class="desc">{active.description}</p>
+
+      <div class="modal-row">
+        <span class="page-eyebrow">Materiais que combinam</span>
+        <ul class="materials big">
+          {#each active.recommended_materials as m}<li>{m}</li>{/each}
+        </ul>
+      </div>
+
+      <div class="modal-row">
+        <span class="page-eyebrow">Link do modelo (opcional)</span>
+        <input
+          type="url"
+          bind:value={modelUrl}
+          placeholder={`Cole aqui o link do modelo no ${active.name}`}
+        />
+        <small class="hint">Se preencher, vai pro orçamento como atribuição (cita autor + licença no PDF).</small>
+      </div>
+
+      <div class="modal-actions">
+        <a class="ghost" href={active.url} target="_blank" rel="noreferrer noopener">
+          Abrir {active.name} ↗
+        </a>
+        <button type="button" on:click={createQuoteFromSite}>
+          Criar orçamento →
+        </button>
+      </div>
+    </div>
+  </div>
+{/if}
 
 <style>
   .page-head { margin-bottom: 1.5rem; }
@@ -118,8 +188,10 @@
     background: var(--paper);
     border: 1px solid var(--line-strong);
     padding: 1.1rem 1.2rem;
-    text-decoration: none;
+    text-align: left;
     color: var(--ink);
+    cursor: pointer;
+    font: inherit;
     display: flex;
     flex-direction: column;
     gap: 0.55rem;
@@ -205,5 +277,99 @@
     font-family: var(--font-mono);
     color: var(--brand);
     font-size: 1.05rem;
+  }
+
+  .materials {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem;
+  }
+  .materials li {
+    font-family: var(--font-mono);
+    font-size: 0.62rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    padding: 0.08rem 0.4rem;
+    background: var(--brand);
+    color: var(--paper);
+    border-radius: 2px;
+  }
+  .materials.big li { font-size: 0.78rem; padding: 0.2rem 0.55rem; }
+
+  /* ----- modal ----- */
+  .modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(12, 12, 14, 0.55);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 50;
+    padding: 1rem;
+  }
+  .modal {
+    background: var(--paper);
+    border: 1px solid var(--line-strong);
+    padding: 1.4rem;
+    max-width: 520px;
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 0.9rem;
+  }
+  .modal-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 0.6rem;
+  }
+  .modal-head h2 {
+    margin: 0.2rem 0 0.2rem;
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 1.4rem;
+    letter-spacing: -0.01em;
+  }
+  .modal-head button.ghost {
+    background: transparent;
+    border: 1px solid var(--line);
+    width: 32px;
+    height: 32px;
+    font-size: 1.2rem;
+    cursor: pointer;
+  }
+  .modal-row {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+  }
+  .modal-row input[type="url"] {
+    padding: 0.45rem 0.6rem;
+    border: 1px solid var(--line);
+    font: inherit;
+  }
+  .modal-row .hint { color: var(--muted); font-size: 0.78rem; }
+  .modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.5rem;
+    margin-top: 0.5rem;
+  }
+  .modal-actions .ghost {
+    background: transparent;
+    border: 1px solid var(--line-strong);
+    padding: 0.5rem 0.85rem;
+    text-decoration: none;
+    color: var(--ink);
+  }
+  .modal-actions button {
+    padding: 0.5rem 1rem;
+    background: var(--brand);
+    color: var(--paper);
+    border: 1px solid var(--brand);
+    cursor: pointer;
   }
 </style>

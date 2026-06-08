@@ -19,6 +19,9 @@ export type ProjectSite = {
   category: SiteCategory;
   ecosystem?: string; // associated printer brand / parent
   highlights: string[];
+  // Materials typically used for projects from this site. Surfaces as quick
+  // filter chips when the user clicks the card to start a quote.
+  recommended_materials: string[];
 };
 
 export const PROJECT_SITES: ProjectSite[] = [
@@ -33,6 +36,7 @@ export const PROJECT_SITES: ProjectSite[] = [
     category: "community",
     ecosystem: "Prusa Research",
     highlights: ["100% grátis", "Concursos mensais", "Licenças explícitas"],
+    recommended_materials: ["PLA", "PETG"],
   },
   {
     slug: "makerworld",
@@ -45,6 +49,7 @@ export const PROJECT_SITES: ProjectSite[] = [
     category: "community",
     ecosystem: "Bambu Lab",
     highlights: ["AMS multi-color nativo", "Print profiles oficiais", "Sistema de pontos"],
+    recommended_materials: ["PLA", "PLA-CF", "PETG"],
   },
   {
     slug: "thingiverse",
@@ -57,6 +62,7 @@ export const PROJECT_SITES: ProjectSite[] = [
     category: "community",
     ecosystem: "UltiMaker",
     highlights: ["Catálogo gigante", "Customizer", "Tudo grátis"],
+    recommended_materials: ["PLA", "PETG"],
   },
   {
     slug: "cults3d",
@@ -68,6 +74,7 @@ export const PROJECT_SITES: ProjectSite[] = [
     tier: "freemium",
     category: "marketplace",
     highlights: ["Curadoria editorial", "Pagamento direto ao designer", "Categorias premium"],
+    recommended_materials: ["PLA", "PLA-CF", "Resina"],
   },
   {
     slug: "thangs",
@@ -79,6 +86,7 @@ export const PROJECT_SITES: ProjectSite[] = [
     tier: "free",
     category: "community",
     highlights: ["Indexa vários sites", "Busca por geometria", "Versionamento Git-like"],
+    recommended_materials: ["PLA", "PETG"],
   },
   {
     slug: "myminifactory",
@@ -90,6 +98,7 @@ export const PROJECT_SITES: ProjectSite[] = [
     tier: "freemium",
     category: "marketplace",
     highlights: ["Miniaturas testadas", "Assinatura Tribes", "Comunidade RPG/board game"],
+    recommended_materials: ["Resina", "PLA"],
   },
   {
     slug: "stlbase",
@@ -101,6 +110,7 @@ export const PROJECT_SITES: ProjectSite[] = [
     tier: "free",
     category: "community",
     highlights: ["Multi-source", "Sem cadastro pra baixar", "Filtros avançados"],
+    recommended_materials: ["PLA", "PETG"],
   },
   {
     slug: "youmagine",
@@ -113,6 +123,7 @@ export const PROJECT_SITES: ProjectSite[] = [
     category: "community",
     ecosystem: "UltiMaker",
     highlights: ["Open source", "Sem ads", "Licenças explícitas"],
+    recommended_materials: ["PLA", "PETG"],
   },
   {
     slug: "cgtrader",
@@ -124,6 +135,7 @@ export const PROJECT_SITES: ProjectSite[] = [
     tier: "paid",
     category: "marketplace",
     highlights: ["Qualidade profissional", "Comissão pro designer", "AR/VR também"],
+    recommended_materials: ["PLA", "PETG", "Resina"],
   },
   {
     slug: "grabcad",
@@ -135,6 +147,7 @@ export const PROJECT_SITES: ProjectSite[] = [
     tier: "free",
     category: "engineering",
     highlights: ["Peças funcionais", "Formatos CAD (STEP, IGES)", "Comunidade de engenheiros"],
+    recommended_materials: ["PETG", "ABS", "PLA-CF", "Nylon"],
   },
   {
     slug: "free3d",
@@ -146,6 +159,7 @@ export const PROJECT_SITES: ProjectSite[] = [
     tier: "freemium",
     category: "render",
     highlights: ["Catálogo grande", "Filtro por formato", "Mistura impressão + render"],
+    recommended_materials: ["PLA"],
   },
   {
     slug: "sketchfab",
@@ -157,6 +171,7 @@ export const PROJECT_SITES: ProjectSite[] = [
     tier: "freemium",
     category: "render",
     highlights: ["Viewer 3D no navegador", "Scans de museus", "Algumas downloads grátis"],
+    recommended_materials: ["PLA", "Resina"],
   },
 ];
 

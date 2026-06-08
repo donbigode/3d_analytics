@@ -397,6 +397,7 @@ async def list_sources(
     sources_config: list[tuple[str, bool]] = [
         ("google_trends", True),
         ("wikipedia", True),
+        ("youtube", bool(settings_row and settings_row.youtube_api_key)),
         (
             "reddit",
             bool(

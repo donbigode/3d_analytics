@@ -102,6 +102,25 @@
       ]
     : [];
 
+  $: revExpSeries = data?.charts?.receita_vs_despesa ?? [];
+  $: orcadoVsReal = data?.charts?.orcado_vs_real ?? [];
+
+  function revExpPath(values: number[], w = 320, h = 80): string {
+    if (!values || values.length < 2) return "";
+    const max = Math.max(1, ...values);
+    const step = w / (values.length - 1);
+    return values
+      .map((v, i) => {
+        const x = i * step;
+        const y = h - (v / max) * h;
+        return `${i === 0 ? "M" : "L"}${x.toFixed(1)},${y.toFixed(1)}`;
+      })
+      .join(" ");
+  }
+
+  $: revExpReceita = revExpSeries.map((p: any) => Number(p.receita) || 0);
+  $: revExpDespesa = revExpSeries.map((p: any) => Number(p.despesa) || 0);
+
   onMount(() => {
     if (requireAuth()) return;
     load();
@@ -184,6 +203,35 @@
       <article class="panel">
         <div class="panel-head">
           <div>
+            <span class="page-eyebrow">G1</span>
+            <h2 class="form-title">Receita vs despesa</h2>
+          </div>
+          <span class="dim mono">{revExpSeries.length} períodos</span>
+        </div>
+        {#if revExpSeries.length === 0}
+          <div class="empty">sem dados no período</div>
+        {:else}
+          <div class="rev-exp">
+            <svg viewBox="0 0 320 80" preserveAspectRatio="none" class="rev-exp-svg">
+              <path d={revExpPath(revExpReceita)} fill="none" stroke="var(--ok)" stroke-width="2" />
+              <path d={revExpPath(revExpDespesa)} fill="none" stroke="var(--danger)" stroke-width="2" />
+            </svg>
+            <div class="rev-exp-legend">
+              <span><span class="dot rev"></span> Receita</span>
+              <span><span class="dot exp"></span> Despesa</span>
+            </div>
+            <div class="rev-exp-ticks">
+              {#each revExpSeries as p}
+                <span class="mono tick">{p.period}</span>
+              {/each}
+            </div>
+          </div>
+        {/if}
+      </article>
+
+      <article class="panel">
+        <div class="panel-head">
+          <div>
             <span class="page-eyebrow">G2</span>
             <h2 class="form-title">Funil de orçamentos</h2>
           </div>
@@ -199,6 +247,44 @@
           </div>
         </div>
         <Pie slices={despesaCategorias} />
+      </article>
+
+      <article class="panel wide">
+        <div class="panel-head">
+          <div>
+            <span class="page-eyebrow">G6</span>
+            <h2 class="form-title">Orçado vs real</h2>
+          </div>
+          <span class="dim mono">{orcadoVsReal.length} orçamentos</span>
+        </div>
+        {#if orcadoVsReal.length === 0}
+          <div class="empty">sem orçamentos produzidos no período</div>
+        {:else}
+          <div class="table-wrap">
+            <table class="cmp-table">
+              <thead>
+                <tr>
+                  <th>Orçamento</th>
+                  <th class="right">Orçado</th>
+                  <th class="right">Real</th>
+                  <th class="right">Variância</th>
+                </tr>
+              </thead>
+              <tbody>
+                {#each orcadoVsReal as row}
+                  <tr>
+                    <td><a href={`/quotes/${row.quote_id}`} class="mono">{String(row.quote_id).slice(0, 8)}</a></td>
+                    <td class="right mono">{fmtMoney(row.orcado)}</td>
+                    <td class="right mono">{fmtMoney(row.real)}</td>
+                    <td class="right mono" class:over={row.variancia_pct > 0} class:under={row.variancia_pct < 0}>
+                      {row.variancia_pct > 0 ? "+" : ""}{fmtNum(row.variancia_pct, 1)}%
+                    </td>
+                  </tr>
+                {/each}
+              </tbody>
+            </table>
+          </div>
+        {/if}
       </article>
     </section>
 
@@ -305,15 +391,55 @@
   }
   .viz-grid {
     display: grid;
-    grid-template-columns: 1.4fr 1fr;
+    grid-template-columns: 1fr 1fr;
     gap: 1rem;
     margin-bottom: 1.5rem;
   }
+  .viz-grid .wide { grid-column: 1 / -1; }
   @media (max-width: 880px) {
     .viz-grid {
       grid-template-columns: 1fr;
     }
   }
+
+  .rev-exp { display: flex; flex-direction: column; gap: 0.5rem; padding-top: 0.5rem; }
+  .rev-exp-svg { width: 100%; height: 100px; }
+  .rev-exp-legend {
+    display: flex;
+    gap: 1rem;
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    color: var(--muted);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+  .rev-exp-legend .dot {
+    display: inline-block;
+    width: 10px;
+    height: 2px;
+    margin-right: 0.35rem;
+    vertical-align: middle;
+  }
+  .rev-exp-legend .dot.rev { background: var(--ok); }
+  .rev-exp-legend .dot.exp { background: var(--danger); }
+  .rev-exp-ticks {
+    display: flex;
+    justify-content: space-between;
+    font-family: var(--font-mono);
+    font-size: 0.6rem;
+    color: var(--muted);
+    letter-spacing: 0.06em;
+  }
+  .rev-exp-ticks .tick:nth-child(n + 2) { margin-left: -1rem; }
+
+  .cmp-table { width: 100%; border-collapse: collapse; }
+  .cmp-table th, .cmp-table td { padding: 0.4rem 0.6rem; border-bottom: 1px solid var(--line); font-size: 0.85rem; }
+  .cmp-table th { font-family: var(--font-mono); font-size: 0.65rem; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); }
+  .cmp-table td.right, .cmp-table th.right { text-align: right; }
+  .cmp-table td.over { color: var(--danger); }
+  .cmp-table td.under { color: var(--ok); }
+  .cmp-table a { color: var(--ink); text-decoration: none; }
+  .cmp-table a:hover { text-decoration: underline; }
   .lists-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));

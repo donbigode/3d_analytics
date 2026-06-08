@@ -68,6 +68,8 @@ async def get_providers(
         reddit_client_id_preview=_mask(s.reddit_client_id),
         reddit_secret_preview=_mask(s.reddit_client_secret),
         reddit_token_active=reddit_active,
+        youtube_configured=bool(s.youtube_api_key),
+        youtube_key_preview=_mask(s.youtube_api_key),
     )
 
 
@@ -108,6 +110,8 @@ async def put_providers(
         s.reddit_client_secret = payload.reddit_client_secret or None
         s.reddit_access_token = None
         s.reddit_token_expires_at = None
+    if payload.youtube_api_key is not None:
+        s.youtube_api_key = payload.youtube_api_key or None
     await session.commit()
     await session.refresh(s)
     meli_active = bool(
@@ -137,4 +141,6 @@ async def put_providers(
         reddit_client_id_preview=_mask(s.reddit_client_id),
         reddit_secret_preview=_mask(s.reddit_client_secret),
         reddit_token_active=reddit_active,
+        youtube_configured=bool(s.youtube_api_key),
+        youtube_key_preview=_mask(s.youtube_api_key),
     )

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { goto } from "$app/navigation";
+  import { page } from "$app/stores";
   import { api, errorMessage } from "$lib/api";
   import { handleApiError, requireAuth } from "$lib/guard";
   import type { Client, Quote, QuoteKind } from "$lib/types";
@@ -11,6 +12,14 @@
   let markup = 50;
   let minCharge = 0;
   let notes = "";
+
+  // Pre-fill from /projects deep-link: ?model_source_url=...&model_source_site=...
+  $: prefillModelUrl = $page.url.searchParams.get("model_source_url") || "";
+  $: prefillSiteName = $page.url.searchParams.get("model_source_site") || "";
+  $: if (prefillModelUrl && !notes) {
+    const tag = prefillSiteName ? ` (${prefillSiteName})` : "";
+    notes = `Modelo: ${prefillModelUrl}${tag}`;
+  }
 
   let submitting = false;
   let error = "";

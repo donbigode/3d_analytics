@@ -9,10 +9,39 @@
   <thead><tr><th>Peça</th><th>Filamento (m)</th><th>Tempo (s)</th><th>Qtd</th><th>Subtotal</th></tr></thead>
   <tbody>
   {% for it in items %}
-    <tr><td>{{ it.name }}</td><td>{{ "%.2f"|format(it.filament_m) }}</td><td>{{ it.time_s }}</td><td>{{ it.qty }}</td><td>{{ currency }} {{ "%.2f"|format(it.subtotal) }}</td></tr>
+    <tr>
+      <td>
+        {{ it.name }}
+        {% if it.model_source_url %}
+          <div style="font-size:0.78em; color:#6b7280; margin-top:2px;">
+            modelo: <a href="{{ it.model_source_url }}" style="color:#6b7280;">{{ it.model_source_url }}</a>
+            {% if it.model_source_author %} · por {{ it.model_source_author }}{% endif %}
+            {% if it.model_source_license %} · {{ it.model_source_license }}{% endif %}
+          </div>
+        {% endif %}
+      </td>
+      <td>{{ "%.2f"|format(it.filament_m) }}</td>
+      <td>{{ it.time_s }}</td>
+      <td>{{ it.qty }}</td>
+      <td>{{ currency }} {{ "%.2f"|format(it.subtotal) }}</td>
+    </tr>
   {% endfor %}
   </tbody>
 </table>
+
+{% set has_attributions = items|selectattr("model_source_url")|list %}
+{% if has_attributions %}
+<h3 style="margin-top:18px;">Atribuições</h3>
+<ul style="font-size:0.85em; color:#374151; padding-left:1.2em;">
+  {% for it in items if it.model_source_url %}
+    <li>
+      <strong>{{ it.name }}</strong> — modelo de
+      {% if it.model_source_author %}<em>{{ it.model_source_author }}</em>{% else %}<em>autor não identificado</em>{% endif %},
+      disponível em <a href="{{ it.model_source_url }}">{{ it.model_source_url }}</a>{% if it.model_source_license %} ({{ it.model_source_license }}){% endif %}.
+    </li>
+  {% endfor %}
+</ul>
+{% endif %}
 
 {% if services %}
 <h3>Serviços</h3>

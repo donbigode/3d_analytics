@@ -20,6 +20,8 @@ class ProvidersOut(BaseModel):
     reddit_client_id_preview: str | None
     reddit_secret_preview: str | None
     reddit_token_active: bool
+    youtube_configured: bool
+    youtube_key_preview: str | None
 
 
 class ProvidersUpdate(BaseModel):
@@ -32,3 +34,4 @@ class ProvidersUpdate(BaseModel):
     meli_client_secret: str | None = None
     reddit_client_id: str | None = None
     reddit_client_secret: str | None = None
+    youtube_api_key: str | None = None

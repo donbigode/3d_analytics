@@ -45,3 +45,6 @@ class Settings(Base):
     reddit_client_secret: Mapped[str | None] = mapped_column(String(200))
     reddit_access_token: Mapped[str | None] = mapped_column(String(400))
     reddit_token_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    # YouTube Data API v3 — just an API key (no OAuth needed for read).
+    youtube_api_key: Mapped[str | None] = mapped_column(String(200))

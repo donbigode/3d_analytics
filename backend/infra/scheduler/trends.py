@@ -21,6 +21,7 @@ from backend.core.trends.sources import google_trends as gt_source
 from backend.core.trends.sources import mercadolivre as ml_source
 from backend.core.trends.sources import reddit as reddit_source
 from backend.core.trends.sources import wikipedia as wiki_source
+from backend.core.trends.sources import youtube as yt_source
 from backend.infra.db import session as _db_session
 from backend.infra.db.models import KeywordIdea, KeywordObservation, Settings
 
@@ -81,6 +82,31 @@ async def _collect_for_idea(
             )
         )
         inserted += 1
+
+    # --- YouTube (Data API v3) ---
+    yt_key = settings_row.youtube_api_key if settings_row else None
+    if yt_key:
+        try:
+            yt = await yt_source.fetch_views(idea.term, api_key=yt_key)
+        except Exception as exc:
+            logger.warning("youtube raised for %s: %s", idea.term, exc)
+            yt = {}
+        if yt:
+            views = yt.get("views_total")
+            if views is not None:
+                session.add(
+                    KeywordObservation(
+                        keyword_id=idea.id,
+                        source="youtube",
+                        metric="views_total",
+                        value=Decimal(views),
+                        raw_payload={
+                            "videos_count": yt.get("videos_count", 0),
+                            "top_videos": yt.get("top_videos", []),
+                        },
+                    )
+                )
+                inserted += 1
 
     # --- Wikipedia pageviews (PT-BR) ---
     try:

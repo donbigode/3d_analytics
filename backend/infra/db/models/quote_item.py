@@ -18,3 +18,9 @@ class QuoteItem(Base):
     quantity: Mapped[int] = mapped_column(nullable=False, default=1)
     depreciation_rate_override: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
     failure_rate_override: Mapped[Decimal | None] = mapped_column(Numeric(5, 2))
+
+    # Optional link to the source model (Printables/MakerWorld/Thingiverse/…).
+    # Cited in the PDF when present, for CC-BY compliance + transparency.
+    model_source_url: Mapped[str | None] = mapped_column(String(500))
+    model_source_author: Mapped[str | None] = mapped_column(String(160))
+    model_source_license: Mapped[str | None] = mapped_column(String(80))

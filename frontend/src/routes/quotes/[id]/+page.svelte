@@ -41,6 +41,9 @@
   let itemFile: FileList | null = null;
   let itemName = "";
   let itemQty = 1;
+  let itemModelUrl = "";
+  let itemModelAuthor = "";
+  let itemModelLicense = "";
   let addingItem = false;
   let itemError = "";
 
@@ -200,6 +203,9 @@
       fd.append("file", itemFile[0]);
       fd.append("name", itemName || itemFile[0].name);
       fd.append("quantity", String(itemQty));
+      if (itemModelUrl) fd.append("model_source_url", itemModelUrl);
+      if (itemModelAuthor) fd.append("model_source_author", itemModelAuthor);
+      if (itemModelLicense) fd.append("model_source_license", itemModelLicense);
       const res = await fetch(`/api/quotes/${id}/items`, {
         method: "POST",
         body: fd,
@@ -218,6 +224,9 @@
       itemFile = null;
       itemName = "";
       itemQty = 1;
+      itemModelUrl = "";
+      itemModelAuthor = "";
+      itemModelLicense = "";
       const input = document.getElementById("itemFile") as HTMLInputElement | null;
       if (input) input.value = "";
     } catch (err) {
@@ -461,6 +470,22 @@
             <label class="field">
               Quantidade
               <input type="number" min="1" step="1" bind:value={itemQty} />
+            </label>
+            <label class="field">
+              Modelo (URL — opcional)
+              <input
+                type="url"
+                bind:value={itemModelUrl}
+                placeholder="https://printables.com/model/..."
+              />
+            </label>
+            <label class="field">
+              Autor (opcional)
+              <input bind:value={itemModelAuthor} placeholder="Nome do criador" />
+            </label>
+            <label class="field">
+              Licença (opcional)
+              <input bind:value={itemModelLicense} placeholder="CC-BY, CC-BY-NC, ..." />
             </label>
             <div class="actions">
               <button type="submit" disabled={addingItem || !itemFile?.length}>

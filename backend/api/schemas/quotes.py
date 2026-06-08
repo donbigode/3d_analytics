@@ -29,12 +29,18 @@ class QuoteItemOut(BaseModel):
     subtotal: Decimal
     material_pending: bool = False
     pending_material_code: str | None = None
+    model_source_url: str | None = None
+    model_source_author: str | None = None
+    model_source_license: str | None = None
 
 
 class QuoteItemUpdate(BaseModel):
     name: str | None = None
     quantity: int | None = None
     material_code: str | None = None
+    model_source_url: str | None = None
+    model_source_author: str | None = None
+    model_source_license: str | None = None
 
 
 class QuoteServiceOut(BaseModel):
