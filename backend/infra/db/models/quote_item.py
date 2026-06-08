@@ -24,3 +24,10 @@ class QuoteItem(Base):
     model_source_url: Mapped[str | None] = mapped_column(String(500))
     model_source_author: Mapped[str | None] = mapped_column(String(160))
     model_source_license: Mapped[str | None] = mapped_column(String(80))
+
+    # Optional link to an Asset in the local library — avoids re-uploading
+    # the same file. When present, the QuoteItem's filename and metadata
+    # mirror the asset's.
+    asset_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("assets.id", ondelete="SET NULL")
+    )

@@ -46,6 +46,7 @@
     {
       label: "Recursos",
       items: [
+        { href: "/library", label: "Biblioteca", match: (p) => p.startsWith("/library") },
         { href: "/projects", label: "Sites de modelos", match: (p) => p.startsWith("/projects") },
       ],
     },

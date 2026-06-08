@@ -18,6 +18,7 @@ from backend.app import app
 from backend.core.security import hash_password
 from backend.infra.db import session as session_module
 from backend.infra.db.models import (
+    Asset,
     CalibrationInsight,
     Client,
     DataSourceRun,
@@ -65,6 +66,7 @@ async def _isolated_engine_api(test_database_url):
                     MaterialConsumption.__table__,
                     QuoteService.__table__,
                     QuoteItem.__table__,
+                    Asset.__table__,
                     WatcherInboxFile.__table__,
                     Quote.__table__,
                     Spool.__table__,
