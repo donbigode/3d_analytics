@@ -45,6 +45,7 @@
           energy_kwh_price: settings.energy_kwh_price,
           printer_power_w: settings.printer_power_w,
           printer_depreciation_per_hour: settings.printer_depreciation_per_hour,
+          printer_hours_per_day: settings.printer_hours_per_day,
           currency: settings.currency,
           business_name: settings.business_name,
           business_tagline: settings.business_tagline,
@@ -198,6 +199,18 @@
       <label class="field">
         Depreciação por hora (R$/h)
         <input type="number" step="0.01" min="0" bind:value={settings.printer_depreciation_per_hour} required />
+      </label>
+      <label class="field">
+        Horas úteis de impressão por dia
+        <input
+          type="number"
+          step="1"
+          min="1"
+          max="24"
+          bind:value={settings.printer_hours_per_day}
+          required
+        />
+        <small class="hint">Usado pelo planejador de capacidade (/capacity) — quantas horas você consegue manter a impressora rodando por dia.</small>
       </label>
     </form>
   </section>

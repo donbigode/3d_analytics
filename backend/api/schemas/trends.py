@@ -41,6 +41,14 @@ class TopListing(BaseModel):
     permalink: str | None = None
 
 
+class TopRedditPost(BaseModel):
+    title: str
+    subreddit: str = ""
+    score: int = 0
+    comments: int = 0
+    permalink: str | None = None
+
+
 class RankingRow(BaseModel):
     id: str
     term: str
@@ -49,8 +57,11 @@ class RankingRow(BaseModel):
     wiki_views: Decimal | None = None
     ml_volume: Decimal | None
     ml_avg_price: Decimal | None
+    reddit_score: Decimal | None = None
+    reddit_comments: Decimal | None = None
     sparkline: list[SparkPoint]
     top_listings: list[TopListing] = []
+    top_reddit_posts: list[TopRedditPost] = []
     temporal_window: str = "week"
     source_provider: str | None = None  # 'anthropic' | 'gemini' | 'openai' | None (manual)
 

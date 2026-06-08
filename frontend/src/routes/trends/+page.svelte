@@ -494,6 +494,7 @@
               <span class="metric"><dt>Wiki/dia</dt><dd class="mono">{fmtNum(row.wiki_views, 0)}</dd></span>
               <span class="metric"><dt>Vendidos</dt><dd class="mono">{fmtNum(row.ml_volume, 0)}</dd></span>
               <span class="metric"><dt>Preço médio</dt><dd class="mono">{fmtMoney(row.ml_avg_price)}</dd></span>
+              <span class="metric"><dt>Reddit ⬆</dt><dd class="mono">{fmtNum(row.reddit_score, 0)}</dd></span>
             </div>
             <button class="tiny danger" type="button" on:click|stopPropagation={() => removeIdea(row.id)}>×</button>
           </div>
@@ -513,6 +514,23 @@
                       {/if}
                       <span class="mono price">{fmtMoney(ln.price)}</span>
                       <span class="mono sold">· {fmtNum(ln.sold, 0)} vendidos</span>
+                    </li>
+                  {/each}
+                </ul>
+              {/if}
+
+              {#if row.top_reddit_posts && row.top_reddit_posts.length > 0}
+                <h4>Top no Reddit</h4>
+                <ul class="reddit-posts">
+                  {#each row.top_reddit_posts as p}
+                    <li>
+                      {#if p.permalink}
+                        <a href={p.permalink} target="_blank" rel="noreferrer">{p.title}</a>
+                      {:else}
+                        <span>{p.title}</span>
+                      {/if}
+                      <span class="mono sub">r/{p.subreddit}</span>
+                      <span class="mono votes">⬆ {fmtNum(p.score, 0)} · 💬 {fmtNum(p.comments, 0)}</span>
                     </li>
                   {/each}
                 </ul>
@@ -641,6 +659,27 @@
   .listings a:hover { text-decoration: underline; }
   .listings .price { color: var(--brand); }
   .listings .sold { color: var(--muted); font-size: 0.78rem; }
+
+  .reddit-posts {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+  }
+  .reddit-posts li {
+    display: grid;
+    grid-template-columns: 1fr auto auto;
+    gap: 0.6rem;
+    align-items: center;
+    border-bottom: 1px dashed var(--line);
+    padding-bottom: 0.35rem;
+  }
+  .reddit-posts a { color: var(--ink); text-decoration: none; }
+  .reddit-posts a:hover { text-decoration: underline; }
+  .reddit-posts .sub { color: var(--brand); font-size: 0.78rem; }
+  .reddit-posts .votes { color: var(--muted); font-size: 0.78rem; }
 
   @media (max-width: 800px) {
     .rank-head { grid-template-columns: 32px 1fr 28px; gap: 0.6rem; }

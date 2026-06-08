@@ -1,3 +1,5 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -7,10 +9,39 @@ from backend.api.routes import (
     settings as settings_routes, quotes, dashboard, inbox, health,
     calibration, capacity, trends, config,
 )
-from backend.infra.watcher.runner import start_background_task
+from backend.infra.watcher.runner import start_background_task as start_watcher
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Startup / shutdown hooks for the API.
+
+    Replaces the deprecated ``@app.on_event("startup")`` decorators. We spawn
+    background tasks here (watcher + daily trends collector) and cancel them
+    cleanly on shutdown so reload/dev cycles don't leak coroutines.
+    """
+    s = get_settings()
+    tasks = []
+
+    if s.watch_dir:
+        app.state.watcher_task = start_watcher(s.watch_dir)
+        tasks.append(app.state.watcher_task)
+
+    if s.trends_enabled:
+        from backend.infra.scheduler.trends import start_background_task as start_trends
+
+        app.state.trends_task = start_trends()
+        tasks.append(app.state.trends_task)
+
+    try:
+        yield
+    finally:
+        for t in tasks:
+            t.cancel()
+
 
 settings = get_settings()
-app = FastAPI(title="3D Analytics", version="0.1.0")
+app = FastAPI(title="3D Analytics", version="0.1.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -35,18 +66,3 @@ app.include_router(calibration.router, prefix="/calibration", tags=["calibration
 app.include_router(capacity.router, prefix="/capacity", tags=["capacity"])
 app.include_router(trends.router, prefix="/trends", tags=["trends"])
 app.include_router(config.router, prefix="/config", tags=["config"])
-
-
-@app.on_event("startup")
-async def _startup_watcher() -> None:
-    s = get_settings()
-    if s.watch_dir:
-        app.state.watcher_task = start_background_task(s.watch_dir)
-
-
-@app.on_event("startup")
-async def _startup_trends() -> None:
-    from backend.infra.scheduler.trends import start_background_task as start_trends
-    s = get_settings()
-    if s.trends_enabled:
-        app.state.trends_task = start_trends()

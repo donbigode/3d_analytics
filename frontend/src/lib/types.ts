@@ -223,6 +223,14 @@ export type TopListing = {
   permalink: string | null;
 };
 
+export type TopRedditPost = {
+  title: string;
+  subreddit: string;
+  score: number;
+  comments: number;
+  permalink: string | null;
+};
+
 export type LLMSuggestion = {
   id: string;
   term: string;
@@ -257,8 +265,11 @@ export type RankingRow = {
   wiki_views?: number | string | null;
   ml_volume: number | string | null;
   ml_avg_price: number | string | null;
+  reddit_score?: number | string | null;
+  reddit_comments?: number | string | null;
   sparkline: SparkPoint[];
   top_listings: TopListing[];
+  top_reddit_posts?: TopRedditPost[];
   temporal_window: "day" | "week" | "month";
   source_provider: "anthropic" | "gemini" | "openai" | null;
 };

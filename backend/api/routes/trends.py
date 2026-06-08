@@ -31,6 +31,7 @@ from backend.api.schemas.trends import (
     SuggestionOut,
     SuggestionPromoteOut,
     TopListing,
+    TopRedditPost,
 )
 from backend.core.trends.scoring import score as compute_score
 from backend.infra.db.models import (
@@ -180,11 +181,15 @@ async def ranking(
         vol_o = _latest_by(obs, "mercadolivre", "sold_quantity")
         price_o = _latest_by(obs, "mercadolivre", "avg_price")
         wiki_o = _latest_by(obs, "wikipedia", "pageviews_mean")
+        rd_score_o = _latest_by(obs, "reddit", "posts_score")
+        rd_comments_o = _latest_by(obs, "reddit", "posts_comments")
 
         interest = interest_o.value if interest_o else None
         vol = vol_o.value if vol_o else None
         price = price_o.value if price_o else None
         wiki = wiki_o.value if wiki_o else None
+        rd_score = rd_score_o.value if rd_score_o else None
+        rd_comments = rd_comments_o.value if rd_comments_o else None
         s = compute_score(interest, vol, price, wiki_views=wiki)
 
         # Sparkline = chronological interest_score points over last 30d.
@@ -208,6 +213,21 @@ async def ranking(
                         )
                     )
 
+        top_reddit_posts: list[TopRedditPost] = []
+        if rd_score_o and isinstance(rd_score_o.raw_payload, dict):
+            raw_posts = rd_score_o.raw_payload.get("top_posts") or []
+            for p in raw_posts[:5]:
+                if isinstance(p, dict):
+                    top_reddit_posts.append(
+                        TopRedditPost(
+                            title=p.get("title") or "",
+                            subreddit=p.get("subreddit") or "",
+                            score=int(p.get("score") or 0),
+                            comments=int(p.get("comments") or 0),
+                            permalink=p.get("permalink"),
+                        )
+                    )
+
         rows.append(
             RankingRow(
                 id=str(idea.id),
@@ -217,8 +237,11 @@ async def ranking(
                 wiki_views=wiki,
                 ml_volume=vol,
                 ml_avg_price=price,
+                reddit_score=rd_score,
+                reddit_comments=rd_comments,
                 sparkline=sparkline,
                 top_listings=top_listings,
+                top_reddit_posts=top_reddit_posts,
                 temporal_window=idea.temporal_window,
                 source_provider=idea.source_provider,
             )
