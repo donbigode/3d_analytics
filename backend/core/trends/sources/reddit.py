@@ -33,6 +33,15 @@ USER_AGENT = "3d-analytics/0.1 (by /u/3d-analytics-radar)"
 _TIMEOUT = httpx.Timeout(15.0)
 
 
+class RedditAuthError(Exception):
+    """Raised when Reddit refuses our App ID + Secret on every grant we try.
+
+    The scheduler catches this once and stops hitting Reddit for the rest of
+    the collect pass — otherwise 12 ideas × 12 token attempts = wasted calls
+    and a flooded data_source_runs error_message.
+    """
+
+
 @dataclass(frozen=True)
 class RedditCredentials:
     client_id: str
@@ -56,22 +65,60 @@ def _is_token_valid(creds: RedditCredentials) -> bool:
 async def _refresh_token(
     creds: RedditCredentials, *, client: httpx.AsyncClient
 ) -> RedditTokenUpdate | None:
-    try:
-        r = await client.post(
-            REDDIT_TOKEN_URL,
-            data={"grant_type": "client_credentials"},
-            auth=(creds.client_id, creds.client_secret),
-            headers={"User-Agent": USER_AGENT, "accept": "application/json"},
+    """Exchange client credentials for a Bearer token.
+
+    Reddit accepts different grant_type strings depending on how the app was
+    registered at https://www.reddit.com/prefs/apps:
+
+      - "web app" / "installed app"  → grant_type=client_credentials
+      - "script" app                 → grant_type=password (requires the
+        owner's username+password, which we DON'T want to store) — or the
+        "installed_client" grant below as a workaround.
+
+    We try ``client_credentials`` first; on 401 we fall back to
+    ``https://oauth.reddit.com/grants/installed_client`` with a static
+    device_id, which Reddit accepts for app-only reads regardless of the
+    registered app type.
+    """
+    headers = {"User-Agent": USER_AGENT, "accept": "application/json"}
+
+    async def _try_grant(form: dict) -> tuple[str, int] | None:
+        try:
+            r = await client.post(
+                REDDIT_TOKEN_URL,
+                data=form,
+                auth=(creds.client_id, creds.client_secret),
+                headers=headers,
+            )
+            if r.status_code == 401:
+                return None
+            r.raise_for_status()
+            body = r.json()
+            tok = body.get("access_token")
+            exp = int(body.get("expires_in") or 0)
+            if not tok or exp <= 0:
+                return None
+            return tok, exp
+        except Exception as exc:
+            detail = ""
+            if isinstance(exc, httpx.HTTPStatusError):
+                detail = f" body={exc.response.text[:200]!r}"
+            logger.warning("reddit token grant %r failed: %s%s", form.get("grant_type"), exc, detail)
+            return None
+
+    # 1st attempt — works for "web app" / "installed app" types.
+    out = await _try_grant({"grant_type": "client_credentials"})
+    if out is None:
+        # 2nd attempt — works regardless of app type ("script" included).
+        out = await _try_grant(
+            {
+                "grant_type": "https://oauth.reddit.com/grants/installed_client",
+                "device_id": "DO_NOT_TRACK_THIS_DEVICE",
+            }
         )
-        r.raise_for_status()
-        body = r.json()
-    except Exception as exc:
-        logger.warning("reddit token refresh failed: %s", exc)
+    if out is None:
         return None
-    access_token = body.get("access_token")
-    expires_in = int(body.get("expires_in") or 0)
-    if not access_token or expires_in <= 0:
-        return None
+    access_token, expires_in = out
     return RedditTokenUpdate(
         access_token=access_token,
         expires_at=datetime.now(timezone.utc) + timedelta(seconds=expires_in),
@@ -99,7 +146,11 @@ async def fetch_engagement(
         if not _is_token_valid(creds):
             refreshed = await _refresh_token(creds, client=client)
             if refreshed is None:
-                return {}, None
+                raise RedditAuthError(
+                    "Reddit recusou as credenciais (App ID ou Secret inválidos). "
+                    "Confira em reddit.com/prefs/apps que o App ID é a string "
+                    "monospace logo abaixo do nome do app (~14 chars), não o nome."
+                )
             access_token = refreshed.access_token
             token_update = refreshed
 

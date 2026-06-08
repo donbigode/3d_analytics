@@ -84,6 +84,24 @@ async def test_delete_idea(auth_client):
     assert all(x["id"] != iid for x in r.json())
 
 
+async def _seed_dummy_meli_creds():
+    """Ensure /trends/refresh exercises the ML branch (scheduler skips when
+    creds are absent, so tests that monkeypatch fetch_volume need credentials
+    present in Settings)."""
+    from backend.infra.db.session import SessionFactory
+    from backend.infra.db.models import Settings
+
+    async with SessionFactory() as s:
+        row = await s.get(Settings, 1)
+        if row is None:
+            row = Settings(id=1, meli_app_id="dummy", meli_client_secret="dummy")
+            s.add(row)
+        else:
+            row.meli_app_id = "dummy"
+            row.meli_client_secret = "dummy"
+        await s.commit()
+
+
 @pytest.mark.asyncio
 async def test_refresh_collects_and_observations_visible(auth_client, monkeypatch):
     # Patch adapters where the scheduler uses them.
@@ -92,6 +110,7 @@ async def test_refresh_collects_and_observations_visible(auth_client, monkeypatc
 
     monkeypatch.setattr(gt, "fetch_interest", _stub_google_high)
     monkeypatch.setattr(ml, "fetch_volume", _stub_ml_high)
+    await _seed_dummy_meli_creds()
 
     r = await auth_client.post("/trends/ideas", json={"term": "luminaria led"})
     iid = r.json()["id"]
@@ -148,6 +167,7 @@ async def test_ranking_sorts_descending(auth_client, monkeypatch):
 
     monkeypatch.setattr(gt, "fetch_interest", gt_dispatch)
     monkeypatch.setattr(ml, "fetch_volume", ml_dispatch)
+    await _seed_dummy_meli_creds()
     # Skip the 1s sleep between ideas during tests.
     import backend.infra.scheduler.trends as sched
 
