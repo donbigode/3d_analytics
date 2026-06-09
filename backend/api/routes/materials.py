@@ -32,6 +32,8 @@ def _out(mv: MaterialVersion) -> MaterialOut:
         density_g_cm3=mv.density_g_cm3,
         price_per_kg_ref=mv.price_per_kg_ref,
         failure_rate_pct=mv.failure_rate_pct,
+        single_color_waste_pct=mv.single_color_waste_pct,
+        multi_color_waste_pct=mv.multi_color_waste_pct,
         is_current=mv.is_current,
         effective_from=mv.effective_from,
         effective_to=mv.effective_to,

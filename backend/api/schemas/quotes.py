@@ -18,15 +18,21 @@ class QuoteUpdate(BaseModel):
     notes: str | None = None
     markup_pct: Decimal | None = None
     min_charge: Decimal | None = None
+    retail_mode: bool | None = None
 
 
 class QuoteItemOut(BaseModel):
     id: str
     name: str
-    filename: str
+    filename: str | None = None
     gcode_meta: dict
     quantity: int
     subtotal: Decimal
+    # MaterialVersion UUID actually bound to this item — surfaced so the UI
+    # can preselect it in the inline material dropdown. ``None`` when the
+    # gcode was uploaded but no material was resolved.
+    material_id: str | None = None
+    is_multi_color: bool = False
     material_pending: bool = False
     pending_material_code: str | None = None
     model_source_url: str | None = None
@@ -43,6 +49,11 @@ class QuoteItemUpdate(BaseModel):
     # Legacy: polymer type string. Still accepted — auto-resolves when there's
     # exactly one current material of that type; rejects with 400 otherwise.
     material_code: str | None = None
+    # Manual overrides for gcode metadata — used when the slicer dialect
+    # wasn't recognised on upload or the user wants to correct the parse.
+    time_s: float | None = None
+    filament_m: float | None = None
+    is_multi_color: bool | None = None
     model_source_url: str | None = None
     model_source_author: str | None = None
     model_source_license: str | None = None
@@ -63,6 +74,7 @@ class QuoteOut(BaseModel):
     status: QuoteStatus
     markup_pct: Decimal
     min_charge: Decimal
+    retail_mode: bool = False
     notes: str | None
     items: list[QuoteItemOut]
     services: list[QuoteServiceOut]

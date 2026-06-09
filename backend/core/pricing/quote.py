@@ -2,7 +2,12 @@ from dataclasses import dataclass
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Iterable
 
-from backend.core.pricing.cost import filament_cost, energy_cost, depreciation_cost
+from backend.core.pricing.cost import (
+    depreciation_cost,
+    energy_cost,
+    filament_cost,
+    maintenance_cost,
+)
 from backend.core.pricing.failure import apply_failure
 
 
@@ -16,6 +21,9 @@ class ItemInput:
     depreciation_per_hour: Decimal
     failure_pct: Decimal
     quantity: int
+    # Optional — defaults to 0 so existing call sites that don't pass it
+    # keep behaving exactly as before.
+    maintenance_per_hour: Decimal = Decimal("0")
 
 
 @dataclass(frozen=True)
@@ -29,7 +37,8 @@ def compute_item_cost(item: ItemInput) -> Decimal:
     fil = filament_cost(item.grams, item.price_per_kg)
     en = energy_cost(item.time_s, item.power_w, item.kwh_price)
     dep = depreciation_cost(item.time_s, item.depreciation_per_hour)
-    base = fil + en + dep
+    maint = maintenance_cost(item.time_s, item.maintenance_per_hour)
+    base = fil + en + dep + maint
     with_failure = apply_failure(base, item.failure_pct)
     return with_failure * Decimal(item.quantity)
 

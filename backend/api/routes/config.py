@@ -54,6 +54,7 @@ async def get_providers(
     return ProvidersOut(
         preferred_llm_provider=s.preferred_llm_provider,
         llm_suggestions_enabled=s.llm_suggestions_enabled,
+        digest_auto_enabled=s.digest_auto_enabled,
         anthropic_configured=bool(s.anthropic_api_key),
         anthropic_key_preview=_mask(s.anthropic_api_key),
         gemini_configured=bool(s.gemini_api_key),
@@ -86,6 +87,8 @@ async def put_providers(
         s.preferred_llm_provider = payload.preferred_llm_provider
     if payload.llm_suggestions_enabled is not None:
         s.llm_suggestions_enabled = payload.llm_suggestions_enabled
+    if payload.digest_auto_enabled is not None:
+        s.digest_auto_enabled = payload.digest_auto_enabled
     # Keys: "" clears, None leaves alone, any other string sets.
     if payload.anthropic_api_key is not None:
         s.anthropic_api_key = payload.anthropic_api_key or None
@@ -127,6 +130,7 @@ async def put_providers(
     return ProvidersOut(
         preferred_llm_provider=s.preferred_llm_provider,
         llm_suggestions_enabled=s.llm_suggestions_enabled,
+        digest_auto_enabled=s.digest_auto_enabled,
         anthropic_configured=bool(s.anthropic_api_key),
         anthropic_key_preview=_mask(s.anthropic_api_key),
         gemini_configured=bool(s.gemini_api_key),

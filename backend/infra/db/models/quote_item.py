@@ -1,6 +1,6 @@
 from decimal import Decimal
 from uuid import UUID, uuid4
-from sqlalchemy import String, Numeric, ForeignKey, JSON
+from sqlalchemy import Boolean, ForeignKey, JSON, Numeric, String
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 from backend.infra.db.base import Base
@@ -12,12 +12,20 @@ class QuoteItem(Base):
     id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
     quote_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("quotes.id", ondelete="CASCADE"), nullable=False)
     name: Mapped[str] = mapped_column(String(160), nullable=False)
-    filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    # Empty when the item was added without uploading a gcode — the user
+    # records tempo/filamento manually via the inline editors instead.
+    filename: Mapped[str | None] = mapped_column(String(255), nullable=True)
     gcode_meta: Mapped[dict] = mapped_column(JSONB, nullable=False)
     material_version_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("material_versions.id"), nullable=True)
     quantity: Mapped[int] = mapped_column(nullable=False, default=1)
     depreciation_rate_override: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
     failure_rate_override: Mapped[Decimal | None] = mapped_column(Numeric(5, 2))
+    # When true, the cost calc applies the material's multi_color_waste_pct
+    # instead of single_color_waste_pct. Stored per-item because the same
+    # material can be printed in either mode.
+    is_multi_color: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False
+    )
 
     # Optional link to the source model (Printables/MakerWorld/Thingiverse/…).
     # Cited in the PDF when present, for CC-BY compliance + transparency.

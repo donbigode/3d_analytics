@@ -15,9 +15,19 @@ def gcode_to_item_input(
     failure_pct: Decimal,
     quantity: int,
     diameter_mm: Decimal = Decimal("1.75"),
+    maintenance_per_hour: Decimal = Decimal("0"),
+    waste_pct: Decimal = Decimal("0"),
 ) -> ItemInput:
-    """Build an ItemInput for cost computation from parsed gcode metadata and material/settings."""
+    """Build an ItemInput for cost computation from parsed gcode metadata and material/settings.
+
+    ``waste_pct`` inflates the consumed filament to account for purges,
+    brims, supports and color-change towers. The caller picks the right
+    side of the material's single/multi-color presets based on the item's
+    ``is_multi_color`` flag.
+    """
     grams = grams_from_meters(meta.filament_m, density, diameter_mm)
+    if waste_pct > 0:
+        grams = grams * (Decimal(100) + waste_pct) / Decimal(100)
     return ItemInput(
         grams=grams,
         price_per_kg=price_per_kg,
@@ -27,6 +37,7 @@ def gcode_to_item_input(
         depreciation_per_hour=depreciation_per_hour,
         failure_pct=failure_pct,
         quantity=quantity,
+        maintenance_per_hour=maintenance_per_hour,
     )
 
 

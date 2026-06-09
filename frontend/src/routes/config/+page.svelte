@@ -6,6 +6,7 @@
   type Providers = {
     preferred_llm_provider: string;
     llm_suggestions_enabled: boolean;
+    digest_auto_enabled: boolean;
     anthropic_configured: boolean;
     anthropic_key_preview: string | null;
     gemini_configured: boolean;
@@ -39,6 +40,7 @@
   let youtubeInput = "";
   let preferred = "anthropic";
   let suggestionsEnabled = false;
+  let digestAutoEnabled = true;
   let saving = false;
   let saveOk = false;
   let saveError = "";
@@ -50,6 +52,7 @@
       providers = await api<Providers>("/config/providers");
       preferred = providers.preferred_llm_provider;
       suggestionsEnabled = providers.llm_suggestions_enabled;
+      digestAutoEnabled = providers.digest_auto_enabled;
     } catch (err) {
       handleApiError(err);
       pageError = errorMessage(err, "Falha ao carregar configurações.");
@@ -70,6 +73,7 @@
       });
       preferred = providers.preferred_llm_provider;
       suggestionsEnabled = providers.llm_suggestions_enabled;
+      digestAutoEnabled = providers.digest_auto_enabled;
       saveOk = true;
     } catch (err) {
       handleApiError(err);
@@ -139,7 +143,12 @@
     await save({
       preferred_llm_provider: preferred,
       llm_suggestions_enabled: suggestionsEnabled,
+      digest_auto_enabled: digestAutoEnabled,
     });
+  }
+
+  async function toggleDigestAuto() {
+    await save({ digest_auto_enabled: digestAutoEnabled });
   }
 
   onMount(() => {
@@ -386,6 +395,18 @@
       <label class="field check">
         <input type="checkbox" bind:checked={suggestionsEnabled} />
         Coletar sugestões automaticamente (1x/dia)
+      </label>
+      <label class="field check">
+        <input
+          type="checkbox"
+          bind:checked={digestAutoEnabled}
+          on:change={toggleDigestAuto}
+        />
+        Gerar resumo diário automaticamente
+        <small class="hint">
+          Quando ligado, o dashboard regenera o digest na primeira visita do dia.
+          Quando desligado, só roda quando você clicar em "atualizar" no card do dashboard.
+        </small>
       </label>
     </div>
     <div class="actions">

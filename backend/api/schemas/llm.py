@@ -23,6 +23,10 @@ class MarkupSuggestionOut(BaseModel):
     suggested_markup_pct: Decimal
     complexity: str | None = None
     rationale: str | None = None
+    # Aggregate of Mercado Livre street prices used to ground the
+    # recommendation. ``None`` when ML wasn't configured or every item
+    # name was too generic to search.
+    market_price_ref: Decimal | None = None
 
 
 class VarianceOut(BaseModel):

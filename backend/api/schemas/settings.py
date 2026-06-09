@@ -5,7 +5,10 @@ from pydantic import BaseModel
 class SettingsIn(BaseModel):
     energy_kwh_price: Decimal | None = None
     printer_power_w: Decimal | None = None
+    printer_purchase_price: Decimal | None = None
+    printer_useful_life_hours: int | None = None
     printer_depreciation_per_hour: Decimal | None = None
+    printer_maintenance_per_hour: Decimal | None = None
     currency: str | None = None
     business_name: str | None = None
     business_tagline: str | None = None
@@ -18,7 +21,10 @@ class SettingsIn(BaseModel):
 class SettingsOut(BaseModel):
     energy_kwh_price: Decimal
     printer_power_w: Decimal
+    printer_purchase_price: Decimal
+    printer_useful_life_hours: int
     printer_depreciation_per_hour: Decimal
+    printer_maintenance_per_hour: Decimal
     currency: str
     business_name: str
     business_tagline: str | None

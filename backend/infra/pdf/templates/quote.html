@@ -6,7 +6,16 @@
 
 <h3>Peças</h3>
 <table>
-  <thead><tr><th>Peça</th><th>Filamento (m)</th><th>Tempo (s)</th><th>Qtd</th><th>Subtotal</th></tr></thead>
+  <thead>
+    <tr>
+      <th>Peça</th>
+      {% if not retail_mode %}<th>Filamento (m)</th>{% endif %}
+      {% if not retail_mode %}<th>Tempo (s)</th>{% endif %}
+      <th>Qtd</th>
+      {% if retail_mode %}<th>Preço/peça</th>{% endif %}
+      <th>Subtotal</th>
+    </tr>
+  </thead>
   <tbody>
   {% for it in items %}
     <tr>
@@ -20,10 +29,15 @@
           </div>
         {% endif %}
       </td>
-      <td>{{ "%.2f"|format(it.filament_m) }}</td>
-      <td>{{ it.time_s }}</td>
+      {% if not retail_mode %}<td>{{ "%.2f"|format(it.filament_m) }}</td>{% endif %}
+      {% if not retail_mode %}<td>{{ it.time_s }}</td>{% endif %}
       <td>{{ it.qty }}</td>
-      <td>{{ currency }} {{ "%.2f"|format(it.subtotal) }}</td>
+      {% if retail_mode %}
+        <td>{{ currency }} {{ "%.2f"|format(it.client_price_per_piece) }}</td>
+        <td>{{ currency }} {{ "%.2f"|format(it.client_price) }}</td>
+      {% else %}
+        <td>{{ currency }} {{ "%.2f"|format(it.subtotal) }}</td>
+      {% endif %}
     </tr>
   {% endfor %}
   </tbody>
@@ -56,7 +70,13 @@
 {% endif %}
 
 <div class="totals">
-  {% if quote.kind == "commercial" %}
+  {% if retail_mode %}
+    <div>Quantidade total: <strong>{{ total_pieces }}</strong> peça{{ "s" if total_pieces != 1 else "" }}</div>
+    {% if total_pieces > 1 %}
+      <div>Preço por peça: <strong>{{ currency }} {{ "%.2f"|format(price_per_piece) }}</strong></div>
+    {% endif %}
+    <div class="grand">Total: {{ currency }} {{ "%.2f"|format(totals.total) }}</div>
+  {% elif quote.kind == "commercial" %}
     <div class="grand">Total: {{ currency }} {{ "%.2f"|format(totals.total) }}</div>
   {% else %}
     <div class="grand">Custo total: {{ currency }} {{ "%.2f"|format(totals.cost) }}</div>

@@ -28,6 +28,17 @@ class MaterialVersion(Base):
     density_g_cm3: Mapped[Decimal] = mapped_column(Numeric(6, 3), nullable=False)
     price_per_kg_ref: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
     failure_rate_pct: Mapped[Decimal] = mapped_column(Numeric(5, 2), nullable=False, default=0)
+    # Refugo (waste) — fraction of declared filament that turns into purges,
+    # brims, supports and color-change towers. Applied to ``grams`` before
+    # the failure multiplier. The single-color value covers brim/skirt/first
+    # layer purge (typically 1–4%); the multi-color one absorbs the purge
+    # tower for color/material swaps (typically 15–35%).
+    single_color_waste_pct: Mapped[Decimal] = mapped_column(
+        Numeric(5, 2), nullable=False, default=Decimal("2")
+    )
+    multi_color_waste_pct: Mapped[Decimal] = mapped_column(
+        Numeric(5, 2), nullable=False, default=Decimal("20")
+    )
     effective_from: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     effective_to: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     is_current: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)

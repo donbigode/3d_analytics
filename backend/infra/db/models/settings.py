@@ -11,7 +11,15 @@ class Settings(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
     energy_kwh_price: Mapped[Decimal] = mapped_column(Numeric(10, 4), nullable=False, default=Decimal("0.95"))
     printer_power_w: Mapped[Decimal] = mapped_column(Numeric(8, 2), nullable=False, default=Decimal("150"))
+    # Total sticker price + expected running hours. ``printer_depreciation_per_hour``
+    # remains the source of truth used in ``compute_item_cost`` — these two fields
+    # are stored so the UI can offer "calcular automaticamente" (price / hours).
+    printer_purchase_price: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False, default=Decimal("0"))
+    printer_useful_life_hours: Mapped[int] = mapped_column(Integer, nullable=False, default=7300)
     printer_depreciation_per_hour: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False, default=Decimal("0"))
+    # Wear-out budget independent of depreciation: bicos, lubrificação,
+    # correias, build plates, lubrificante. Soma reta no custo do item.
+    printer_maintenance_per_hour: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False, default=Decimal("0"))
     currency: Mapped[str] = mapped_column(String(3), nullable=False, default="BRL")
     business_name: Mapped[str] = mapped_column(String(120), nullable=False, default="Sua Marca")
     business_tagline: Mapped[str | None] = mapped_column(String(200))
@@ -30,6 +38,9 @@ class Settings(Base):
     openai_api_key: Mapped[str | None] = mapped_column(String(200))
     preferred_llm_provider: Mapped[str] = mapped_column(String(20), nullable=False, default="anthropic")
     llm_suggestions_enabled: Mapped[bool] = mapped_column(default=False, nullable=False)
+    # Auto-generate the daily LLM digest on dashboard load. When False the
+    # user has to hit "atualizar" manually to trigger it.
+    digest_auto_enabled: Mapped[bool] = mapped_column(default=True, nullable=False)
 
     # Mercado Livre OAuth client_credentials (App-Auth). Public API now
     # requires Bearer auth even for read endpoints. User registers an app at

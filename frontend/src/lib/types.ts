@@ -17,6 +17,8 @@ export type Material = {
   density_g_cm3: number | string;
   price_per_kg_ref: number | string;
   failure_rate_pct: number | string;
+  single_color_waste_pct: number | string;
+  multi_color_waste_pct: number | string;
   is_current: boolean;
   effective_from: string;
   effective_to: string | null;
@@ -76,7 +78,7 @@ export type QuoteStatus =
 export type QuoteItem = {
   id: string;
   name: string;
-  filename: string;
+  filename: string | null;
   gcode_meta: {
     time_s?: number | null;
     filament_m?: number | null;
@@ -85,6 +87,8 @@ export type QuoteItem = {
   };
   quantity: number;
   subtotal: number | string;
+  material_id?: string | null;
+  is_multi_color?: boolean;
   material_pending?: boolean;
   pending_material_code?: string | null;
   model_source_url?: string | null;
@@ -107,6 +111,7 @@ export type Quote = {
   status: QuoteStatus;
   markup_pct: number | string;
   min_charge: number | string;
+  retail_mode?: boolean;
   notes: string | null;
   items: QuoteItem[];
   services: QuoteServiceLine[];
@@ -188,7 +193,10 @@ export type CalibrationInsightApplyResult = {
 export type Settings = {
   energy_kwh_price: number | string;
   printer_power_w: number | string;
+  printer_purchase_price: number | string;
+  printer_useful_life_hours: number;
   printer_depreciation_per_hour: number | string;
+  printer_maintenance_per_hour: number | string;
   currency: string;
   business_name: string;
   business_tagline: string | null;
@@ -297,6 +305,7 @@ export type MarkupSuggestionOut = {
   suggested_markup_pct: number | string;
   complexity: string | null;
   rationale: string | null;
+  market_price_ref: number | string | null;
 };
 
 export type VarianceOut = {

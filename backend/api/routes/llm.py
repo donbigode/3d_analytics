@@ -135,11 +135,17 @@ async def markup(
         data = await suggest_markup(session, q)
     except LLMUnavailable as exc:
         raise HTTPException(503, str(exc))
+    raw_market = data.get("market_price_ref")
+    try:
+        market_ref = Decimal(str(raw_market)) if raw_market not in (None, "", "null") else None
+    except Exception:  # noqa: BLE001
+        market_ref = None
     return MarkupSuggestionOut(
         quote_id=str(quote_id),
         suggested_markup_pct=Decimal(str(data.get("suggested_markup_pct") or q.markup_pct)),
         complexity=data.get("complexity"),
         rationale=data.get("rationale"),
+        market_price_ref=market_ref,
     )
 
 

@@ -1,8 +1,11 @@
+import logging
 import tempfile
 from datetime import datetime, timezone
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
 from uuid import UUID
+
+logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import Response
@@ -92,6 +95,9 @@ async def _build_item_input(
         return None
     deprec = it.depreciation_rate_override or settings_row.printer_depreciation_per_hour
     failure = it.failure_rate_override or mv.failure_rate_pct
+    waste_pct = (
+        mv.multi_color_waste_pct if it.is_multi_color else mv.single_color_waste_pct
+    ) or Decimal("0")
     meta = GcodeMeta(
         time_s=float(it.gcode_meta.get("time_s") or 0),
         filament_m=float(it.gcode_meta.get("filament_m") or 0),
@@ -107,6 +113,8 @@ async def _build_item_input(
         depreciation_per_hour=deprec,
         failure_pct=failure,
         quantity=it.quantity,
+        maintenance_per_hour=settings_row.printer_maintenance_per_hour or Decimal("0"),
+        waste_pct=waste_pct,
     )
 
 
@@ -149,6 +157,8 @@ async def _quote_out(session: AsyncSession, q: Quote) -> QuoteOut:
             gcode_meta=it.gcode_meta,
             quantity=it.quantity,
             subtotal=item_subtotals[idx].quantize(Decimal("0.01")),
+            material_id=str(it.material_version_id) if it.material_version_id else None,
+            is_multi_color=bool(it.is_multi_color),
             material_pending=(it.material_version_id is None),
             pending_material_code=(
                 (it.gcode_meta.get("material") if it.material_version_id is None else None)
@@ -177,6 +187,7 @@ async def _quote_out(session: AsyncSession, q: Quote) -> QuoteOut:
         status=q.status,
         markup_pct=q.markup_pct,
         min_charge=q.min_charge,
+        retail_mode=q.retail_mode,
         notes=q.notes,
         items=items_out,
         services=services_out,
@@ -258,9 +269,15 @@ async def update_quote(
     q = await session.get(Quote, quote_id)
     if not q:
         raise HTTPException(404)
-    if q.status != QuoteStatus.DRAFT:
+    updates = payload.model_dump(exclude_unset=True)
+    # ``retail_mode`` is a presentation toggle (which PDF layout to use),
+    # so it stays editable after finalize. Every other field locks the
+    # moment the quote leaves draft.
+    presentation_only = {"retail_mode"}
+    financial_updates = {k: v for k, v in updates.items() if k not in presentation_only}
+    if financial_updates and q.status != QuoteStatus.DRAFT:
         raise HTTPException(409, "quote not editable")
-    for k, v in payload.model_dump(exclude_unset=True).items():
+    for k, v in updates.items():
         if k == "client_id" and v is not None:
             v = UUID(v)
         setattr(q, k, v)
@@ -273,8 +290,8 @@ async def update_quote(
 @router.post("/{quote_id}/items", response_model=QuoteOut, status_code=201)
 async def add_item(
     quote_id: UUID,
-    file: UploadFile = File(...),
     name: str = Form(...),
+    file: UploadFile | None = File(None),
     quantity: int = Form(1),
     model_source_url: str | None = Form(None),
     model_source_author: str | None = Form(None),
@@ -288,14 +305,23 @@ async def add_item(
     if q.status != QuoteStatus.DRAFT:
         raise HTTPException(409, "quote not editable")
 
-    content = await file.read()
-    try:
-        with tempfile.NamedTemporaryFile(suffix=".gcode", delete=True) as tf:
-            tf.write(content)
-            tf.flush()
-            meta = parse_gcode_metadata(Path(tf.name))
-    except ValueError as e:
-        raise HTTPException(400, str(e))
+    rel_path: str | None = None
+    meta = GcodeMeta(time_s=0.0, filament_m=0.0, material=None, machine=None)
+    if file is not None and file.filename:
+        content = await file.read()
+        if content:
+            # Parse is best-effort: when the slicer dialect isn't recognised we
+            # still accept the file and let the user fill in time/filament
+            # manually via the inline editor. Rejecting outright would leave
+            # them stuck with no path to enter the data.
+            try:
+                with tempfile.NamedTemporaryFile(suffix=".gcode", delete=True) as tf:
+                    tf.write(content)
+                    tf.flush()
+                    meta = parse_gcode_metadata(Path(tf.name))
+            except ValueError as exc:
+                logger.info("gcode parse fallback for quote %s: %s", quote_id, exc)
+            rel_path = save_gcode(q.id, file.filename or "upload.gcode", content)
 
     material_type = meta.material or "PLA"
     # Auto-resolve only when exactly one current material matches the polymer
@@ -303,7 +329,6 @@ async def add_item(
     # pending so the user picks one explicitly.
     mv = await material_repo.auto_resolve_for_gcode(session, material_type)
 
-    rel_path = save_gcode(q.id, file.filename or "upload.gcode", content)
     item = QuoteItem(
         quote_id=q.id,
         name=name,
@@ -372,12 +397,63 @@ async def update_item(
         meta = dict(it.gcode_meta or {})
         meta["material"] = payload.material_code
         it.gcode_meta = meta
+    if payload.time_s is not None:
+        if payload.time_s < 0:
+            raise HTTPException(400, "time_s must be >= 0")
+        meta = dict(it.gcode_meta or {})
+        meta["time_s"] = float(payload.time_s)
+        it.gcode_meta = meta
+    if payload.filament_m is not None:
+        if payload.filament_m < 0:
+            raise HTTPException(400, "filament_m must be >= 0")
+        meta = dict(it.gcode_meta or {})
+        meta["filament_m"] = float(payload.filament_m)
+        it.gcode_meta = meta
+    if payload.is_multi_color is not None:
+        it.is_multi_color = bool(payload.is_multi_color)
     if payload.model_source_url is not None:
         it.model_source_url = payload.model_source_url or None
     if payload.model_source_author is not None:
         it.model_source_author = payload.model_source_author or None
     if payload.model_source_license is not None:
         it.model_source_license = payload.model_source_license or None
+    await session.commit()
+    return await _quote_out(session, q)
+
+
+@router.post("/{quote_id}/items/{item_id}/reparse", response_model=QuoteOut)
+async def reparse_item(
+    quote_id: UUID,
+    item_id: UUID,
+    _: User = Depends(require_user),
+    session: AsyncSession = Depends(db_session),
+):
+    """Re-run the gcode parser over the stored file and replace meta.
+
+    Useful when the parser has been improved since the item was created —
+    or when the user just wants to undo a manual override and pull values
+    back from the file.
+    """
+    q = await session.get(Quote, quote_id)
+    if not q:
+        raise HTTPException(404)
+    if q.status != QuoteStatus.DRAFT:
+        raise HTTPException(409, "quote not editable")
+    it = await session.get(QuoteItem, item_id)
+    if not it or it.quote_id != quote_id:
+        raise HTTPException(404)
+    if not it.filename:
+        raise HTTPException(409, "esta peça não tem gcode anexado para reanálise")
+    full_path = Path(get_app_settings().storage_dir) / it.filename
+    if not full_path.exists():
+        raise HTTPException(410, "arquivo gcode original não está mais no disco")
+    meta = parse_gcode_metadata(full_path)
+    it.gcode_meta = {
+        "time_s": meta.time_s,
+        "filament_m": meta.filament_m,
+        "material": meta.material,
+        "machine": meta.machine,
+    }
     await session.commit()
     return await _quote_out(session, q)
 
@@ -492,6 +568,37 @@ async def t_finalize(
         q.produced_at = _now()
     else:
         q.status = QuoteStatus.ORCADO
+    await session.commit()
+    return await _quote_out(session, q)
+
+
+@router.post("/{quote_id}/transitions/reopen", response_model=QuoteOut)
+async def t_reopen(
+    quote_id: UUID,
+    _: User = Depends(require_user),
+    session: AsyncSession = Depends(db_session),
+):
+    """Send a finalized commercial quote back to draft.
+
+    Use case: the client asked for an extra piece after the quote was
+    finalized. Rather than create a sibling, we reopen the same one so
+    discussion history and analytics stay together. Allowed only from
+    ``orcado`` — once a quote is approved/produced/delivered, reopening
+    would invalidate downstream events, so we refuse those.
+    """
+    q = await session.get(Quote, quote_id)
+    if not q:
+        raise HTTPException(404)
+    if q.kind != QuoteKind.COMMERCIAL:
+        raise HTTPException(400, "only commercial quotes can be reopened")
+    if q.status != QuoteStatus.ORCADO:
+        raise HTTPException(
+            409, "quote can only be reopened from 'orcado' — current status: " + q.status
+        )
+    q.status = QuoteStatus.DRAFT
+    # Clear the finalize timestamp so the next finalize stamps fresh; the
+    # ledger (task #99) will keep the audit history.
+    q.finalized_at = None
     await session.commit()
     return await _quote_out(session, q)
 
@@ -636,20 +743,49 @@ async def get_pdf(
         c = await session.get(Client, q.client_id)
         client_name = c.name if c else None
 
+    # For retail-mode rendering we need each item priced AT THE CLIENT
+    # PRICE — cost-share × final total — so the line totals add up to the
+    # grand total the customer sees. When the items_cost is zero (every
+    # item still pending) we fall back to splitting equally by quantity.
+    items_cost = sum(item_subtotals, Decimal("0"))
+    # ``total`` already includes services + markup + min_charge.
+    items_total_after_markup = total - services_cost
+    if items_total_after_markup < 0:
+        items_total_after_markup = Decimal("0")
+
     item_dicts = []
     for idx, it in enumerate(items):
+        sub = item_subtotals[idx]
+        if items_cost > 0:
+            client_price = (
+                items_total_after_markup * sub / items_cost
+            ).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        else:
+            client_price = Decimal("0")
+        qty = int(it.quantity or 1)
+        per_piece = (client_price / Decimal(qty)).quantize(
+            Decimal("0.01"), rounding=ROUND_HALF_UP
+        ) if qty else client_price
         item_dicts.append(
             {
                 "name": it.name,
                 "filament_m": it.gcode_meta.get("filament_m") or 0,
                 "time_s": it.gcode_meta.get("time_s") or 0,
-                "qty": it.quantity,
-                "subtotal": float(item_subtotals[idx]),
+                "qty": qty,
+                "subtotal": float(sub),
+                "client_price": float(client_price),
+                "client_price_per_piece": float(per_piece),
                 "model_source_url": it.model_source_url,
                 "model_source_author": it.model_source_author,
                 "model_source_license": it.model_source_license,
             }
         )
+    total_pieces = sum(int(it.quantity or 1) for it in items)
+    price_per_piece = (
+        (total / Decimal(total_pieces)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        if total_pieces > 0
+        else Decimal("0")
+    )
     service_dicts = []
     for sv in services:
         svc = await session.get(Service, sv.service_id)
@@ -676,6 +812,7 @@ async def get_pdf(
         "brand_color": s.brand_color_primary,
         "currency": s.currency,
         "now": _now().strftime("%Y-%m-%d %H:%M"),
+        "retail_mode": bool(q.retail_mode),
         "quote": {
             "id": str(q.id)[:8],
             "kind": q.kind,
@@ -684,6 +821,8 @@ async def get_pdf(
         },
         "items": item_dicts,
         "services": service_dicts,
+        "total_pieces": int(total_pieces),
+        "price_per_piece": float(price_per_piece),
         "totals": {
             "cost": float(cost),
             "markup_pct": float(q.markup_pct),

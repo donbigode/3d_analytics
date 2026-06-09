@@ -11,6 +11,8 @@ class MaterialCreate(BaseModel):
     density_g_cm3: Decimal
     price_per_kg_ref: Decimal
     failure_rate_pct: Decimal = Decimal("0")
+    single_color_waste_pct: Decimal = Decimal("2")
+    multi_color_waste_pct: Decimal = Decimal("20")
 
 
 class MaterialUpdate(BaseModel):
@@ -20,6 +22,8 @@ class MaterialUpdate(BaseModel):
     density_g_cm3: Decimal | None = None
     price_per_kg_ref: Decimal | None = None
     failure_rate_pct: Decimal | None = None
+    single_color_waste_pct: Decimal | None = None
+    multi_color_waste_pct: Decimal | None = None
 
 
 class MaterialOut(BaseModel):
@@ -31,6 +35,8 @@ class MaterialOut(BaseModel):
     density_g_cm3: Decimal
     price_per_kg_ref: Decimal
     failure_rate_pct: Decimal
+    single_color_waste_pct: Decimal
+    multi_color_waste_pct: Decimal
     is_current: bool
     effective_from: datetime
     effective_to: datetime | None

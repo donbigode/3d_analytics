@@ -88,6 +88,12 @@ async def new_version(
         density_g_cm3=changes.get("density_g_cm3", cur.density_g_cm3),
         price_per_kg_ref=changes.get("price_per_kg_ref", cur.price_per_kg_ref),
         failure_rate_pct=changes.get("failure_rate_pct", cur.failure_rate_pct),
+        single_color_waste_pct=changes.get(
+            "single_color_waste_pct", cur.single_color_waste_pct
+        ),
+        multi_color_waste_pct=changes.get(
+            "multi_color_waste_pct", cur.multi_color_waste_pct
+        ),
         is_current=True,
     )
     session.add(new)

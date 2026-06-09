@@ -32,6 +32,7 @@ from backend.core.library import (
     save_bytes,
     storage_path_for,
 )
+from backend.core.library.sources import printables as printables_source
 from backend.infra.db.models import Asset, User
 from backend.settings import get_settings
 
@@ -90,7 +91,11 @@ async def upload_asset(
     fmt = detect_format(file.filename or "")
     if not fmt:
         raise HTTPException(
-            400, "unsupported format — expected one of .gcode / .3mf / .stl / .bgcode"
+            400,
+            "formato não suportado — aceitos: imprimíveis "
+            "(.gcode .bgcode .gco .g .3mf .stl .obj .step .stp) e "
+            "complementares (.pdf .docx .txt .md .png .jpg .jpeg .webp "
+            ".csv .xlsx .zip)",
         )
 
     content = await file.read()
@@ -189,22 +194,103 @@ async def serve_asset(
     return FileResponse(full, filename=a.filename)
 
 
-# ---------- remote search (stub for now, filled by Bloco 2) ----------
+# ---------- remote search ----------
 
 @router.post("/search", response_model=SearchResponse)
 async def search_remote(
     payload: dict,
     _: User = Depends(require_user),
 ):
-    # Bloco 2 plugs Printables here; Bloco 3 adds Thingiverse.
-    return SearchResponse(query=str(payload.get("q") or ""), hits=[], errors=[
-        "remote search not implemented yet — coming in Bloco 2"
-    ])
+    """Aggregate search across the configured remote sources.
+
+    Body: ``{ q: str, sites?: ["printables"|"thingiverse"], limit?: int,
+    use_llm?: bool }``. When ``use_llm`` is true (Bloco 4) the query is
+    expanded by an LLM rewriter before hitting the providers — for now we
+    just pass the raw query through.
+    """
+    q = str(payload.get("q") or "").strip()
+    sites = payload.get("sites") or ["printables"]
+    limit = int(payload.get("limit") or 20)
+    if not q:
+        raise HTTPException(400, "missing 'q'")
+
+    hits: list[RemoteSearchHit] = []
+    errors: list[str] = []
+
+    if "printables" in sites:
+        results, err = await printables_source.search(q, limit=limit)
+        if err:
+            errors.append(err)
+        for h in results:
+            hits.append(
+                RemoteSearchHit(
+                    site="printables",
+                    remote_id=h.remote_id,
+                    title=h.title,
+                    author=h.author,
+                    license=h.license_,
+                    thumbnail_url=h.thumbnail_url,
+                    source_url=h.source_url,
+                    downloads=h.downloads,
+                    summary=h.summary,
+                )
+            )
+
+    return SearchResponse(query=q, hits=hits, errors=errors)
 
 
 @router.post("/download", response_model=DownloadOut, status_code=201)
 async def download_remote(
     payload: DownloadRequest,
     _: User = Depends(require_user),
+    session: AsyncSession = Depends(db_session),
 ):
-    raise HTTPException(501, "remote download not implemented yet — coming in Bloco 2")
+    """Programmatically pull a model's best file (3MF > GCode > STL) and
+    persist it as an Asset. Dedup by SHA-256."""
+    if payload.site != "printables":
+        raise HTTPException(400, f"site '{payload.site}' not supported yet")
+
+    files, info, err = await printables_source.fetch_files(payload.remote_id)
+    if err:
+        raise HTTPException(502, f"printables: {err}")
+    if not files:
+        raise HTTPException(404, "no downloadable files on the model")
+
+    best = printables_source.pick_best_file(files)
+    if best is None:
+        raise HTTPException(404, "no 3mf/gcode/stl file available")
+
+    content, fetch_err = await printables_source.download_bytes(best.download_url)
+    if fetch_err or content is None:
+        raise HTTPException(502, f"download failed: {fetch_err}")
+
+    digest = compute_hash(content)
+    existing = (
+        await session.execute(select(Asset).where(Asset.file_hash == digest))
+    ).scalar_one_or_none()
+    if existing:
+        return DownloadOut(asset=_out(existing), duplicate=True)
+
+    try:
+        path, _h = save_bytes(content, fmt=best.fmt, file_hash=digest)
+    except LibrarySaveError as exc:
+        raise HTTPException(500, f"cannot persist file: {exc}")
+
+    rel_path = str(path.relative_to(get_settings().storage_dir))
+    meta = parse_meta_for_format(content, best.fmt)
+    asset = Asset(
+        filename=best.filename,
+        format=best.fmt,
+        size_bytes=len(content),
+        file_hash=digest,
+        storage_path=rel_path,
+        parsed_meta=meta or None,
+        source_url=payload.source_url or printables_source._model_url(payload.remote_id, None),
+        source_site="printables",
+        source_author=info.get("author"),
+        source_license=info.get("license"),
+    )
+    session.add(asset)
+    await session.commit()
+    await session.refresh(asset)
+    return DownloadOut(asset=_out(asset), duplicate=False)

@@ -35,6 +35,10 @@
   let resolving = false;
   let showQuickCreateMaterial = false;
   let qcName = "";
+
+  // Inline-edit support — items track which field is currently saving so
+  // the UI can grey it out and prevent overlapping PUTs.
+  let savingField: Record<string, string | undefined> = {};
   let qcDensity = "1.24";
   let qcPrice = "100";
   let qcFailure = "5";
@@ -233,6 +237,20 @@
   $: canCancel =
     quote && quote.status !== "entregue" && quote.status !== "cancelado";
 
+  async function toggleRetailMode(next: boolean) {
+    if (!quote) return;
+    try {
+      quote = await api<Quote>(`/quotes/${id}`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ retail_mode: next }),
+      });
+    } catch (err) {
+      handleApiError(err);
+      metaError = errorMessage(err, "Falha ao alternar modo varejo.");
+    }
+  }
+
   async function saveMeta() {
     if (!quote) return;
     metaError = "";
@@ -260,13 +278,19 @@
   }
 
   async function addItem() {
-    if (!quote || !itemFile || itemFile.length === 0) return;
+    if (!quote) return;
+    if (!itemName.trim()) {
+      itemError = "Informe um nome para a peça.";
+      return;
+    }
     itemError = "";
     addingItem = true;
     try {
       const fd = new FormData();
-      fd.append("file", itemFile[0]);
-      fd.append("name", itemName || itemFile[0].name);
+      if (itemFile && itemFile.length > 0) {
+        fd.append("file", itemFile[0]);
+      }
+      fd.append("name", itemName.trim());
       fd.append("quantity", String(itemQty));
       if (itemModelUrl) fd.append("model_source_url", itemModelUrl);
       if (itemModelAuthor) fd.append("model_source_author", itemModelAuthor);
@@ -329,6 +353,70 @@
       resolveError = errorMessage(err, "Falha ao resolver material.");
     } finally {
       resolving = false;
+    }
+  }
+
+  /**
+   * Send a partial PUT for an item and replace the local quote with the
+   * server's response. The backend recomputes subtotals so editing tempo,
+   * filamento, material or quantity refreshes the cost immediately.
+   * The optional ``field`` argument drives a per-cell saving spinner.
+   */
+  async function patchItem(
+    itemId: string,
+    fields: Record<string, unknown>,
+    field?: string,
+  ) {
+    if (field) savingField = { ...savingField, [itemId]: field };
+    itemError = "";
+    try {
+      quote = await api<Quote>(`/quotes/${id}/items/${itemId}`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(fields),
+      });
+    } catch (err) {
+      handleApiError(err);
+      itemError = errorMessage(err, "Falha ao salvar alteração.");
+    } finally {
+      if (field) savingField = { ...savingField, [itemId]: undefined };
+    }
+  }
+
+  function patchTime(itemId: string, minutesStr: string) {
+    const minutes = Number(minutesStr);
+    if (!isFinite(minutes) || minutes < 0) return;
+    patchItem(itemId, { time_s: minutes * 60 }, "time");
+  }
+  function patchFilament(itemId: string, metersStr: string) {
+    const meters = Number(metersStr);
+    if (!isFinite(meters) || meters < 0) return;
+    patchItem(itemId, { filament_m: meters }, "filament");
+  }
+  function patchMaterial(itemId: string, materialId: string) {
+    if (!materialId) return;
+    patchItem(itemId, { material_id: materialId }, "material");
+  }
+  function patchQuantity(itemId: string, qtyStr: string) {
+    const q = Math.max(1, Math.floor(Number(qtyStr) || 1));
+    patchItem(itemId, { quantity: q }, "quantity");
+  }
+  function patchMultiColor(itemId: string, next: boolean) {
+    patchItem(itemId, { is_multi_color: next }, "multi_color");
+  }
+
+  let reparsingId: string | null = null;
+  async function reparseItem(itemId: string) {
+    reparsingId = itemId;
+    try {
+      quote = await api<Quote>(`/quotes/${id}/items/${itemId}/reparse`, {
+        method: "POST",
+      });
+    } catch (err) {
+      handleApiError(err);
+      itemError = errorMessage(err, "Falha ao reanalisar o gcode.");
+    } finally {
+      reparsingId = null;
     }
   }
 
@@ -410,7 +498,7 @@
     }
   }
 
-  async function transition(t: "finalize" | "approve" | "deliver" | "cancel") {
+  async function transition(t: "finalize" | "approve" | "deliver" | "cancel" | "reopen") {
     if (!quote) return;
     txError = "";
     transitioning = t;
@@ -525,12 +613,15 @@
         {#if isDraft}
           <form class="form-grid item-form" on:submit|preventDefault={addItem}>
             <label class="field">
-              Arquivo G-code
-              <input id="itemFile" type="file" accept=".gcode,.bgcode" bind:files={itemFile} required />
+              Nome <span class="req">*</span>
+              <input bind:value={itemName} placeholder="Ex.: porta-caneta" required />
             </label>
             <label class="field">
-              Nome
-              <input bind:value={itemName} placeholder="Ex.: porta-caneta" />
+              Arquivo G-code (opcional)
+              <input id="itemFile" type="file" accept=".gcode,.bgcode" bind:files={itemFile} />
+              <small class="hint">
+                Sem arquivo? Preenche tempo/filamento direto na tabela depois.
+              </small>
             </label>
             <label class="field">
               Quantidade
@@ -553,7 +644,7 @@
               <input bind:value={itemModelLicense} placeholder="CC-BY, CC-BY-NC, ..." />
             </label>
             <div class="actions">
-              <button type="submit" disabled={addingItem || !itemFile?.length}>
+              <button type="submit" disabled={addingItem || !itemName.trim()}>
                 {addingItem ? "Enviando…" : "+ adicionar peça"}
               </button>
             </div>
@@ -578,19 +669,97 @@
                 <tr class:pending={it.material_pending}>
                   <td>{it.name}</td>
                   <td class="mono">
-                    {it.gcode_meta?.material ?? "—"}
-                    {#if it.material_pending}
-                      <span class="badge pending">pendente</span>
+                    {#if isDraft}
+                      <select
+                        class="inline"
+                        value={it.material_id ?? ""}
+                        disabled={savingField[it.id] === "material"}
+                        on:change={(e) => patchMaterial(it.id, (e.currentTarget as HTMLSelectElement).value)}
+                      >
+                        <option value="" disabled>
+                          {it.gcode_meta?.material ? `(${it.gcode_meta.material}) escolher` : "— escolher —"}
+                        </option>
+                        {#each materials as m}
+                          <option value={m.id}>
+                            {m.name} · {m.material_type}{m.color ? ` · ${m.color}` : ""}
+                          </option>
+                        {/each}
+                      </select>
+                      <label class="mc-toggle" title="Marca quando a peça usa mais de uma cor — aplica o refugo de purga maior do material.">
+                        <input
+                          type="checkbox"
+                          checked={it.is_multi_color ?? false}
+                          disabled={savingField[it.id] === "multi_color"}
+                          on:change={(e) => patchMultiColor(it.id, (e.currentTarget as HTMLInputElement).checked)}
+                        />
+                        <span>multicolor</span>
+                      </label>
+                      {#if it.material_pending}
+                        <span class="badge pending">pendente</span>
+                      {/if}
+                    {:else}
+                      {it.gcode_meta?.material ?? "—"}{it.is_multi_color ? " · multicolor" : ""}
                     {/if}
                   </td>
-                  <td class="right mono">{fmtNum(it.gcode_meta?.filament_m, 2)} m</td>
-                  <td class="right mono">{fmtDur(it.gcode_meta?.time_s)}</td>
-                  <td class="right mono">{it.quantity}</td>
+                  <td class="right mono">
+                    {#if isDraft}
+                      <input
+                        type="number"
+                        class="inline right"
+                        min="0"
+                        step="0.01"
+                        value={Number(it.gcode_meta?.filament_m ?? 0).toFixed(2)}
+                        disabled={savingField[it.id] === "filament"}
+                        on:change={(e) => patchFilament(it.id, (e.currentTarget as HTMLInputElement).value)}
+                      />
+                      <span class="unit">m</span>
+                    {:else}
+                      {fmtNum(it.gcode_meta?.filament_m, 2)} m
+                    {/if}
+                  </td>
+                  <td class="right mono">
+                    {#if isDraft}
+                      <input
+                        type="number"
+                        class="inline right"
+                        min="0"
+                        step="1"
+                        value={Math.round(Number(it.gcode_meta?.time_s ?? 0) / 60)}
+                        disabled={savingField[it.id] === "time"}
+                        on:change={(e) => patchTime(it.id, (e.currentTarget as HTMLInputElement).value)}
+                      />
+                      <span class="unit">min</span>
+                    {:else}
+                      {fmtDur(it.gcode_meta?.time_s)}
+                    {/if}
+                  </td>
+                  <td class="right mono">
+                    {#if isDraft}
+                      <input
+                        type="number"
+                        class="inline right"
+                        min="1"
+                        step="1"
+                        value={it.quantity}
+                        disabled={savingField[it.id] === "quantity"}
+                        on:change={(e) => patchQuantity(it.id, (e.currentTarget as HTMLInputElement).value)}
+                      />
+                    {:else}
+                      {it.quantity}
+                    {/if}
+                  </td>
                   <td class="right mono">{fmtMoney(it.subtotal)}</td>
                   {#if isDraft}
                     <td class="right">
-                      {#if it.material_pending}
-                        <button class="tiny" on:click={() => openResolve(it)}>resolver</button>
+                      {#if it.filename}
+                        <button
+                          class="tiny ghost"
+                          title="Reanalisa o gcode armazenado com o parser atual"
+                          on:click={() => reparseItem(it.id)}
+                          disabled={reparsingId === it.id}
+                        >
+                          {reparsingId === it.id ? "↻…" : "↻ reparse"}
+                        </button>
                       {/if}
                       <button class="tiny ghost" on:click={() => askVariants(it.id)}
                               disabled={llmBusy === "variants" && variantsForItem === it.id}>
@@ -707,6 +876,17 @@
               Cobrança mínima
               <input type="number" min="0" step="0.01" bind:value={editMin} />
             </label>
+            <label class="field full retail-toggle">
+              <input
+                type="checkbox"
+                checked={quote?.retail_mode ?? false}
+                on:change={(e) => toggleRetailMode((e.currentTarget as HTMLInputElement).checked)}
+              />
+              <span>
+                Emissão de varejo
+                <small>esconde tempo/filamento no PDF; mostra preço total + preço por peça</small>
+              </span>
+            </label>
             <label class="field full">
               Notas
               <input bind:value={editNotes} />
@@ -765,6 +945,11 @@
             <strong>Markup sugerido: {fmtNum(markupSuggestion.suggested_markup_pct, 0)}%</strong>
             {#if markupSuggestion.complexity}
               <span class="tag muted">{markupSuggestion.complexity}</span>
+            {/if}
+            {#if markupSuggestion.market_price_ref}
+              <span class="tag muted" title="Estimativa baseada nos preços do Mercado Livre para itens similares">
+                mercado ≈ {fmtMoney(markupSuggestion.market_price_ref)}
+              </span>
             {/if}
             {#if markupSuggestion.rationale}<p class="dim">{markupSuggestion.rationale}</p>{/if}
             {#if isDraft && quote.kind === "commercial"}
@@ -830,6 +1015,14 @@
           {#if quote.kind === "commercial" && quote.status === "orcado"}
             <button on:click={() => transition("approve")} disabled={transitioning === "approve"}>
               {transitioning === "approve" ? "Aprovando…" : "Aprovar"}
+            </button>
+            <button
+              class="ghost"
+              on:click={() => transition("reopen")}
+              disabled={transitioning === "reopen"}
+              title="Volta o orçamento pra rascunho — útil quando o cliente pede mais peças antes de aprovar."
+            >
+              {transitioning === "reopen" ? "Reabrindo…" : "↩ Reabrir"}
             </button>
           {/if}
           {#if quote.kind === "commercial" && quote.status === "aprovado"}
@@ -1053,6 +1246,62 @@
     text-transform: uppercase;
   }
   tr.pending td { background: rgba(245, 158, 11, 0.08); }
+  /* Inline-edit table cells — fixed widths so every row aligns vertically. */
+  input.inline, select.inline {
+    font: inherit;
+    padding: 0.2rem 0.4rem;
+    border: 1px solid var(--line);
+    background: var(--paper);
+    box-sizing: border-box;
+    height: 1.85rem;
+    line-height: 1.2;
+    vertical-align: middle;
+  }
+  input.inline { width: 5.5rem; }
+  input.inline.right { text-align: right; font-variant-numeric: tabular-nums; }
+  select.inline { width: 13rem; max-width: 100%; }
+  input.inline:focus, select.inline:focus { outline: 1px solid var(--brand); outline-offset: 1px; }
+  input.inline:disabled, select.inline:disabled { opacity: 0.55; }
+  .unit {
+    color: var(--muted);
+    margin-left: 0.25rem;
+    font-size: 0.78rem;
+    display: inline-block;
+    width: 2.4ch;
+    text-align: left;
+    vertical-align: middle;
+  }
+  .mc-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    margin-left: 0.4rem;
+    color: var(--muted);
+    font-size: 0.72rem;
+    cursor: pointer;
+    user-select: none;
+  }
+  .mc-toggle input { margin: 0; }
+  /* Pin column widths so input vs. plain-text rendering doesn't reflow. */
+  table th:nth-child(2), table td:nth-child(2) { min-width: 14rem; }
+  table th:nth-child(3), table td:nth-child(3),
+  table th:nth-child(4), table td:nth-child(4) { width: 9rem; white-space: nowrap; }
+  table th:nth-child(5), table td:nth-child(5) { width: 5.5rem; }
+  .retail-toggle {
+    flex-direction: row !important;
+    align-items: flex-start;
+    gap: 0.5rem;
+    padding: 0.5rem 0.6rem;
+    background: rgba(0, 0, 0, 0.02);
+    border: 1px solid var(--line);
+  }
+  .retail-toggle input[type="checkbox"] { margin-top: 0.2rem; }
+  .retail-toggle small {
+    display: block;
+    color: var(--muted);
+    font-size: 0.78rem;
+    margin-top: 0.1rem;
+  }
   .badge.pending {
     display: inline-block;
     margin-left: 0.4rem;

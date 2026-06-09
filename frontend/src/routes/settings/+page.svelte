@@ -32,6 +32,22 @@
     }
   }
 
+  $: autoDepRate = (() => {
+    if (!settings) return "0,00";
+    const price = Number(settings.printer_purchase_price ?? 0);
+    const hours = Number(settings.printer_useful_life_hours ?? 0);
+    if (price <= 0 || hours <= 0) return "0,00";
+    return (price / hours).toFixed(2).replace(".", ",");
+  })();
+
+  function autoDepreciation() {
+    if (!settings) return;
+    const price = Number(settings.printer_purchase_price ?? 0);
+    const hours = Number(settings.printer_useful_life_hours ?? 0);
+    if (price <= 0 || hours <= 0) return;
+    settings.printer_depreciation_per_hour = +(price / hours).toFixed(2);
+  }
+
   async function save() {
     if (!settings) return;
     saveError = "";
@@ -44,7 +60,10 @@
         body: JSON.stringify({
           energy_kwh_price: settings.energy_kwh_price,
           printer_power_w: settings.printer_power_w,
+          printer_purchase_price: settings.printer_purchase_price,
+          printer_useful_life_hours: settings.printer_useful_life_hours,
           printer_depreciation_per_hour: settings.printer_depreciation_per_hour,
+          printer_maintenance_per_hour: settings.printer_maintenance_per_hour,
           printer_hours_per_day: settings.printer_hours_per_day,
           currency: settings.currency,
           business_name: settings.business_name,
@@ -187,7 +206,7 @@
       <h2 class="section-title">Energia &amp; depreciação</h2>
     </div>
 
-    <form class="form-grid" on:submit|preventDefault={save}>
+    <form class="form-grid cost-form" on:submit|preventDefault={save}>
       <label class="field">
         Energia (R$/kWh)
         <input type="number" step="0.0001" min="0" bind:value={settings.energy_kwh_price} required />
@@ -195,10 +214,34 @@
       <label class="field">
         Potência média da impressora (W)
         <input type="number" step="0.01" min="0" bind:value={settings.printer_power_w} required />
+        <small class="hint">K2 Plus médio FDM gira em torno de 150–250 W.</small>
+      </label>
+      <label class="field">
+        Preço da impressora (R$)
+        <input type="number" step="0.01" min="0" bind:value={settings.printer_purchase_price} required />
+        <small class="hint">Valor pago. Usado só pra te ajudar a calcular a depreciação.</small>
+      </label>
+      <label class="field">
+        Vida útil estimada (horas)
+        <input type="number" step="1" min="0" bind:value={settings.printer_useful_life_hours} required />
+        <small class="hint">~7.300 h ≈ 4 h/dia × 5 anos. Use mais se imprimir muito.</small>
       </label>
       <label class="field">
         Depreciação por hora (R$/h)
-        <input type="number" step="0.01" min="0" bind:value={settings.printer_depreciation_per_hour} required />
+        <div class="inline-actions">
+          <input type="number" step="0.01" min="0" bind:value={settings.printer_depreciation_per_hour} required />
+          <button type="button" class="tiny ghost" on:click={autoDepreciation}>
+            ↻ calcular
+          </button>
+        </div>
+        <small class="hint">
+          Sugerido: preço ÷ vida útil = R$ {autoDepRate}/h
+        </small>
+      </label>
+      <label class="field">
+        Manutenção por hora (R$/h)
+        <input type="number" step="0.01" min="0" bind:value={settings.printer_maintenance_per_hour} required />
+        <small class="hint">Bicos, correias, build plates, lubrificação. Tipicamente R$ 0,30–0,80/h.</small>
       </label>
       <label class="field">
         Horas úteis de impressão por dia
@@ -264,6 +307,35 @@
   .logo-placeholder { color: #9ca3af; font-size: 0.85em; }
   .logo-controls { display: flex; flex-direction: column; gap: 0.75rem; }
   .actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+  /* Cost-form panel: hints under inputs ruin the default `align-items: end`
+     because labels with a hint end up taller than labels without one. Pin
+     each cell to the top of its grid row, push the hint to the bottom with
+     auto-margin, and force inputs onto a single shared baseline. */
+  .form-grid.cost-form {
+    align-items: stretch;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  }
+  .form-grid.cost-form .field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+  }
+  .form-grid.cost-form .field input,
+  .form-grid.cost-form .field .inline-actions {
+    align-self: stretch;
+  }
+  .form-grid.cost-form .field small.hint {
+    margin-top: auto;
+    min-height: 2.4em;
+    line-height: 1.2;
+  }
+  .inline-actions {
+    display: flex;
+    gap: 0.4rem;
+    align-items: center;
+  }
+  .inline-actions input { flex: 1; }
+  .inline-actions button { white-space: nowrap; flex-shrink: 0; }
   .bottom-actions {
     display: flex; flex-direction: column; gap: 0.5rem;
     align-items: flex-end; margin-top: 1.5rem;

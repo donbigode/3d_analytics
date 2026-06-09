@@ -6,8 +6,11 @@ Public surface:
   - SUPPORTED_FORMATS: enum-like
 """
 from backend.core.library.parsers import (
+    AUXILIARY_FORMATS,
+    PRINTABLE_FORMATS,
     SUPPORTED_FORMATS,
     detect_format,
+    is_printable,
     parse_meta_for_format,
 )
 from backend.core.library.storage import (
@@ -18,10 +21,13 @@ from backend.core.library.storage import (
 )
 
 __all__ = [
+    "AUXILIARY_FORMATS",
+    "PRINTABLE_FORMATS",
     "SUPPORTED_FORMATS",
     "LibrarySaveError",
     "compute_hash",
     "detect_format",
+    "is_printable",
     "parse_meta_for_format",
     "save_bytes",
     "storage_path_for",

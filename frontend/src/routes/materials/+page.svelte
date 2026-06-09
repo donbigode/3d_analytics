@@ -19,6 +19,8 @@
   let density_g_cm3 = "";
   let price_per_kg_ref = "";
   let failure_rate_pct = "0";
+  let single_color_waste_pct = "2";
+  let multi_color_waste_pct = "20";
   let submitting = false;
   let formError = "";
 
@@ -61,10 +63,14 @@
           density_g_cm3,
           price_per_kg_ref,
           failure_rate_pct: failure_rate_pct || "0",
+          single_color_waste_pct: single_color_waste_pct || "2",
+          multi_color_waste_pct: multi_color_waste_pct || "20",
         }),
       });
       name = manufacturer = color = density_g_cm3 = price_per_kg_ref = "";
       failure_rate_pct = "0";
+      single_color_waste_pct = "2";
+      multi_color_waste_pct = "20";
       await load();
     } catch (err) {
       handleApiError(err);
@@ -89,6 +95,8 @@
           density_g_cm3: editing.density_g_cm3,
           price_per_kg_ref: editing.price_per_kg_ref,
           failure_rate_pct: editing.failure_rate_pct,
+          single_color_waste_pct: editing.single_color_waste_pct,
+          multi_color_waste_pct: editing.multi_color_waste_pct,
         }),
       });
       editing = null;
@@ -202,6 +210,16 @@
     Taxa de falha (%)
     <input bind:value={failure_rate_pct} type="number" step="0.1" min="0" max="100" />
   </label>
+  <label class="field">
+    Refugo · 1 cor (%)
+    <input bind:value={single_color_waste_pct} type="number" step="0.1" min="0" max="100" />
+    <small class="hint">Brim + skirt + 1ª camada. Tipicamente 1–4%.</small>
+  </label>
+  <label class="field">
+    Refugo · multicolor (%)
+    <input bind:value={multi_color_waste_pct} type="number" step="0.1" min="0" max="100" />
+    <small class="hint">Purga/wipe tower a cada troca de cor. 15–35%.</small>
+  </label>
 </Form>
 
 <section class="panel list-panel">
@@ -266,6 +284,14 @@
         <label class="field">
           Taxa de falha (%)
           <input bind:value={editing.failure_rate_pct} type="number" step="0.1" min="0" max="100" required />
+        </label>
+        <label class="field">
+          Refugo · 1 cor (%)
+          <input bind:value={editing.single_color_waste_pct} type="number" step="0.1" min="0" max="100" required />
+        </label>
+        <label class="field">
+          Refugo · multicolor (%)
+          <input bind:value={editing.multi_color_waste_pct} type="number" step="0.1" min="0" max="100" required />
         </label>
         <div class="actions">
           <button type="button" class="ghost" on:click={() => (editing = null)}>Cancelar</button>

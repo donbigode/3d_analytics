@@ -170,9 +170,11 @@
   <span class="page-eyebrow">Recursos / 11 · acervo</span>
   <h1 class="page-title">Biblioteca<em>.</em></h1>
   <p class="page-lede">
-    Arquivos <span class="mono">.gcode</span>, <span class="mono">.3mf</span> e
-    <span class="mono">.stl</span> que você fez upload ou baixou de Printables /
-    Thingiverse. Deduplicados por SHA-256 — o mesmo arquivo nunca ocupa espaço duas vezes.
+    Arquivos de impressão (<span class="mono">.gcode</span>, <span class="mono">.3mf</span>,
+    <span class="mono">.stl</span>, <span class="mono">.obj</span>, <span class="mono">.step</span>)
+    e materiais complementares (PDF, foto, planilha, documento) que você fez upload
+    ou baixou de Printables / Thingiverse. Deduplicados por SHA-256 — o mesmo arquivo
+    nunca ocupa espaço duas vezes.
   </p>
 </header>
 
@@ -248,8 +250,18 @@
   </div>
   <form class="form-grid" on:submit|preventDefault={upload}>
     <label class="field">
-      Arquivo (.gcode / .3mf / .stl / .bgcode)
-      <input id="libFile" type="file" accept=".gcode,.3mf,.stl,.bgcode" bind:files={uploadFile} required />
+      Arquivo (imprimível ou complementar)
+      <input
+        id="libFile"
+        type="file"
+        accept=".gcode,.bgcode,.gco,.g,.3mf,.stl,.obj,.step,.stp,.pdf,.doc,.docx,.txt,.md,.rtf,.png,.jpg,.jpeg,.webp,.gif,.csv,.xlsx,.xls,.zip"
+        bind:files={uploadFile}
+        required
+      />
+      <small class="hint">
+        Imprimíveis: .gcode .bgcode .3mf .stl .obj .step ·
+        Complementares: .pdf .docx .txt .png .jpg .csv .xlsx .zip
+      </small>
     </label>
     <label class="field">
       URL do modelo (opcional)
@@ -334,6 +346,7 @@
   .banner { color: var(--ink); margin: 0.4rem 0; }
   .banner.ok { color: var(--ok); }
   .alert { color: var(--danger); }
+  .hint { color: var(--muted); font-size: 0.72rem; margin-top: 0.25rem; }
   .errors { margin: 0.5rem 0; }
   .errors summary { cursor: pointer; color: var(--muted); font-size: 0.85rem; }
   .errors ul { margin: 0.3rem 0; padding-left: 1.2rem; }

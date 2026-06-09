@@ -1,3 +1,5 @@
+import pytest
+
 from backend.core.gcode.parser import parse_gcode_metadata, GcodeMeta
 
 SAMPLE = """;TIME:1720.57
@@ -5,6 +7,26 @@ SAMPLE = """;TIME:1720.57
 ;Material Type:PLA
 ;Machine Name:K2 Plus
 M104 S210
+"""
+
+# Real-world fragment from a BambuStudio export — uses [mm] for filament
+# and the human-readable "5h 32m 14s" time format.
+BAMBU_SAMPLE = """; HEADER_BLOCK_START
+; BambuStudio 02.00.01.71
+; total estimated time: 5h 32m 14s
+; total filament used [mm] = 81230.45
+; total filament used [g] = 245.32
+; filament_type = PLA;PETG
+; printer_model = Bambu Lab X1 Carbon
+G28
+"""
+
+PRUSA_SAMPLE = """; PrusaSlicer 2.7.4
+; estimated printing time (normal mode) = 1h 12m 3s
+; filament used [mm] = 12345.6
+; filament_type = PETG
+; printer_model = MK4
+M104 S215
 """
 
 
@@ -17,3 +39,54 @@ def test_parse_extracts_known_fields(tmp_path):
     assert meta.filament_m == 4.98355
     assert meta.material == "PLA"
     assert meta.machine == "K2 Plus"
+
+
+def test_parse_bambu_dialect(tmp_path):
+    f = tmp_path / "bambu.gcode"
+    f.write_text(BAMBU_SAMPLE)
+    meta = parse_gcode_metadata(f)
+    # 5h 32m 14s → 19934
+    assert meta.time_s == pytest.approx(19934.0)
+    # 81230.45 mm → 81.23045 m
+    assert meta.filament_m == pytest.approx(81.23045)
+    assert meta.material == "PLA"  # first of multi-material list
+    assert meta.machine == "Bambu Lab X1 Carbon"
+
+
+def test_parse_prusa_dialect(tmp_path):
+    f = tmp_path / "prusa.gcode"
+    f.write_text(PRUSA_SAMPLE)
+    meta = parse_gcode_metadata(f)
+    assert meta.time_s == pytest.approx(4323.0)  # 1h 12m 3s
+    assert meta.filament_m == pytest.approx(12.3456)
+    assert meta.material == "PETG"
+    assert meta.machine == "MK4"
+
+
+def test_fuzzy_fallback_unknown_dialect(tmp_path):
+    """The fuzzy fallback handles ad-hoc slicer headers that don't match
+    any known pattern — exactly what makes the parser tolerant of new
+    Creality / Anycubic / Flsun firmwares."""
+    sample = (
+        ";Print Time: 2:35:00\n"
+        ";Total filament: 12.45 m\n"
+        ";Material: PETG\n"
+        ";Printer: K2 Plus\n"
+        "G28\n"
+    )
+    f = tmp_path / "fuzzy.gcode"
+    f.write_text(sample)
+    meta = parse_gcode_metadata(f)
+    assert meta.time_s == pytest.approx(9300.0)
+    assert meta.filament_m == pytest.approx(12.45)
+    assert meta.material == "PETG"
+    assert meta.machine and "K2" in meta.machine
+
+
+def test_unparseable_returns_zeros(tmp_path):
+    """No raise, ever. Caller gets zeros and can prompt for manual input."""
+    f = tmp_path / "junk.gcode"
+    f.write_text("G28\nM104 S200\n; unrelated commentary\n")
+    meta = parse_gcode_metadata(f)
+    assert meta.time_s == 0.0
+    assert meta.filament_m == 0.0

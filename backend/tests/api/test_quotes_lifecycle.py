@@ -19,6 +19,108 @@ async def _seed_material(client):
 
 
 @pytest.mark.asyncio
+async def test_reopen_quote_from_orcado_back_to_draft(auth_client):
+    """The cliente asked for one more part after the quote was finalized;
+    reopen lets the owner add it without losing history. Only allowed from
+    'orcado' and only for commercial quotes."""
+    await _seed_material(auth_client)
+    r = await auth_client.post("/quotes", json={"kind": "commercial"})
+    qid = r.json()["id"]
+    files = {"file": ("p.gcode", GCODE_SAMPLE, "application/octet-stream")}
+    await auth_client.post(
+        f"/quotes/{qid}/items", files=files, data={"name": "A", "quantity": "1"}
+    )
+    r = await auth_client.post(f"/quotes/{qid}/transitions/finalize")
+    assert r.json()["status"] == "orcado"
+
+    # Reopen — back to draft.
+    r = await auth_client.post(f"/quotes/{qid}/transitions/reopen")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["status"] == "draft"
+    assert body["finalized_at"] is None  # cleared so refinalize stamps fresh
+
+    # Now we can add a new item.
+    files2 = {"file": ("p2.gcode", GCODE_SAMPLE, "application/octet-stream")}
+    r = await auth_client.post(
+        f"/quotes/{qid}/items", files=files2, data={"name": "B", "quantity": "2"}
+    )
+    assert r.status_code == 201
+    assert len(r.json()["items"]) == 2
+
+    # Reopening from non-orcado states is rejected.
+    await auth_client.post(f"/quotes/{qid}/transitions/finalize")
+    await auth_client.post(f"/quotes/{qid}/transitions/approve")
+    r = await auth_client.post(f"/quotes/{qid}/transitions/reopen")
+    assert r.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_reopen_rejects_personal(auth_client):
+    await _seed_material(auth_client)
+    r = await auth_client.post("/quotes", json={"kind": "personal"})
+    qid = r.json()["id"]
+    r = await auth_client.post(f"/quotes/{qid}/transitions/reopen")
+    assert r.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_add_item_without_file(auth_client):
+    """Items can be added without a gcode — tempo/filamento entered manually
+    via the inline editors later. Reparse must refuse on these items."""
+    await _seed_material(auth_client)
+    r = await auth_client.post("/quotes", json={"kind": "commercial"})
+    qid = r.json()["id"]
+    # No file in the multipart body — just name + quantity.
+    r = await auth_client.post(
+        f"/quotes/{qid}/items",
+        data={"name": "porta-caneta manual", "quantity": "2"},
+    )
+    assert r.status_code == 201, r.text
+    item = r.json()["items"][0]
+    assert item["name"] == "porta-caneta manual"
+    assert item["filename"] is None
+    # Manual fill then check cost recomputes once material is set.
+    r = await auth_client.put(
+        f"/quotes/{qid}/items/{item['id']}",
+        json={"time_s": 3600, "filament_m": 5.0},
+    )
+    assert r.status_code == 200
+    # Reparse on an item with no file → 409 with a clear message.
+    r = await auth_client.post(f"/quotes/{qid}/items/{item['id']}/reparse")
+    assert r.status_code == 409
+    assert "gcode" in r.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
+async def test_reparse_item_runs_parser_on_stored_file(auth_client):
+    """The reparse endpoint reads the gcode file from disk and refreshes
+    gcode_meta. We poison the meta with zeros, then verify reparse restores
+    the parser's output from the stored file."""
+    await _seed_material(auth_client)
+    r = await auth_client.post("/quotes", json={"kind": "commercial"})
+    qid = r.json()["id"]
+    files = {"file": ("part.gcode", GCODE_SAMPLE, "application/octet-stream")}
+    r = await auth_client.post(
+        f"/quotes/{qid}/items", files=files, data={"name": "Peca X", "quantity": "1"}
+    )
+    item_id = r.json()["items"][0]["id"]
+
+    r = await auth_client.put(
+        f"/quotes/{qid}/items/{item_id}",
+        json={"time_s": 0, "filament_m": 0},
+    )
+    assert r.status_code == 200
+    assert r.json()["items"][0]["gcode_meta"]["time_s"] == 0
+
+    r = await auth_client.post(f"/quotes/{qid}/items/{item_id}/reparse")
+    assert r.status_code == 200, r.text
+    meta = r.json()["items"][0]["gcode_meta"]
+    assert meta["time_s"] == 3600
+    assert meta["filament_m"] == 5.0
+
+
+@pytest.mark.asyncio
 async def test_commercial_lifecycle(auth_client):
     await _seed_material(auth_client)
 

@@ -1,14 +1,18 @@
 """Format detection + best-effort metadata extraction.
 
-We surface the same shape as ``GcodeMeta`` so downstream code (Quote, cost
-calc) can use either an Asset's parsed_meta or a freshly-parsed gcode
-without branching.
+Two families of assets live in the library:
 
-The three supported formats:
-  - ``gcode``  — comment header parsed by :mod:`backend.core.gcode.parser`
-  - ``3mf``    — zip with config files inside; we read Slic3r/Prusa/Orca
-                 metadata (``estimated printing time``, ``filament used``)
-  - ``stl``    — geometry-only, no slice info → parsed_meta stays empty
+* **Printable** — the actual jobs sent to the printer (gcode/3mf/stl …).
+  For these we try to extract slicer metadata (time, filament, material)
+  so quotes and analytics can reuse them without re-slicing.
+* **Auxiliary** — supplementary docs the user wants to keep alongside a
+  project: PDFs, READMEs, photos, spec sheets, spreadsheets. We accept
+  them verbatim, parsed_meta stays empty.
+
+Format detection takes the last filename extension (case-insensitive).
+That naturally handles double-extensions like ``model.gcode.3mf`` (which
+Bambu/Orca emit) — the file is really a 3MF wrapper, so detecting it as
+``3mf`` is correct.
 """
 from __future__ import annotations
 
@@ -23,7 +27,20 @@ from backend.core.gcode.parser import parse_gcode_metadata
 
 logger = logging.getLogger(__name__)
 
-SUPPORTED_FORMATS = ("gcode", "3mf", "stl", "bgcode")
+# Printable assets — what actually gets sliced and printed. The order
+# matters for prioritisation in pick_best_file() consumers but not for
+# detection itself.
+PRINTABLE_FORMATS = ("gcode", "bgcode", "gco", "g", "3mf", "stl", "obj", "step", "stp")
+
+# Auxiliary docs — accepted as complementary info, not parsed.
+AUXILIARY_FORMATS = (
+    "pdf", "doc", "docx", "txt", "md", "rtf",
+    "png", "jpg", "jpeg", "webp", "gif",
+    "csv", "xlsx", "xls",
+    "zip",
+)
+
+SUPPORTED_FORMATS = PRINTABLE_FORMATS + AUXILIARY_FORMATS
 
 # Common Slic3r/Prusa/Orca metadata lines inside a 3MF's config files.
 _3MF_TIME_RX = re.compile(r"estimated printing time(?:[^=]*?)\s*=\s*([\d:hms ]+)", re.I)
@@ -36,12 +53,19 @@ _3MF_PRINT_TIME_LINE = re.compile(
 
 
 def detect_format(filename: str) -> str | None:
-    """Return one of SUPPORTED_FORMATS or ``None`` for unsupported files."""
-    name = filename.lower()
-    for fmt in SUPPORTED_FORMATS:
-        if name.endswith("." + fmt):
-            return fmt
-    return None
+    """Return one of SUPPORTED_FORMATS or ``None`` for unsupported files.
+
+    Picks the last extension after the final dot — handles ``foo.gcode.3mf``
+    (returns ``3mf``) and tolerates uppercase (``Model.STL`` → ``stl``).
+    """
+    if not filename or "." not in filename:
+        return None
+    ext = filename.rsplit(".", 1)[-1].lower()
+    return ext if ext in SUPPORTED_FORMATS else None
+
+
+def is_printable(fmt: str) -> bool:
+    return fmt in PRINTABLE_FORMATS
 
 
 def _parse_duration_to_seconds(token: str) -> float | None:
@@ -124,9 +148,10 @@ def _parse_3mf(content: bytes) -> dict:
 def parse_meta_for_format(content: bytes, fmt: str) -> dict:
     """Return a best-effort ``{time_s, filament_m, material, machine}`` dict.
 
-    Always returns a dict — possibly empty — never raises.
+    Always returns a dict — possibly empty — never raises. Auxiliary
+    formats (pdf/png/docx/…) skip parsing entirely.
     """
-    if fmt in ("gcode", "bgcode"):
+    if fmt in ("gcode", "bgcode", "gco", "g"):
         try:
             with tempfile.NamedTemporaryFile(suffix="." + fmt, delete=True) as tf:
                 tf.write(content)
@@ -143,5 +168,5 @@ def parse_meta_for_format(content: bytes, fmt: str) -> dict:
             return {}
     if fmt == "3mf":
         return _parse_3mf(content)
-    # stl → empty, geometry only
+    # stl/obj/step/stp → geometry only; auxiliary formats → not parsed.
     return {}

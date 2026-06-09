@@ -22,3 +22,14 @@ def energy_cost(time_s: float, power_w: Decimal, kwh_price: Decimal) -> Decimal:
 def depreciation_cost(time_s: float, rate_per_hour: Decimal) -> Decimal:
     hours = Decimal(str(time_s)) / Decimal(3600)
     return hours * rate_per_hour
+
+
+def maintenance_cost(time_s: float, rate_per_hour: Decimal) -> Decimal:
+    """Wear-out budget — nozzles, belts, lubrification, build plates.
+
+    Kept separate from depreciation so the user can see them in the
+    breakdown and tune each independently. Mathematically the same shape
+    as depreciation (R$/h × time).
+    """
+    hours = Decimal(str(time_s)) / Decimal(3600)
+    return hours * rate_per_hour

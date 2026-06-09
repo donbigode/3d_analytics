@@ -15,6 +15,7 @@
   let digest: DigestOut | null = null;
   let digestLoading = false;
   let digestError = "";
+  let digestAutoEnabled = true;  // mirrors /config/providers.digest_auto_enabled
 
   async function loadDigest(force = false) {
     digestLoading = true;
@@ -26,6 +27,16 @@
       digestError = errorMessage(err, "Falha ao gerar resumo.");
     } finally {
       digestLoading = false;
+    }
+  }
+
+  async function loadDigestPreference() {
+    try {
+      const p = await api<{ digest_auto_enabled: boolean }>("/config/providers");
+      digestAutoEnabled = p.digest_auto_enabled;
+    } catch {
+      // Falha silenciosa — assume ligado se /config/providers não responder.
+      digestAutoEnabled = true;
     }
   }
 
@@ -138,10 +149,13 @@
   $: revExpReceita = revExpSeries.map((p: any) => Number(p.receita) || 0);
   $: revExpDespesa = revExpSeries.map((p: any) => Number(p.despesa) || 0);
 
-  onMount(() => {
+  onMount(async () => {
     if (requireAuth()) return;
     load();
-    loadDigest();
+    await loadDigestPreference();
+    if (digestAutoEnabled) {
+      loadDigest();
+    }
   });
 </script>
 
