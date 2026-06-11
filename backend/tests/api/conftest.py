@@ -93,6 +93,12 @@ async def _isolated_engine_api(test_database_url):
 
 
 @pytest.fixture
+async def db_session():
+    async with session_module.SessionFactory() as s:
+        yield s
+
+
+@pytest.fixture
 async def auth_client():
     async with session_module.SessionFactory() as s:
         u = User(name="t", email="t@t.com", password_hash=hash_password("pw"))
