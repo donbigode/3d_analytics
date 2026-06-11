@@ -18,3 +18,7 @@ duckdns_token     = "00000000-0000-0000-0000-000000000000"
 
 # URL HTTPS pública do repo (cloud-init faz git clone).
 github_repo_url = "https://github.com/otavio-borges/3d-analytics.git"
+
+# Profile do ~/.aws/credentials. Deixe comentado se quiser usar o default
+# ou variáveis de ambiente (AWS_PROFILE / AWS_ACCESS_KEY_ID etc.).
+# aws_profile = "3d-analytics-tf"

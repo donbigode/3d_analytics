@@ -7,6 +7,7 @@ Terraform pra subir o MVP em AWS Lightsail us-east-1.
 - [Terraform 1.5+](https://developer.hashicorp.com/terraform/install)
 - [AWS CLI configurado](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-quickstart.html) com credenciais que possam criar Lightsail (geralmente a chave de admin da sua conta).
 - Conta DuckDNS criada com subdomínio reservado.
+- Usuário IAM com `lightsail:*` (policy inline serve). Os bundles atuais são `micro_3_0` ($7/mês, 1 GB RAM, 40 GB SSD — default) ou `small_3_0` ($12/mês, 2 GB RAM, 60 GB SSD). Pra trocar, edite `bundle_id` em `terraform.tfvars`.
 - Par de chaves SSH pro user `deploy` do GH Actions:
   ```bash
   ssh-keygen -t ed25519 -f ./deploy_key -N ''

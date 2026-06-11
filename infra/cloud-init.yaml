@@ -36,6 +36,16 @@ write_files:
       DUCKDNS_TOKEN="${duckdns_token}"
       REPO_URL="${github_repo_url}"
 
+      # Swap de 2GB — micro_3_0 tem só 1GB de RAM, e Postgres + WeasyPrint
+      # + Caddy + Node builder estouram em picos. Idempotente.
+      if [ ! -f /swapfile ]; then
+          fallocate -l 2G /swapfile
+          chmod 600 /swapfile
+          mkswap /swapfile
+          swapon /swapfile
+          echo '/swapfile none swap sw 0 0' >> /etc/fstab
+      fi
+
       mkdir -p /etc/3d-analytics /var/lib/3d-analytics/db /var/lib/3d-analytics/storage
 
       if [ ! -d "$REPO_DIR/.git" ]; then
