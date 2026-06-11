@@ -23,8 +23,17 @@ async def login(payload: LoginRequest, response: Response,
     user = res.scalar_one_or_none()
     if not user or not verify_password(payload.password, user.password_hash):
         raise HTTPException(status_code=401, detail="invalid credentials")
-    token = make_jwt(sub=str(user.id), secret=get_settings().session_secret)
-    response.set_cookie("session", token, httponly=True, samesite="lax", max_age=7 * 24 * 3600)
+    settings = get_settings()
+    token = make_jwt(sub=str(user.id), secret=settings.session_secret)
+    is_prod = settings.env.lower() == "prod"
+    response.set_cookie(
+        "session",
+        token,
+        httponly=True,
+        secure=is_prod,
+        samesite="strict" if is_prod else "lax",
+        max_age=7 * 24 * 3600,
+    )
     return {"ok": True}
 
 
