@@ -2,8 +2,11 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
 
 from backend.settings import get_settings
+from backend.core.rate_limit import limiter, rate_limit_exceeded_handler
 from backend.api.routes import (
     auth, users, clients, materials, services, spools,
     settings as settings_routes, quotes, dashboard, inbox, health,
@@ -42,6 +45,10 @@ async def lifespan(app: FastAPI):
 
 settings = get_settings()
 app = FastAPI(title="3D Analytics", version="0.1.0", lifespan=lifespan)
+
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
+app.add_middleware(SlowAPIMiddleware)
 
 app.add_middleware(
     CORSMiddleware,

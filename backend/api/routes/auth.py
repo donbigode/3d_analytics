@@ -1,9 +1,10 @@
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.api.deps import db_session, require_user
 from backend.api.schemas.auth import ChangePasswordRequest, LoginRequest, MeResponse
+from backend.core.rate_limit import limiter
 from backend.core.security import (
     hash_password,
     make_jwt,
@@ -17,8 +18,13 @@ router = APIRouter()
 
 
 @router.post("/login")
-async def login(payload: LoginRequest, response: Response,
-                session: AsyncSession = Depends(db_session)):
+@limiter.limit("10/minute")
+async def login(
+    request: Request,
+    payload: LoginRequest,
+    response: Response,
+    session: AsyncSession = Depends(db_session),
+):
     res = await session.execute(select(User).where(User.email == payload.email))
     user = res.scalar_one_or_none()
     if not user or not verify_password(payload.password, user.password_hash):

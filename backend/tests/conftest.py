@@ -21,6 +21,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from backend.app import app
+from backend.core.rate_limit import limiter
 from backend.settings import get_settings
 
 
@@ -67,6 +68,14 @@ def _prepare_test_db(test_database_url: str):
     env["DATABASE_URL"] = test_database_url
     subprocess.run(["alembic", "upgrade", "head"], env=env, check=True)
     yield
+
+
+@pytest.fixture(autouse=True)
+def _reset_rate_limiter():
+    """Clear slowapi in-memory counters before every test to prevent cross-test bleed."""
+    limiter._storage.reset()
+    yield
+    limiter._storage.reset()
 
 
 @pytest.fixture
