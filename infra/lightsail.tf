@@ -10,12 +10,18 @@ resource "aws_lightsail_instance" "app" {
   bundle_id         = var.bundle_id
   key_pair_name     = aws_lightsail_key_pair.admin.name
 
-  user_data = templatefile("${path.module}/cloud-init.yaml", {
+  user_data = templatefile("${path.module}/bootstrap.sh.tpl", {
     deploy_ssh_pub_key = var.deploy_ssh_pub_key
     duckdns_subdomain  = var.duckdns_subdomain
     duckdns_token      = var.duckdns_token
     github_repo_url    = var.github_repo_url
   })
+
+  lifecycle {
+    # user_data only fires on first boot; mudanças posteriores não tem efeito
+    # mesmo se aplicarmos. Ignorar evita prompts de "replace" no plan.
+    ignore_changes = [user_data]
+  }
 }
 
 resource "aws_lightsail_static_ip" "app" {
