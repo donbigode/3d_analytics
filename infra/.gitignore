@@ -6,3 +6,7 @@
 override.tf
 override.tf.json
 .terraform.lock.hcl
+# SSH deploy keys — privada nunca commitada; pública pode commitar mas
+# por simplicidade mantemos as duas locais.
+deploy_key
+deploy_key.pub
