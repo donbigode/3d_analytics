@@ -240,16 +240,36 @@ async def pricing(
         raise HTTPException(404)
     orcado, _ = await _compute_orcado_real(session, q)
     try:
-        data = await suggest_price(session, q, orcado_cost=orcado)
+        data, citations = await suggest_price(session, q, orcado_cost=orcado)
     except LLMUnavailable as exc:
         raise HTTPException(503, str(exc))
+    raw_market = data.get("market_price_ref")
+    try:
+        market_ref = (
+            Decimal(str(raw_market))
+            if raw_market not in (None, "", "null")
+            else None
+        )
+    except Exception:  # noqa: BLE001
+        market_ref = None
+    suggested = Decimal(str(data.get("suggested_price") or 0))
+    # Safety: the LLM is told never to go below cost, but enforce here too.
+    if suggested > 0 and suggested < orcado:
+        suggested = orcado
     return PricingOut(
         quote_id=str(quote_id),
         cost=orcado.quantize(Decimal("0.01")),
-        suggested_price=Decimal(str(data.get("suggested_price") or 0)),
+        suggested_price=suggested,
         floor=Decimal(str(data.get("floor") or 0)),
         ceiling=Decimal(str(data.get("ceiling") or 0)),
+        market_price_ref=market_ref,
+        market_status=str(data.get("market_status") or "estimado"),
         rationale=data.get("rationale"),
+        sources=[
+            {"url": c["url"], "title": c.get("title")}
+            for c in citations
+            if c.get("url")
+        ],
     )
 
 

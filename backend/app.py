@@ -7,7 +7,7 @@ from backend.settings import get_settings
 from backend.api.routes import (
     auth, users, clients, materials, services, spools,
     settings as settings_routes, quotes, dashboard, inbox, health,
-    calibration, capacity, trends, config, llm, library,
+    calibration, capacity, trends, config, llm, library, insights,
 )
 from backend.infra.watcher.runner import start_background_task as start_watcher
 
@@ -68,3 +68,4 @@ app.include_router(trends.router, prefix="/trends", tags=["trends"])
 app.include_router(config.router, prefix="/config", tags=["config"])
 app.include_router(llm.router, prefix="/llm", tags=["llm"])
 app.include_router(library.router, prefix="/library", tags=["library"])
+app.include_router(insights.router, prefix="/insights", tags=["insights"])

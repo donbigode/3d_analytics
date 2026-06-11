@@ -929,9 +929,18 @@
             <button class="tiny ghost" on:click={askMarkup} disabled={llmBusy === "markup"}>
               {llmBusy === "markup" ? "Pensando…" : "F3 · Sugerir markup"}
             </button>
-            <button class="tiny ghost" on:click={askPricing} disabled={llmBusy === "pricing"}>
-              {llmBusy === "pricing" ? "Pensando…" : "F5 · Sugerir preço"}
+            <button
+              class="tiny ghost paid-action"
+              on:click={askPricing}
+              disabled={llmBusy === "pricing"}
+              title="Pesquisa Mercado Livre / Shopee / Amazon BR ao vivo — custo aproximado R$ 0,15 por clique. Use quando estiver decidindo o preço real de venda."
+            >
+              {llmBusy === "pricing" ? "Pesquisando na web…" : "F5 · Sugerir preço · 🔎 R$ 0,15"}
             </button>
+            <small class="paid-hint">
+              "Sugerir preço" usa busca na web em ML/Shopee/Amazon (≈R$ 0,15 por clique).
+              Use quando estiver realmente decidindo preço de revenda.
+            </small>
           {/if}
           {#if quote.status === "produzido" || quote.status === "entregue"}
             <button class="tiny ghost" on:click={askVariance} disabled={llmBusy === "variance"}>
@@ -962,7 +971,29 @@
           <div class="ai-result">
             <strong>Preço sugerido: {fmtMoney(pricingResult.suggested_price)}</strong>
             <span class="tag muted">faixa {fmtMoney(pricingResult.floor)}–{fmtMoney(pricingResult.ceiling)}</span>
+            {#if pricingResult.market_status === "observado"}
+              <span class="tag" title="Agente pesquisou anúncios reais na web">🔎 pesquisado</span>
+              {#if pricingResult.market_price_ref}
+                <span class="tag muted">ref. mercado ≈ {fmtMoney(pricingResult.market_price_ref)}</span>
+              {/if}
+            {:else}
+              <span class="tag muted" title="Sem dados de mercado validados — estimativa">⚠ estimado</span>
+            {/if}
             {#if pricingResult.rationale}<p class="dim">{pricingResult.rationale}</p>{/if}
+            {#if pricingResult.sources && pricingResult.sources.length > 0}
+              <details class="sources">
+                <summary>📎 {pricingResult.sources.length} fonte{pricingResult.sources.length === 1 ? "" : "s"} consultada{pricingResult.sources.length === 1 ? "" : "s"}</summary>
+                <ul>
+                  {#each pricingResult.sources as src}
+                    <li>
+                      <a href={src.url} target="_blank" rel="noreferrer">
+                        {src.title || src.url}
+                      </a>
+                    </li>
+                  {/each}
+                </ul>
+              </details>
+            {/if}
           </div>
         {/if}
 
@@ -1347,6 +1378,41 @@
   .ai-result .tag.muted { color: var(--muted); }
   .ai-result p { margin: 0; color: var(--ink); font-size: 0.92rem; }
   .ai-result .dim { color: var(--muted); }
+  .paid-action {
+    border: 1px dashed var(--brand) !important;
+    color: var(--brand) !important;
+  }
+  .paid-action:disabled {
+    border-style: solid !important;
+    color: var(--muted) !important;
+  }
+  .paid-hint {
+    flex-basis: 100%;
+    color: var(--muted);
+    font-size: 0.72rem;
+    line-height: 1.35;
+    margin-top: 0.2rem;
+  }
+  .ai-result .sources {
+    margin-top: 0.5rem;
+    font-size: 0.85rem;
+  }
+  .ai-result .sources summary {
+    cursor: pointer;
+    color: var(--muted);
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    letter-spacing: 0.06em;
+  }
+  .ai-result .sources ul {
+    margin: 0.4rem 0 0;
+    padding-left: 1.1rem;
+    list-style: disc;
+  }
+  .ai-result .sources a {
+    color: var(--brand);
+    word-break: break-all;
+  }
 
   .variants-list {
     list-style: none;

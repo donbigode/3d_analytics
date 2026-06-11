@@ -37,13 +37,26 @@ class VarianceOut(BaseModel):
     explanation: str
 
 
+class PricingCitation(BaseModel):
+    url: str
+    title: str | None = None
+
+
 class PricingOut(BaseModel):
     quote_id: str
     cost: Decimal
     suggested_price: Decimal
     floor: Decimal
     ceiling: Decimal
+    # The estimated market total that anchored the suggestion (sum of
+    # ML avg × quantity per item). ``None`` when no live market data
+    # was available — see ``market_status`` to know why.
+    market_price_ref: Decimal | None = None
+    market_status: str = "estimado"  # "observado" when grounded in ML data
     rationale: str | None = None
+    # URLs the LLM consulted via web_search to ground the recommendation.
+    # Empty when the LLM didn't (or couldn't) search the web.
+    sources: list[PricingCitation] = []
 
 
 class VariantSuggestion(BaseModel):

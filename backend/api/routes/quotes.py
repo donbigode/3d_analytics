@@ -756,6 +756,15 @@ async def get_pdf(
     item_dicts = []
     for idx, it in enumerate(items):
         sub = item_subtotals[idx]
+        # Resolve material name + color so the PDF can show the user-facing
+        # version ("PLA · Branco" rather than just the polymer type).
+        mat_name = mat_color = mat_manufacturer = None
+        if it.material_version_id:
+            mv = await session.get(MaterialVersion, it.material_version_id)
+            if mv:
+                mat_name = mv.name
+                mat_color = mv.color
+                mat_manufacturer = mv.manufacturer
         if items_cost > 0:
             client_price = (
                 items_total_after_markup * sub / items_cost
@@ -775,6 +784,11 @@ async def get_pdf(
                 "subtotal": float(sub),
                 "client_price": float(client_price),
                 "client_price_per_piece": float(per_piece),
+                "material_name": mat_name,
+                "material_color": mat_color,
+                "material_manufacturer": mat_manufacturer,
+                "material_polymer": it.gcode_meta.get("material") or None,
+                "is_multi_color": bool(it.is_multi_color),
                 "model_source_url": it.model_source_url,
                 "model_source_author": it.model_source_author,
                 "model_source_license": it.model_source_license,

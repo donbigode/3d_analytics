@@ -4,11 +4,21 @@
 {% if quote.client %}<p>Cliente: <strong>{{ quote.client }}</strong></p>{% endif %}
 <p>Status: {{ quote.status }}</p>
 
+{% macro material_label(it) %}
+  {%- if it.material_name -%}
+    {{ it.material_name }}
+    {%- if it.material_color %} · {{ it.material_color }}{%- endif -%}
+    {%- if it.is_multi_color %} · multicolor{%- endif -%}
+  {%- elif it.material_polymer -%}
+    {{ it.material_polymer }}{%- if it.is_multi_color %} · multicolor{%- endif -%}
+  {%- else -%}—{%- endif -%}
+{% endmacro %}
 <h3>Peças</h3>
 <table>
   <thead>
     <tr>
       <th>Peça</th>
+      <th>Material</th>
       {% if not retail_mode %}<th>Filamento (m)</th>{% endif %}
       {% if not retail_mode %}<th>Tempo (s)</th>{% endif %}
       <th>Qtd</th>
@@ -29,6 +39,7 @@
           </div>
         {% endif %}
       </td>
+      <td style="font-size:0.92em;">{{ material_label(it) }}</td>
       {% if not retail_mode %}<td>{{ "%.2f"|format(it.filament_m) }}</td>{% endif %}
       {% if not retail_mode %}<td>{{ it.time_s }}</td>{% endif %}
       <td>{{ it.qty }}</td>

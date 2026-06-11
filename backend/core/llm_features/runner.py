@@ -43,18 +43,57 @@ async def _build_chain(session: AsyncSession):
     return chain, None
 
 
-async def _invoke(provider, *, system: str, user: str, max_tokens: int) -> tuple[str | None, str | None]:
-    """Hit a single provider's underlying SDK. Returns (text, error)."""
+async def _invoke(
+    provider,
+    *,
+    system: str,
+    user: str,
+    max_tokens: int,
+    enable_web_search: bool = False,
+    max_searches: int = 5,
+) -> tuple[str | None, str | None, list[dict]]:
+    """Hit a single provider's underlying SDK.
+
+    Returns ``(text, error, citations)`` where ``citations`` is a list of
+    ``{url, title}`` dicts collected from the LLM's tool-use blocks when
+    ``enable_web_search=True`` (Anthropic only). Other providers ignore
+    ``enable_web_search`` for now and the citations list comes back empty.
+    """
+    citations: list[dict] = []
     try:
         if provider.name == "anthropic":
-            resp = await asyncio.to_thread(
-                provider._client.messages.create,
+            kwargs: dict = dict(
                 model=provider._model,
                 max_tokens=max_tokens,
                 system=system,
                 messages=[{"role": "user", "content": user}],
             )
-            text = "".join(b.text for b in resp.content if b.type == "text")
+            if enable_web_search:
+                kwargs["tools"] = [
+                    {
+                        "type": "web_search_20250305",
+                        "name": "web_search",
+                        "max_uses": max_searches,
+                    }
+                ]
+            resp = await asyncio.to_thread(
+                provider._client.messages.create, **kwargs
+            )
+            text_parts: list[str] = []
+            seen_urls: set[str] = set()
+            for b in resp.content:
+                if getattr(b, "type", None) == "text":
+                    text_parts.append(getattr(b, "text", "") or "")
+                    # Each text block may carry citations from web_search.
+                    for c in getattr(b, "citations", None) or []:
+                        url = getattr(c, "url", None) or (c.get("url") if isinstance(c, dict) else None)
+                        title = getattr(c, "title", None) or (
+                            c.get("title") if isinstance(c, dict) else None
+                        )
+                        if url and url not in seen_urls:
+                            seen_urls.add(url)
+                            citations.append({"url": url, "title": title})
+            text = "".join(text_parts)
         elif provider.name == "openai":
             resp = await asyncio.to_thread(
                 provider._client.chat.completions.create,
@@ -75,10 +114,10 @@ async def _invoke(provider, *, system: str, user: str, max_tokens: int) -> tuple
             )
             text = getattr(resp, "text", "") or ""
         else:
-            return None, f"provider {provider.name} not supported"
-        return text.strip() or None, None
+            return None, f"provider {provider.name} not supported", citations
+        return text.strip() or None, None, citations
     except Exception as exc:  # noqa: BLE001
-        return None, f"{provider.name}: {str(exc)[:200]}"
+        return None, f"{provider.name}: {str(exc)[:200]}", citations
 
 
 async def call_text(
@@ -96,7 +135,9 @@ async def call_text(
         raise LLMUnavailable(reason or "no provider")
     errors: list[str] = []
     for provider in chain:
-        text, err = await _invoke(provider, system=system, user=user, max_tokens=max_tokens)
+        text, err, _ = await _invoke(
+            provider, system=system, user=user, max_tokens=max_tokens
+        )
         if text:
             return text
         if err:
@@ -104,19 +145,45 @@ async def call_text(
     raise LLMUnavailable("; ".join(errors) or "empty response from all providers")
 
 
-async def call_json(
+async def call_json_with_research(
     session: AsyncSession,
     *,
     system: str,
     user: str,
-    max_tokens: int = 800,
-) -> dict[str, Any]:
-    """Like :func:`call_text` but parses the response as JSON.
+    max_tokens: int = 1500,
+    max_searches: int = 5,
+) -> tuple[dict[str, Any], list[dict]]:
+    """Like :func:`call_json` but enables web search on the Anthropic provider.
 
-    The prompt is expected to ask for JSON-only output; we strip ```json fences
-    and find the outermost {...} block as a fallback.
+    Other providers in the chain fall back to a regular text call (no search).
+    Returns ``(parsed_json, citations)`` where each citation is
+    ``{url: str, title: str | None}``.
+
+    Use this for features where you want the LLM to actively look up prices
+    on Mercado Livre, Shopee, Amazon BR and similar pages rather than
+    relying on a single pre-fetched API result.
     """
-    raw = await call_text(session, system=system, user=user, max_tokens=max_tokens)
+    chain, reason = await _build_chain(session)
+    if not chain:
+        raise LLMUnavailable(reason or "no provider")
+    errors: list[str] = []
+    for provider in chain:
+        text, err, citations = await _invoke(
+            provider,
+            system=system,
+            user=user,
+            max_tokens=max_tokens,
+            enable_web_search=(provider.name == "anthropic"),
+            max_searches=max_searches,
+        )
+        if text:
+            return _parse_json_or_raise(text), citations
+        if err:
+            errors.append(err)
+    raise LLMUnavailable("; ".join(errors) or "empty response from all providers")
+
+
+def _parse_json_or_raise(raw: str) -> dict[str, Any]:
     text = raw.strip()
     if text.startswith("```"):
         text = text.strip("`")
@@ -133,3 +200,19 @@ async def call_json(
             return json.loads(text[start : end + 1])
         except json.JSONDecodeError as exc:
             raise LLMUnavailable(f"JSON parse failed: {exc}") from exc
+
+
+async def call_json(
+    session: AsyncSession,
+    *,
+    system: str,
+    user: str,
+    max_tokens: int = 800,
+) -> dict[str, Any]:
+    """Like :func:`call_text` but parses the response as JSON.
+
+    The prompt is expected to ask for JSON-only output; we strip ```json fences
+    and find the outermost {...} block as a fallback.
+    """
+    raw = await call_text(session, system=system, user=user, max_tokens=max_tokens)
+    return _parse_json_or_raise(raw)

@@ -316,13 +316,21 @@ export type VarianceOut = {
   explanation: string;
 };
 
+export type PricingCitation = {
+  url: string;
+  title: string | null;
+};
+
 export type PricingOut = {
   quote_id: string;
   cost: number | string;
   suggested_price: number | string;
   floor: number | string;
   ceiling: number | string;
+  market_price_ref: number | string | null;
+  market_status: "observado" | "estimado";
   rationale: string | null;
+  sources: PricingCitation[];
 };
 
 export type VariantSuggestion = {
