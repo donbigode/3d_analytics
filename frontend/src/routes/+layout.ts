@@ -1,3 +1,4 @@
+import { goto } from "$app/navigation";
 import { api } from "$lib/api";
 import { appSettings, type AppSettings } from "$lib/stores/settings";
 import { user, type Me } from "$lib/stores/user";
@@ -6,10 +7,13 @@ export const ssr = false;
 export const prerender = false;
 export const trailingSlash = "never";
 
-export async function load() {
+export async function load({ url }: { url: URL }) {
   try {
     const me = await api<NonNullable<Me>>("/auth/me");
     user.set(me);
+    if (me.must_change_password && url.pathname !== "/change-password") {
+      await goto("/change-password");
+    }
   } catch {
     user.set(null);
   }

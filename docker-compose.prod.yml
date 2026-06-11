@@ -1,0 +1,67 @@
+# Stack de produção. Diferenças do dev:
+#   - sem bind-mount do código (imagens são a fonte da verdade)
+#   - sem WATCHFILES_FORCE_POLLING / --reload
+#   - Postgres sem porta exposta
+#   - Caddy fazendo TLS + reverse proxy
+#   - volumes em /var/lib/3d-analytics (sobrevive a recriação)
+#   - env_file aponta pra /etc/3d-analytics/.env (chmod 600)
+
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - /var/lib/3d-analytics/db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  api:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file: /etc/3d-analytics/.env
+    environment:
+      ENV: prod
+    volumes:
+      - /var/lib/3d-analytics/storage:/data/storage
+    expose:
+      - "8000"
+    restart: unless-stopped
+    command: ["sh", "-c", "alembic upgrade head && uvicorn backend.app:app --host 0.0.0.0 --port 8000"]
+
+  frontend:
+    build: ./frontend
+    volumes:
+      - frontend_build:/srv/frontend
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2-alpine
+    depends_on:
+      - api
+      - frontend
+    env_file: /etc/3d-analytics/.env
+    environment:
+      ACME_EMAIL: otaviorgeraldo@gmail.com
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - frontend_build:/srv/frontend:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    restart: unless-stopped
+
+volumes:
+  frontend_build:
+  caddy_data:
+  caddy_config:

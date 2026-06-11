@@ -12,6 +12,7 @@ class AppSettings(BaseSettings):
     pwd_argon2_time_cost: int = 2
     pwd_argon2_memory_cost: int = 65536
     trends_enabled: bool = False
+    env: str = "dev"  # "dev" | "prod" — em prod ativa cookies Secure/Strict
 
 
 def get_settings() -> AppSettings:

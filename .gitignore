@@ -12,3 +12,8 @@ node_modules/
 dist/
 build/
 .svelte-kit/
+
+# Terraform
+infra/.terraform/
+infra/terraform.tfstate*
+infra/terraform.tfvars
