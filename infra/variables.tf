@@ -17,9 +17,9 @@ variable "instance_name" {
 }
 
 variable "bundle_id" {
-  description = "Plano Lightsail (nano_3_0 = $7/mês, 2GB RAM, 60GB SSD)."
+  description = "Plano Lightsail. micro_3_0 = $7/mês, 1 GB RAM, 40 GB SSD (2GB swap criado no cloud-init pra folga). small_3_0 = $12/mês, 2 GB RAM, 60 GB SSD."
   type        = string
-  default     = "nano_3_0"
+  default     = "micro_3_0"
 }
 
 variable "ssh_pub_key" {
@@ -52,4 +52,10 @@ variable "duckdns_token" {
 variable "github_repo_url" {
   description = "URL HTTPS pública do repo no GitHub (o cloud-init faz git clone disso)."
   type        = string
+}
+
+variable "aws_profile" {
+  description = "Profile do ~/.aws/credentials a usar. Default null = usa o profile default ou env vars (AWS_PROFILE/AWS_ACCESS_KEY_ID)."
+  type        = string
+  default     = null
 }
