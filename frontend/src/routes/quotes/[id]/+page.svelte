@@ -429,7 +429,7 @@
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          material_code: qcName,
+          material_type: qcName,
           name: qcName,
           density_g_cm3: qcDensity,
           price_per_kg_ref: qcPrice,
@@ -438,7 +438,7 @@
       });
       // refresh local materials list and set resolveCode to the new one
       materials = [...materials, mv];
-      resolveCode = mv.material_code;
+      resolveCode = mv.material_type;
       showQuickCreateMaterial = false;
     } catch (err) {
       handleApiError(err);
@@ -522,7 +522,7 @@
       const candidate = spools.find(
         (sp) =>
           sp.status === "open" &&
-          (matCode ? sp.material_code === matCode : true),
+          (matCode ? sp.material_type === matCode : true),
       );
       produceAssignments[it.id] = candidate?.id ?? "";
     }
@@ -532,7 +532,7 @@
 
   function spoolsForItem(matCode: string | null | undefined) {
     return spools.filter(
-      (sp) => sp.status === "open" && (matCode ? sp.material_code === matCode : true),
+      (sp) => sp.status === "open" && (matCode ? sp.material_type === matCode : true),
     );
   }
 
@@ -1031,7 +1031,7 @@
           <h2 class="section-title">Ações</h2>
         </div>
         <div class="vbtns">
-          {#if isDraft}
+          {#if isDraft && quote.kind === "commercial"}
             <button
               on:click={() => transition("finalize")}
               disabled={transitioning === "finalize" || quote.items.length === 0 || (quote.pending_items ?? 0) > 0}
@@ -1039,9 +1039,18 @@
             >
               {transitioning === "finalize" ? "Finalizando…" : "Finalizar"}
             </button>
-            {#if (quote.pending_items ?? 0) > 0}
-              <p class="hint warn">⚠ {quote.pending_items} peça(s) com material pendente</p>
-            {/if}
+          {/if}
+          {#if isDraft && quote.kind === "personal"}
+            <button
+              on:click={openProduce}
+              disabled={producing || quote.items.length === 0 || (quote.pending_items ?? 0) > 0}
+              title={(quote.pending_items ?? 0) > 0 ? `Resolva ${quote.pending_items} peça(s) com material pendente antes de produzir` : "Escolha o spool de cada peça e dê baixa no estoque"}
+            >
+              Produzir…
+            </button>
+          {/if}
+          {#if isDraft && (quote.pending_items ?? 0) > 0}
+            <p class="hint warn">⚠ {quote.pending_items} peça(s) com material pendente</p>
           {/if}
           {#if quote.kind === "commercial" && quote.status === "orcado"}
             <button on:click={() => transition("approve")} disabled={transitioning === "approve"}>
@@ -1105,7 +1114,7 @@
           <select bind:value={resolveCode}>
             <option value="">— escolher —</option>
             {#each materials as m}
-              <option value={m.material_code}>{m.name} ({m.material_code})</option>
+              <option value={m.material_type}>{m.name} ({m.material_type})</option>
             {/each}
           </select>
         </label>
@@ -1178,7 +1187,7 @@
                     <option value="">—</option>
                     {#each matched as sp}
                       <option value={sp.id}>
-                        {sp.material_code} · {fmtNum(sp.remaining_grams, 0)}g · {sp.supplier ?? "—"}
+                        {sp.material_type} · {fmtNum(sp.remaining_grams, 0)}g · {sp.purchased_from ?? "—"}
                       </option>
                     {/each}
                   </select>

@@ -294,7 +294,7 @@ async def dashboard(
     low_spools = [
         {
             "id": str(sp.id),
-            "material_code": sp.material_code,
+            "material_type": sp.material_type,
             "remaining_grams": float(sp.remaining_grams),
         }
         for sp in spools

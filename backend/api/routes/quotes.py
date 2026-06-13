@@ -530,17 +530,10 @@ async def delete_service(
 
 # ---------- Transitions ----------
 
-@router.post("/{quote_id}/transitions/finalize", response_model=QuoteOut)
-async def t_finalize(
-    quote_id: UUID,
-    _: User = Depends(require_user),
-    session: AsyncSession = Depends(db_session),
-):
-    q = await session.get(Quote, quote_id)
-    if not q:
-        raise HTTPException(404)
-    if q.status != QuoteStatus.DRAFT:
-        raise HTTPException(409, "quote is not in draft")
+async def _assert_materials_resolved(session: AsyncSession, q: Quote) -> None:
+    """Block finalizing/producing a quote that still has items whose material
+    couldn't be matched to a registered ``MaterialVersion`` — without it we
+    can't compute filament grams (and therefore can't debit the spool)."""
     pending = await session.scalar(
         select(func.count(QuoteItem.id)).where(
             QuoteItem.quote_id == q.id,
@@ -562,12 +555,31 @@ async def t_finalize(
             f"there are {pending} item(s) with unregistered materials: "
             f"{', '.join(sorted(pending_codes))}. Register them and resolve each item before finalizing.",
         )
-    q.finalized_at = _now()
+
+
+@router.post("/{quote_id}/transitions/finalize", response_model=QuoteOut)
+async def t_finalize(
+    quote_id: UUID,
+    _: User = Depends(require_user),
+    session: AsyncSession = Depends(db_session),
+):
+    q = await session.get(Quote, quote_id)
+    if not q:
+        raise HTTPException(404)
+    # Personal projects skip the commercial pipeline and go straight to
+    # production — but production debits the stock the user selects, so they
+    # finalize through `produce` (which also stamps finalized_at), not here.
     if q.kind == QuoteKind.PERSONAL:
-        q.status = QuoteStatus.PRODUZIDO
-        q.produced_at = _now()
-    else:
-        q.status = QuoteStatus.ORCADO
+        raise HTTPException(
+            400,
+            "personal quotes are produced directly via the produce transition "
+            "(select the spool for each item)",
+        )
+    if q.status != QuoteStatus.DRAFT:
+        raise HTTPException(409, "quote is not in draft")
+    await _assert_materials_resolved(session, q)
+    q.finalized_at = _now()
+    q.status = QuoteStatus.ORCADO
     await session.commit()
     return await _quote_out(session, q)
 
@@ -632,10 +644,20 @@ async def t_produce(
     q = await session.get(Quote, quote_id)
     if not q:
         raise HTTPException(404)
-    if q.kind != QuoteKind.COMMERCIAL:
-        raise HTTPException(400, "only commercial quotes flow through produce")
-    if q.status != QuoteStatus.APROVADO:
-        raise HTTPException(409, "quote must be aprovado before produce")
+    # Commercial quotes reach produce through orcado → aprovado. Personal
+    # projects have no commercial pipeline: they finalize-and-produce in this
+    # single step (still debiting the selected spools), so we accept them
+    # straight from draft and stamp finalized_at here.
+    if q.kind == QuoteKind.COMMERCIAL:
+        if q.status != QuoteStatus.APROVADO:
+            raise HTTPException(409, "quote must be aprovado before produce")
+    elif q.kind == QuoteKind.PERSONAL:
+        if q.status != QuoteStatus.DRAFT:
+            raise HTTPException(409, "personal quote must be in draft to produce")
+        await _assert_materials_resolved(session, q)
+        q.finalized_at = _now()
+    else:
+        raise HTTPException(400, "unsupported quote kind for produce")
 
     for assign in payload.consumption:
         it = await session.get(QuoteItem, UUID(assign.quote_item_id))
@@ -644,6 +666,12 @@ async def t_produce(
             raise HTTPException(400, "invalid assignment")
         mv = await session.get(MaterialVersion, it.material_version_id)
         grams = grams_for_item(it.gcode_meta, mv.density_g_cm3, it.quantity)
+        if grams <= 0:
+            raise HTTPException(
+                409,
+                f"item '{it.name}' has no filament length (filament_m=0); "
+                "reparse the gcode or set the length before producing",
+            )
         if sp.remaining_grams < grams:
             raise HTTPException(409, f"spool {sp.id} has insufficient grams")
         sp.remaining_grams = sp.remaining_grams - grams

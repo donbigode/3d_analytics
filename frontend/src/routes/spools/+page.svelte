@@ -117,6 +117,23 @@
     }
   }
 
+  async function deleteSpool() {
+    if (!editing) return;
+    if (!confirm("Excluir esta bobina? Se ela já foi consumida em uma produção, prefira marcá-la como Descartada.")) return;
+    editError = "";
+    editSubmitting = true;
+    try {
+      await api(`/spools/${editing.id}`, { method: "DELETE" });
+      editing = null;
+      await load();
+    } catch (err) {
+      handleApiError(err);
+      editError = errorMessage(err, "Não foi possível excluir a bobina.");
+    } finally {
+      editSubmitting = false;
+    }
+  }
+
   function pctRemaining(r: Spool): number {
     const init = Number(r.initial_grams) || 1;
     const left = Number(r.remaining_grams) || 0;
@@ -318,6 +335,10 @@
           <input bind:value={editing.notes} />
         </label>
         <div class="actions">
+          <button type="button" class="danger" on:click={deleteSpool} disabled={editSubmitting}>
+            Excluir
+          </button>
+          <span class="spacer"></span>
           <button type="button" class="ghost" on:click={() => (editing = null)}>Cancelar</button>
           <button type="submit" disabled={editSubmitting}>
             {editSubmitting ? "Salvando…" : "Salvar"}
@@ -394,5 +415,8 @@
     display: flex;
     justify-content: flex-end;
     gap: 0.5rem;
+  }
+  .actions .spacer {
+    flex: 1;
   }
 </style>

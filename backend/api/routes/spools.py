@@ -1,11 +1,11 @@
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import exists, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.api.deps import db_session, require_user
 from backend.api.schemas.spools import SpoolCreate, SpoolUpdate, SpoolOut
-from backend.infra.db.models import Spool, User
+from backend.infra.db.models import MaterialConsumption, Spool, User
 
 router = APIRouter()
 
@@ -74,4 +74,13 @@ async def delete_spool(spool_id: UUID, _: User = Depends(require_user),
     s = await session.get(Spool, spool_id)
     if not s:
         raise HTTPException(404)
+    consumed = await session.scalar(
+        select(exists().where(MaterialConsumption.spool_id == spool_id))
+    )
+    if consumed:
+        raise HTTPException(
+            409,
+            "spool already debited by a produced quote; mark it as 'discarded' "
+            "instead of deleting to keep the consumption history",
+        )
     await session.delete(s); await session.commit()

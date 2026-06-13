@@ -160,7 +160,7 @@ export type DashboardOut = {
   lists: {
     ultimos_orcamentos: Array<{ id: string; kind: string; status: string; created_at: string | null }>;
     parados: Array<{ id: string; approved_at: string | null }>;
-    spools_baixos: Array<{ id: string; material_code: string; remaining_grams: number }>;
+    spools_baixos: Array<{ id: string; material_type: string; remaining_grams: number }>;
     inbox: Array<{ id: string; original_path: string; parsed_meta: unknown }>;
   };
 };
