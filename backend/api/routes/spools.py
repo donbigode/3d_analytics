@@ -14,6 +14,8 @@ def _out(s: Spool) -> SpoolOut:
     return SpoolOut(
         id=str(s.id),
         material_type=s.material_type,
+        color=s.color,
+        manufacturer=s.manufacturer,
         purchased_from=s.purchased_from,
         purchase_url=s.purchase_url,
         purchased_at=s.purchased_at,

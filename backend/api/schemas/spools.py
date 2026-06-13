@@ -6,6 +6,8 @@ from backend.core.models import SpoolStatus
 
 class SpoolCreate(BaseModel):
     material_type: str
+    color: str | None = None
+    manufacturer: str | None = None
     purchased_from: str | None = None  # onde foi comprado (loja/marketplace)
     purchase_url: str | None = None    # link da compra
     purchased_at: datetime
@@ -18,6 +20,8 @@ class SpoolCreate(BaseModel):
 
 class SpoolUpdate(BaseModel):
     material_type: str | None = None
+    color: str | None = None
+    manufacturer: str | None = None
     purchased_from: str | None = None
     purchase_url: str | None = None
     purchased_at: datetime | None = None
@@ -31,6 +35,8 @@ class SpoolUpdate(BaseModel):
 class SpoolOut(BaseModel):
     id: str
     material_type: str
+    color: str | None
+    manufacturer: str | None
     purchased_from: str | None
     purchase_url: str | None
     purchased_at: datetime
