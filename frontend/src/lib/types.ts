@@ -56,6 +56,8 @@ export type SpoolStatus = "open" | "empty" | "discarded";
 export type Spool = {
   id: string;
   material_type: string;
+  color: string | null;
+  manufacturer: string | null;
   purchased_from: string | null;
   purchase_url: string | null;
   purchased_at: string;

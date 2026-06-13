@@ -13,6 +13,8 @@ class Spool(Base):
 
     id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
     material_type: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    color: Mapped[str | None] = mapped_column(String(60))
+    manufacturer: Mapped[str | None] = mapped_column(String(120))
     purchased_from: Mapped[str | None] = mapped_column(String(160))
     purchase_url: Mapped[str | None] = mapped_column(String(500))
     purchased_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

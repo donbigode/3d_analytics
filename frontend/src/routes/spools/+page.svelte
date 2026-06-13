@@ -31,8 +31,32 @@
   let formError = "";
 
   let editing: Spool | null = null;
+  let editMaterialId = "";
   let editError = "";
   let editSubmitting = false;
+
+  function openEdit(row: Spool) {
+    editing = { ...row };
+    editError = "";
+    // Pre-select the catalog material that best matches this spool's snapshot
+    // (type + color + manufacturer), so editing carries the full identity.
+    const exact = materials.find(
+      (m) =>
+        m.material_type === row.material_type &&
+        (m.color ?? null) === (row.color ?? null) &&
+        (m.manufacturer ?? null) === (row.manufacturer ?? null),
+    );
+    editMaterialId =
+      exact?.id ?? materials.find((m) => m.material_type === row.material_type)?.id ?? "";
+  }
+
+  function applyEditMaterial() {
+    const mat = materials.find((m) => m.id === editMaterialId);
+    if (!editing || !mat) return;
+    editing.material_type = mat.material_type;
+    editing.color = mat.color ?? null;
+    editing.manufacturer = mat.manufacturer ?? null;
+  }
 
   $: lowThreshold = Number($appSettings?.low_spool_threshold_g ?? 0);
 
@@ -65,6 +89,8 @@
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           material_type: mat?.material_type ?? "",
+          color: mat?.color ?? null,
+          manufacturer: mat?.manufacturer ?? null,
           purchased_from: purchased_from || null,
           purchase_url: purchase_url || null,
           purchased_at: new Date(purchased_at).toISOString(),
@@ -97,6 +123,8 @@
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           material_type: editing.material_type,
+          color: editing.color || null,
+          manufacturer: editing.manufacturer || null,
           purchased_from: editing.purchased_from || null,
           purchase_url: editing.purchase_url || null,
           purchased_at: editing.purchased_at,
@@ -117,18 +145,20 @@
     }
   }
 
-  async function deleteSpool() {
-    if (!editing) return;
+  async function deleteSpool(sp: Spool) {
     if (!confirm("Excluir esta bobina? Se ela já foi consumida em uma produção, prefira marcá-la como Descartada.")) return;
     editError = "";
+    listError = "";
     editSubmitting = true;
     try {
-      await api(`/spools/${editing.id}`, { method: "DELETE" });
-      editing = null;
+      await api(`/spools/${sp.id}`, { method: "DELETE" });
+      if (editing?.id === sp.id) editing = null;
       await load();
     } catch (err) {
       handleApiError(err);
-      editError = errorMessage(err, "Não foi possível excluir a bobina.");
+      const msg = errorMessage(err, "Não foi possível excluir a bobina.");
+      if (editing) editError = msg;
+      else listError = msg;
     } finally {
       editSubmitting = false;
     }
@@ -234,8 +264,14 @@
   {#if listError}<div class="alert">{listError}</div>{/if}
   <Table
     columns={[
-      { key: "material_type", label: "Material", mono: true, width: "10ch" },
-      { key: "purchased_from", label: "Comprado em" },
+      {
+        key: "material_type",
+        label: "Material",
+        mono: true,
+        format: (_v, row) =>
+          `${row.material_type}${row.manufacturer ? ` · ${row.manufacturer}` : ""}`,
+      },
+      { key: "color", label: "Cor" },
       {
         key: "remaining_grams",
         label: "Restante (g)",
@@ -256,7 +292,8 @@
     empty="Nenhuma bobina registrada"
   >
     <svelte:fragment slot="actions" let:row>
-      <button class="tiny ghost" on:click={() => (editing = { ...(row as Spool) })}>Ajustar</button>
+      <button class="tiny ghost" on:click={() => openEdit(row as Spool)}>Ajustar</button>
+      <button class="tiny danger" on:click={() => deleteSpool(row as Spool)} disabled={editSubmitting}>Excluir</button>
     </svelte:fragment>
   </Table>
 
@@ -268,7 +305,7 @@
         <div class="bar-row" class:low>
           <div class="bar-label">
             <span class="mono">{r.material_type}</span>
-            <span class="muted">· {r.purchased_from ?? "—"}</span>
+            <span class="muted">· {r.color ?? r.purchased_from ?? "—"}</span>
           </div>
           <div class="bar-track" aria-hidden="true">
             <div class="bar-fill" style:width="{pct}%"></div>
@@ -288,9 +325,9 @@
       <form on:submit|preventDefault={saveEdit} class="form-grid">
         <label class="field">
           Material
-          <select bind:value={editing.material_type}>
+          <select bind:value={editMaterialId} on:change={applyEditMaterial}>
             {#each materials as m}
-              <option value={m.material_type}>
+              <option value={m.id}>
                 {m.material_type}{m.manufacturer ? ` · ${m.manufacturer}` : ""}{m.color ? ` · ${m.color}` : ""}
               </option>
             {/each}
@@ -335,7 +372,7 @@
           <input bind:value={editing.notes} />
         </label>
         <div class="actions">
-          <button type="button" class="danger" on:click={deleteSpool} disabled={editSubmitting}>
+          <button type="button" class="danger" on:click={() => editing && deleteSpool(editing)} disabled={editSubmitting}>
             Excluir
           </button>
           <span class="spacer"></span>
