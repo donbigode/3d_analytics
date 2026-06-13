@@ -398,7 +398,7 @@
             {#each data.lists.spools_baixos as sp}
               <li>
                 <a class="row-link" href="/spools">
-                  <span class="mono">{sp.material_code}</span>
+                  <span class="mono">{sp.material_type}</span>
                   <span class="mono dim">{fmtNum(sp.remaining_grams, 0)} g</span>
                 </a>
               </li>

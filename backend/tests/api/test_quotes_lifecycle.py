@@ -222,6 +222,46 @@ async def test_produce_insufficient_spool_returns_409(auth_client):
 
 
 @pytest.mark.asyncio
+async def test_produce_rejects_item_without_filament(auth_client):
+    """An item whose gcode has no filament length would silently debit 0g.
+    Producing it must fail loudly instead of creating a no-op consumption."""
+    await _seed_material(auth_client)
+    r = await auth_client.post(
+        "/spools",
+        json={
+            "material_type": "PLA",
+            "purchased_at": "2026-06-01T00:00:00Z",
+            "purchased_price": "100",
+            "initial_grams": "1000",
+            "remaining_grams": "1000",
+        },
+    )
+    spool_id = r.json()["id"]
+
+    r = await auth_client.post("/quotes", json={"kind": "commercial"})
+    qid = r.json()["id"]
+    no_filament = b";TIME:3600\n;Filament used:0m\n;Material Type:PLA\n"
+    files = {"file": ("x.gcode", no_filament, "application/octet-stream")}
+    await auth_client.post(
+        f"/quotes/{qid}/items", files=files, data={"name": "X", "quantity": "1"}
+    )
+    await auth_client.post(f"/quotes/{qid}/transitions/finalize")
+    await auth_client.post(f"/quotes/{qid}/transitions/approve")
+    quote = (await auth_client.get(f"/quotes/{qid}")).json()
+    item_id = quote["items"][0]["id"]
+
+    r = await auth_client.post(
+        f"/quotes/{qid}/transitions/produce",
+        json={"consumption": [{"quote_item_id": item_id, "spool_id": spool_id}]},
+    )
+    assert r.status_code == 409, r.text
+
+    # spool untouched — the whole transaction must roll back
+    s = (await auth_client.get(f"/spools/{spool_id}")).json()
+    assert Decimal(s["remaining_grams"]) == Decimal("1000")
+
+
+@pytest.mark.asyncio
 async def test_commercial_can_deliver_after_produce(auth_client):
     await _seed_material(auth_client)
     r = await auth_client.post(
