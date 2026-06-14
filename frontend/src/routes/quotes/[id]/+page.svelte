@@ -1209,14 +1209,13 @@
           </thead>
           <tbody>
             {#each quote.items as it (it.id)}
-              {@const matched = spoolsForItem(it.gcode_meta?.material)}
               <tr>
                 <td>{it.name}</td>
                 <td class="mono">{it.gcode_meta?.material ?? "—"}</td>
                 <td>
                   <select bind:value={produceAssignments[it.id]}>
                     <option value="">—</option>
-                    {#each matched as sp}
+                    {#each spoolsForItem(it.gcode_meta?.material) as sp}
                       <option value={sp.id}>
                         {sp.material_type} · {fmtNum(sp.remaining_grams, 0)}g · {sp.purchased_from ?? "—"}
                       </option>
