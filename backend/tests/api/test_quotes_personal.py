@@ -105,11 +105,15 @@ async def test_personal_produce_consumes_spool(auth_client):
         json={"consumption": [{"quote_item_id": item_id, "spool_id": spool_id}]},
     )
     assert r.status_code == 200, r.text
-    assert r.json()["status"] == "produzido"
-    assert r.json()["produced_at"] is not None
+    assert r.json()["status"] == "em_producao"  # entra na fila; material já debitado
 
     s = (await auth_client.get(f"/spools/{spool_id}")).json()
     assert Decimal(s["remaining_grams"]) < Decimal("1000")
+
+    r = await auth_client.post(f"/quotes/{qid}/transitions/complete", json={"attempts": 1})
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "produzido"
+    assert r.json()["produced_at"] is not None
 
 
 @pytest.mark.asyncio
@@ -123,7 +127,7 @@ async def test_personal_workflow_skips_aprovado(auth_client):
         json={"consumption": [{"quote_item_id": item_id, "spool_id": spool_id}]},
     )
     assert r.status_code == 200, r.text
-    assert r.json()["status"] == "produzido"
+    assert r.json()["status"] == "em_producao"
 
     r = await auth_client.post(f"/quotes/{qid}/transitions/approve")
     assert r.status_code == 400, r.text

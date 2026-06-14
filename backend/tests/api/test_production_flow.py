@@ -56,6 +56,24 @@ async def test_complete_marks_produzido_and_logs_success(auth_client):
 
 
 @pytest.mark.asyncio
+async def test_fail_marks_falhou_and_logs_failure(auth_client):
+    await _seed_material(auth_client)
+    sid = await _spool(auth_client)
+    qid, item_id = await _approved_commercial(auth_client)
+    await auth_client.post(f"/quotes/{qid}/transitions/produce",
+        json={"consumption": [{"quote_item_id": item_id, "spool_id": sid}]})
+    r = await auth_client.post(f"/quotes/{qid}/transitions/fail",
+        json={"failure_description": "descolou da mesa", "attempts": 3})
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "falhou"
+    # re-produzir: de falhou volta a em_producao (deduz de novo)
+    r2 = await auth_client.post(f"/quotes/{qid}/transitions/produce",
+        json={"consumption": [{"quote_item_id": item_id, "spool_id": sid}]})
+    assert r2.status_code == 200, r2.text
+    assert r2.json()["status"] == "em_producao"
+
+
+@pytest.mark.asyncio
 async def test_production_event_table_exists(auth_client):
     from backend.infra.db.models import ProductionEvent
     assert ProductionEvent.__tablename__ == "production_events"

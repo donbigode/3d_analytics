@@ -763,6 +763,38 @@ async def t_complete(
     return await _quote_out(session, q)
 
 
+@router.post("/{quote_id}/transitions/fail", response_model=QuoteOut)
+async def t_fail(
+    quote_id: UUID,
+    payload: FailRequest,
+    _: User = Depends(require_user),
+    session: AsyncSession = Depends(db_session),
+):
+    q = await session.get(Quote, quote_id)
+    if not q:
+        raise HTTPException(404)
+    if q.status != QuoteStatus.EM_PRODUCAO:
+        raise HTTPException(409, "quote must be em_producao to fail")
+    desc = (payload.failure_description or "").strip()
+    if not desc:
+        raise HTTPException(400, "failure_description is required")
+    ctx, grams = await _cycle_context_and_grams(session, q)
+    session.add(
+        ProductionEvent(
+            quote_id=q.id,
+            kind=q.kind,
+            outcome=ProductionOutcome.FAILURE,
+            attempts=max(1, payload.attempts),
+            failure_description=desc,
+            context=ctx,
+            grams_wasted=grams,
+        )
+    )
+    q.status = QuoteStatus.FALHOU
+    await session.commit()
+    return await _quote_out(session, q)
+
+
 @router.post("/{quote_id}/transitions/deliver", response_model=QuoteOut)
 async def t_deliver(
     quote_id: UUID,
