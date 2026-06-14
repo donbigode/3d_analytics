@@ -5,6 +5,7 @@
   import type {
     CalibrationInsight,
     CalibrationInsightApplyResult,
+    FailureRateRow,
   } from "$lib/types";
 
   type Overview = {
@@ -32,6 +33,7 @@
   let rows: CalibrationInsight[] = [];
   let overview: Overview | null = null;
   let overviewError = "";
+  let failureRates: FailureRateRow[] = [];
   let loading = true;
   let listError = "";
   let actingId: string | null = null;
@@ -43,6 +45,12 @@
     } catch (err) {
       handleApiError(err);
       overviewError = errorMessage(err, "Falha ao carregar painel de insights.");
+    }
+    try {
+      const fr = await api<{ by_material: FailureRateRow[] }>("/insights/failure-rates");
+      failureRates = fr.by_material;
+    } catch (err) {
+      handleApiError(err);
     }
   }
 
@@ -229,6 +237,39 @@
           </li>
         {/each}
       </ul>
+    {/if}
+  </section>
+
+  <section class="panel">
+    <div class="panel-head">
+      <span class="page-eyebrow">Produção</span>
+      <h2 class="form-title">Atenção na produção · taxa de falha</h2>
+    </div>
+    {#if failureRates.length === 0}
+      <p class="empty">Sem eventos de produção ainda. Conclua ou marque falhas na Capacidade.</p>
+    {:else}
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Material</th>
+              <th class="right">Falhas</th>
+              <th class="right">Total</th>
+              <th class="right">Taxa</th>
+            </tr>
+          </thead>
+          <tbody>
+            {#each failureRates as r (r.material_type)}
+              <tr>
+                <td class="mono">{r.material_type}</td>
+                <td class="right mono">{r.failures}</td>
+                <td class="right mono">{r.total}</td>
+                <td class="right mono">{(r.failure_rate * 100).toFixed(0)}%</td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      </div>
     {/if}
   </section>
 

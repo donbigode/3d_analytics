@@ -73,9 +73,26 @@ export type QuoteStatus =
   | "draft"
   | "orcado"
   | "aprovado"
+  | "em_producao"
   | "produzido"
   | "entregue"
+  | "falhou"
   | "cancelado";
+
+export type InProductionJob = {
+  quote_id: string;
+  name: string;
+  kind: string;
+  hours: number | string;
+  entered_at: string | null;
+};
+export type InProductionOut = { jobs: InProductionJob[] };
+export type FailureRateRow = {
+  material_type: string;
+  failures: number;
+  total: number;
+  failure_rate: number;
+};
 
 export type QuoteItem = {
   id: string;

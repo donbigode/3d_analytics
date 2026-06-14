@@ -2,22 +2,89 @@
   import { onMount } from "svelte";
   import { api, errorMessage } from "$lib/api";
   import { handleApiError, requireAuth } from "$lib/guard";
-  import type { ForecastOut } from "$lib/types";
+  import type { ForecastOut, InProductionOut, InProductionJob } from "$lib/types";
 
   let forecast: ForecastOut | null = null;
+  let inProduction: InProductionOut | null = null;
   let loading = true;
   let listError = "";
+  let acting = "";
+
+  // fail modal
+  let failJob: InProductionJob | null = null;
+  let failDescription = "";
+  let failAttempts = 1;
+  let failError = "";
+  let failing = false;
 
   async function load() {
     loading = true;
     listError = "";
     try {
-      forecast = await api<ForecastOut>("/capacity/forecast");
+      [forecast, inProduction] = await Promise.all([
+        api<ForecastOut>("/capacity/forecast"),
+        api<InProductionOut>("/capacity/in-production"),
+      ]);
     } catch (err) {
       handleApiError(err);
       listError = errorMessage(err, "Falha ao carregar previsão.");
     } finally {
       loading = false;
+    }
+  }
+
+  async function complete(job: InProductionJob) {
+    const raw = prompt("Quantas tentativas até concluir?", "1");
+    if (raw === null) return;
+    const attempts = Math.max(1, parseInt(raw, 10) || 1);
+    acting = job.quote_id;
+    try {
+      await api(`/quotes/${job.quote_id}/transitions/complete`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ attempts }),
+      });
+      await load();
+    } catch (err) {
+      handleApiError(err);
+      listError = errorMessage(err, "Falha ao concluir.");
+    } finally {
+      acting = "";
+    }
+  }
+
+  function openFail(job: InProductionJob) {
+    failJob = job;
+    failDescription = "";
+    failAttempts = 1;
+    failError = "";
+  }
+
+  async function confirmFail() {
+    if (!failJob) return;
+    const desc = failDescription.trim();
+    if (!desc) {
+      failError = "Descreva o que houve.";
+      return;
+    }
+    failing = true;
+    failError = "";
+    try {
+      await api(`/quotes/${failJob.quote_id}/transitions/fail`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          failure_description: desc,
+          attempts: Math.max(1, failAttempts),
+        }),
+      });
+      failJob = null;
+      await load();
+    } catch (err) {
+      handleApiError(err);
+      failError = errorMessage(err, "Falha ao registrar.");
+    } finally {
+      failing = false;
     }
   }
 
@@ -85,6 +152,37 @@
 {#if loading && !forecast}
   <section class="panel"><p class="empty">Carregando…</p></section>
 {:else if forecast}
+  <section class="panel">
+    <div class="panel-head">
+      <h2 class="section-title">
+        Em produção <span class="count">· {inProduction?.jobs.length ?? 0}</span>
+      </h2>
+    </div>
+    {#if !inProduction || inProduction.jobs.length === 0}
+      <p class="empty">Nada na impressora agora. Produza um orçamento aprovado.</p>
+    {:else}
+      <ul class="prod-rows">
+        {#each inProduction.jobs as job, i (job.quote_id)}
+          <li class="prod-row">
+            <div class="prod-info">
+              <span class="mono pos">{i + 1}</span>
+              <a class="prod-name" href={`/quotes/${job.quote_id}`}>{job.name}</a>
+              <span class="muted mono">· {job.kind === "personal" ? "pessoal" : "comercial"} · {fmtHours(job.hours)}</span>
+            </div>
+            <div class="prod-actions">
+              <button class="tiny" on:click={() => complete(job)} disabled={acting === job.quote_id}>
+                {acting === job.quote_id ? "…" : "Concluir"}
+              </button>
+              <button class="tiny danger" on:click={() => openFail(job)} disabled={acting === job.quote_id}>
+                Falhar
+              </button>
+            </div>
+          </li>
+        {/each}
+      </ul>
+    {/if}
+  </section>
+
   <section class="panel highlight">
     <div class="panel-head">
       <span class="page-eyebrow">Próxima janela livre</span>
@@ -146,8 +244,54 @@
   </section>
 {/if}
 
+{#if failJob}
+  <div class="modal-backdrop" on:click|self={() => (failJob = null)} role="presentation">
+    <div class="modal">
+      <h2>Registrar falha — {failJob.name}</h2>
+      <p class="dim">O material já gasto permanece como despesa. Descreva o que houve para alimentar os insights.</p>
+      {#if failError}<div class="banner alert">{failError}</div>{/if}
+      <label class="field">
+        O que houve?
+        <textarea bind:value={failDescription} rows="3" placeholder="ex.: descolou da mesa na camada 40; warping nos cantos"></textarea>
+      </label>
+      <label class="field">
+        Tentativas
+        <input type="number" min="1" step="1" bind:value={failAttempts} />
+      </label>
+      <div class="modal-actions">
+        <button class="ghost" on:click={() => (failJob = null)} disabled={failing}>Cancelar</button>
+        <button class="danger" on:click={confirmFail} disabled={failing}>
+          {failing ? "Registrando…" : "Registrar falha"}
+        </button>
+      </div>
+    </div>
+  </div>
+{/if}
+
 <style>
   .page-head { margin-bottom: 1.5rem; }
+  .prod-rows { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.5rem; }
+  .prod-row {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 0.75rem; padding: 0.55rem 0.7rem; border: 1px solid var(--line);
+    border-radius: 6px;
+  }
+  .prod-info { display: flex; align-items: baseline; gap: 0.5rem; min-width: 0; }
+  .prod-info .pos { color: var(--muted); }
+  .prod-name { font-weight: 500; text-decoration: none; }
+  .prod-actions { display: flex; gap: 0.4rem; flex-shrink: 0; }
+  .modal-backdrop {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.4);
+    display: flex; align-items: center; justify-content: center; z-index: 50; padding: 1rem;
+  }
+  .modal {
+    background: var(--paper); border: 1px solid var(--line-strong);
+    border-radius: 8px; padding: 1.25rem; width: min(480px, 100%);
+    display: grid; gap: 0.75rem;
+  }
+  .modal .field { display: grid; gap: 0.3rem; }
+  .modal textarea, .modal input { width: 100%; }
+  .modal-actions { display: flex; justify-content: flex-end; gap: 0.5rem; }
   .page-head em { color: var(--brand); font-style: italic; }
   .banner.alert {
     border-left: 4px solid var(--danger);
