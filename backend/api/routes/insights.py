@@ -22,6 +22,7 @@ from backend.infra.db.models import (
     Client,
     LLMDigest,
     MaterialVersion,
+    ProductionEvent,
     Quote,
     QuoteItem,
     User,
@@ -32,6 +33,41 @@ router = APIRouter()
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+@router.get("/failure-rates")
+async def failure_rates(
+    _: User = Depends(require_user),
+    session: AsyncSession = Depends(db_session),
+):
+    """Taxa de falha agregada por material, a partir de production_events.
+
+    Cada evento conta uma vez por material distinto presente no seu contexto
+    (um orçamento pode misturar materiais). Puro SQL/Python, sem IA."""
+    events = (await session.execute(select(ProductionEvent))).scalars().all()
+    agg: dict[str, dict[str, int]] = {}
+    for e in events:
+        mats = {
+            (piece or {}).get("material_type")
+            for piece in (e.context or [])
+            if (piece or {}).get("material_type")
+        }
+        for mt in (mats or {None}):
+            key = mt or "—"
+            bucket = agg.setdefault(key, {"failures": 0, "total": 0})
+            bucket["total"] += 1
+            if e.outcome == "failure":
+                bucket["failures"] += 1
+    by_material = [
+        {
+            "material_type": k,
+            "failures": v["failures"],
+            "total": v["total"],
+            "failure_rate": (v["failures"] / v["total"]) if v["total"] else 0.0,
+        }
+        for k, v in sorted(agg.items())
+    ]
+    return {"by_material": by_material}
 
 
 @router.get("/overview")
