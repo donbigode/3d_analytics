@@ -6,6 +6,7 @@
     CalibrationInsight,
     CalibrationInsightApplyResult,
     FailureRateRow,
+    ProductionSuggestionsOut,
   } from "$lib/types";
 
   type Overview = {
@@ -34,6 +35,9 @@
   let overview: Overview | null = null;
   let overviewError = "";
   let failureRates: FailureRateRow[] = [];
+  let suggestions: ProductionSuggestionsOut | null = null;
+  let generatingSuggestions = false;
+  let suggestionsError = "";
   let loading = true;
   let listError = "";
   let actingId: string | null = null;
@@ -51,6 +55,29 @@
       failureRates = fr.by_material;
     } catch (err) {
       handleApiError(err);
+    }
+    await loadSuggestions();
+  }
+
+  async function loadSuggestions() {
+    try {
+      suggestions = await api<ProductionSuggestionsOut>("/insights/production-suggestions");
+    } catch (err) {
+      handleApiError(err);
+    }
+  }
+
+  async function generateSuggestions() {
+    generatingSuggestions = true;
+    suggestionsError = "";
+    try {
+      await api("/insights/production-suggestions/generate", { method: "POST" });
+      await loadSuggestions();
+    } catch (err) {
+      handleApiError(err);
+      suggestionsError = errorMessage(err, "Falha ao gerar sugestões.");
+    } finally {
+      generatingSuggestions = false;
     }
   }
 
@@ -270,6 +297,26 @@
           </tbody>
         </table>
       </div>
+    {/if}
+
+    <div class="suggest-head">
+      <h3 class="form-title">Sugestões da IA</h3>
+      <button class="tiny" on:click={generateSuggestions} disabled={generatingSuggestions}>
+        {generatingSuggestions ? "Gerando…" : suggestions?.generated_at ? "Regerar" : "Gerar sugestões"}
+      </button>
+    </div>
+    {#if suggestionsError}<div class="banner alert">{suggestionsError}</div>{/if}
+    {#if suggestions && suggestions.stale && suggestions.generated_at}
+      <p class="hint">Há novas falhas desde a última geração — clique em Regerar.</p>
+    {/if}
+    {#if suggestions && suggestions.suggestions.length > 0}
+      <ul class="suggest-list">
+        {#each suggestions.suggestions as s}
+          <li><strong class="mono">{s.material_type}</strong> — {s.advice}</li>
+        {/each}
+      </ul>
+    {:else if suggestions && !suggestions.generated_at}
+      <p class="empty">Sem sugestões ainda. Gere a partir das falhas registradas.</p>
     {/if}
   </section>
 
@@ -839,5 +886,30 @@
     font-size: 0.72rem;
     letter-spacing: 0.14em;
     text-transform: uppercase;
+  }
+  .suggest-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    margin-top: 1.25rem;
+    padding-top: 1rem;
+    border-top: 1px dashed var(--line);
+  }
+  .suggest-list {
+    list-style: none;
+    margin: 0.6rem 0 0;
+    padding: 0;
+    display: grid;
+    gap: 0.45rem;
+  }
+  .suggest-list li {
+    font-size: 0.9rem;
+    line-height: 1.4;
+  }
+  .hint {
+    font-size: 0.8rem;
+    color: var(--muted);
+    margin: 0.5rem 0 0;
   }
 </style>

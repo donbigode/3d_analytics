@@ -93,6 +93,14 @@ export type FailureRateRow = {
   total: number;
   failure_rate: number;
 };
+export type ProductionSuggestion = { material_type: string; advice: string };
+export type ProductionSuggestionsOut = {
+  suggestions: ProductionSuggestion[];
+  generated_at: string | null;
+  source_count: number;
+  current_failures: number;
+  stale: boolean;
+};
 
 export type QuoteItem = {
   id: string;
