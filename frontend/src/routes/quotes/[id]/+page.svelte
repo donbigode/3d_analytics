@@ -319,7 +319,8 @@
       const input = document.getElementById("itemFile") as HTMLInputElement | null;
       if (input) input.value = "";
     } catch (err) {
-      itemError = err instanceof Error ? err.message : "Falha ao adicionar peça.";
+      handleApiError(err);
+      itemError = errorMessage(err, "Falha ao adicionar peça.");
     } finally {
       addingItem = false;
     }
@@ -556,8 +557,9 @@
       showProduceModal = false;
     } catch (err) {
       handleApiError(err);
-      produceError =
-        err instanceof Error ? err.message : errorMessage(err, "Falha ao produzir.");
+      // errorMessage extrai o detalhe do ApiError (ex.: "item sem filamento…");
+      // pra Error simples (validação local) devolve a própria mensagem.
+      produceError = errorMessage(err, "Falha ao produzir.");
     } finally {
       producing = false;
     }
