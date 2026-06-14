@@ -9,6 +9,7 @@ from backend.infra.db.models.llm_suggestion import EMBEDDING_DIM, LLMSuggestion
 from backend.infra.db.models.material import MaterialVersion
 from backend.infra.db.models.material_consumption import MaterialConsumption
 from backend.infra.db.models.production_event import ProductionEvent
+from backend.infra.db.models.production_suggestion import ProductionSuggestion
 from backend.infra.db.models.quote import Quote
 from backend.infra.db.models.quote_item import QuoteItem
 from backend.infra.db.models.quote_service import QuoteService
@@ -22,6 +23,7 @@ __all__ = [
     "Asset", "CalibrationInsight", "Client", "DataSourceRun", "KeywordIdea",
     "KeywordObservation", "LLMDigest", "LLMSuggestion", "EMBEDDING_DIM",
     "MaterialVersion", "MaterialConsumption", "ProductionEvent",
+    "ProductionSuggestion",
     "Quote", "QuoteItem", "QuoteService", "Service", "Settings", "Spool",
     "User", "WatcherInboxFile",
 ]
