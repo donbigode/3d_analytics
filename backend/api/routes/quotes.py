@@ -670,12 +670,21 @@ async def t_produce(
         if not it or it.quote_id != q.id or not sp:
             raise HTTPException(400, "invalid assignment")
         mv = await session.get(MaterialVersion, it.material_version_id)
-        grams = grams_for_item(it.gcode_meta, mv.density_g_cm3, it.quantity)
+        if assign.grams is not None and assign.grams > 0:
+            # Override direto: debita exatamente o informado (total da linha).
+            grams = assign.grams
+        else:
+            if assign.filament_m is not None and assign.filament_m > 0:
+                # Override de metragem: persiste no item para custo/analytics.
+                meta = dict(it.gcode_meta or {})
+                meta["filament_m"] = float(assign.filament_m)
+                it.gcode_meta = meta
+            grams = grams_for_item(it.gcode_meta, mv.density_g_cm3, it.quantity)
         if grams <= 0:
             raise HTTPException(
                 409,
                 f"item '{it.name}' has no filament length (filament_m=0); "
-                "reparse the gcode or set the length before producing",
+                "informe a metragem ou as gramas a debitar para produzir",
             )
         if sp.remaining_grams < grams:
             raise HTTPException(409, f"spool {sp.id} has insufficient grams")

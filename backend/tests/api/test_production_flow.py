@@ -27,6 +27,55 @@ async def _approved_commercial(c):
     return qid, item_id
 
 
+async def _approved_commercial_zero_filament(c):
+    """Approved commercial quote whose item has filament_m=0 (parser miss)."""
+    gcode = b";TIME:3600\n;Filament used:0m\n;Material Type:PLA\n"
+    r = await c.post("/quotes", json={"kind": "commercial"})
+    qid = r.json()["id"]
+    await c.post(f"/quotes/{qid}/items",
+                 files={"file": ("z.gcode", gcode, "application/octet-stream")},
+                 data={"name": "Z", "quantity": "1"})
+    await c.post(f"/quotes/{qid}/transitions/finalize")
+    await c.post(f"/quotes/{qid}/transitions/approve")
+    item_id = (await c.get(f"/quotes/{qid}")).json()["items"][0]["id"]
+    return qid, item_id
+
+
+@pytest.mark.asyncio
+async def test_produce_with_grams_override_debits_that_amount(auth_client):
+    from decimal import Decimal
+    await _seed_material(auth_client)
+    sid = await _spool(auth_client)
+    qid, item_id = await _approved_commercial_zero_filament(auth_client)
+    # filament_m=0 normalmente bloqueia; com override de gramas, produz.
+    r = await auth_client.post(f"/quotes/{qid}/transitions/produce",
+        json={"consumption": [
+            {"quote_item_id": item_id, "spool_id": sid, "grams": "30"}
+        ]})
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "em_producao"
+    s = (await auth_client.get(f"/spools/{sid}")).json()
+    assert Decimal(s["remaining_grams"]) == Decimal("970.00")  # 1000 - 30
+
+
+@pytest.mark.asyncio
+async def test_produce_with_filament_override_computes_and_persists(auth_client):
+    from decimal import Decimal
+    await _seed_material(auth_client)
+    sid = await _spool(auth_client)
+    qid, item_id = await _approved_commercial_zero_filament(auth_client)
+    r = await auth_client.post(f"/quotes/{qid}/transitions/produce",
+        json={"consumption": [
+            {"quote_item_id": item_id, "spool_id": sid, "filament_m": 5.0}
+        ]})
+    assert r.status_code == 200, r.text
+    s = (await auth_client.get(f"/spools/{sid}")).json()
+    assert Decimal(s["remaining_grams"]) < Decimal("1000")  # debitou o calculado
+    # persistiu a metragem no item
+    item = (await auth_client.get(f"/quotes/{qid}")).json()["items"][0]
+    assert float(item["gcode_meta"]["filament_m"]) == 5.0
+
+
 @pytest.mark.asyncio
 async def test_produce_enters_em_producao(auth_client):
     from decimal import Decimal

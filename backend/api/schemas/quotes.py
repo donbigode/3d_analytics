@@ -91,6 +91,12 @@ class QuoteOut(BaseModel):
 class ConsumptionAssignment(BaseModel):
     quote_item_id: str
     spool_id: str
+    # Overrides informados na hora de produzir (quando o gcode não trouxe a
+    # metragem). `grams` = total a debitar para a linha; tem precedência.
+    # `filament_m` = metragem por unidade; calcula as gramas e é persistida
+    # no item (para custo/analytics refletirem).
+    grams: Decimal | None = None
+    filament_m: float | None = None
 
 
 class ProduceRequest(BaseModel):
