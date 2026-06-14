@@ -644,18 +644,19 @@ async def t_produce(
     q = await session.get(Quote, quote_id)
     if not q:
         raise HTTPException(404)
-    # Commercial quotes reach produce through orcado → aprovado. Personal
-    # projects have no commercial pipeline: they finalize-and-produce in this
-    # single step (still debiting the selected spools), so we accept them
-    # straight from draft and stamp finalized_at here.
+    # Produce = "send to the printer queue": debit the selected spools and move
+    # to em_producao (the FIFO in Capacidade, where Concluir/Falhar happen).
+    # Commercial enters from aprovado; personal finalize-and-produces from draft.
+    # Either kind can re-produce from falhou (a fresh cycle that debits again).
     if q.kind == QuoteKind.COMMERCIAL:
-        if q.status != QuoteStatus.APROVADO:
-            raise HTTPException(409, "quote must be aprovado before produce")
+        if q.status not in (QuoteStatus.APROVADO, QuoteStatus.FALHOU):
+            raise HTTPException(409, "quote must be aprovado (ou falhou) before produce")
     elif q.kind == QuoteKind.PERSONAL:
-        if q.status != QuoteStatus.DRAFT:
-            raise HTTPException(409, "personal quote must be in draft to produce")
+        if q.status not in (QuoteStatus.DRAFT, QuoteStatus.FALHOU):
+            raise HTTPException(409, "personal quote must be in draft (ou falhou) to produce")
         await _assert_materials_resolved(session, q)
-        q.finalized_at = _now()
+        if q.finalized_at is None:
+            q.finalized_at = _now()
     else:
         raise HTTPException(400, "unsupported quote kind for produce")
 
@@ -686,8 +687,7 @@ async def t_produce(
                 unit_cost_snapshot=unit_cost,
             )
         )
-    q.status = QuoteStatus.PRODUZIDO
-    q.produced_at = _now()
+    q.status = QuoteStatus.EM_PRODUCAO
     await session.commit()
     return await _quote_out(session, q)
 

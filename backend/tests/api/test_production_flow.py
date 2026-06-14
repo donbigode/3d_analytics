@@ -28,6 +28,20 @@ async def _approved_commercial(c):
 
 
 @pytest.mark.asyncio
+async def test_produce_enters_em_producao(auth_client):
+    from decimal import Decimal
+    await _seed_material(auth_client)
+    sid = await _spool(auth_client)
+    qid, item_id = await _approved_commercial(auth_client)
+    r = await auth_client.post(f"/quotes/{qid}/transitions/produce",
+        json={"consumption": [{"quote_item_id": item_id, "spool_id": sid}]})
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "em_producao"
+    s = (await auth_client.get(f"/spools/{sid}")).json()
+    assert Decimal(s["remaining_grams"]) < Decimal("1000")  # material já deduzido
+
+
+@pytest.mark.asyncio
 async def test_production_event_table_exists(auth_client):
     from backend.infra.db.models import ProductionEvent
     assert ProductionEvent.__tablename__ == "production_events"
