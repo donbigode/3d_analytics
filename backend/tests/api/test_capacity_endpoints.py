@@ -127,3 +127,30 @@ async def test_settings_includes_printer_hours_per_day(auth_client):
     r = await auth_client.put("/settings", json={"printer_hours_per_day": 16})
     assert r.status_code == 200, r.text
     assert r.json()["printer_hours_per_day"] == 16
+
+
+@pytest.mark.asyncio
+async def test_in_production_queue_lists_em_producao(auth_client):
+    await _seed_material(auth_client)
+    r = await auth_client.post(
+        "/spools",
+        json={
+            "material_type": "PLA",
+            "purchased_at": "2026-06-01T00:00:00Z",
+            "purchased_price": "100",
+            "initial_grams": "1000",
+            "remaining_grams": "1000",
+        },
+    )
+    sid = r.json()["id"]
+    qid = await _approved_quote(auth_client)
+    item_id = (await auth_client.get(f"/quotes/{qid}")).json()["items"][0]["id"]
+    await auth_client.post(
+        f"/quotes/{qid}/transitions/produce",
+        json={"consumption": [{"quote_item_id": item_id, "spool_id": sid}]},
+    )
+
+    r = await auth_client.get("/capacity/in-production")
+    assert r.status_code == 200, r.text
+    jobs = r.json()["jobs"]
+    assert any(j["quote_id"] == qid for j in jobs)

@@ -14,7 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.api.deps import db_session, require_user
-from backend.api.schemas.capacity import ForecastOut, QuoteEtaOut
+from backend.api.schemas.capacity import ForecastOut, InProductionOut, QuoteEtaOut
 from backend.core.capacity import QuoteSummary, compute_forecast
 from backend.core.models import QuoteKind, QuoteStatus
 from backend.infra.db.models import Quote, QuoteItem, Settings, User
@@ -99,6 +99,41 @@ async def get_forecast(
             for j in f.jobs
         ],
     )
+
+
+@router.get("/in-production", response_model=InProductionOut)
+async def in_production(
+    _: User = Depends(require_user),
+    session: AsyncSession = Depends(db_session),
+):
+    """FIFO of jobs currently on the printer (status em_producao), oldest first.
+
+    Distinct from /forecast (which forecasts the aprovado backlog). This is the
+    live queue where Capacidade marks Concluir/Falhar."""
+    res = await session.execute(
+        select(Quote)
+        .where(Quote.status == QuoteStatus.EM_PRODUCAO)
+        .order_by(Quote.produced_at.asc().nulls_last(), Quote.created_at.asc())
+    )
+    jobs = []
+    for q in res.scalars():
+        items = list(
+            (
+                await session.execute(
+                    select(QuoteItem).where(QuoteItem.quote_id == q.id)
+                )
+            ).scalars()
+        )
+        jobs.append(
+            {
+                "quote_id": str(q.id),
+                "name": (items[0].name if items else str(q.id)[:8]),
+                "kind": q.kind,
+                "hours": _quote_hours(items),
+                "entered_at": q.produced_at,
+            }
+        )
+    return InProductionOut(jobs=jobs)
 
 
 @router.get("/forecast/quotes/{quote_id}", response_model=QuoteEtaOut)
