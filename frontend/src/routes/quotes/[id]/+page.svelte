@@ -138,6 +138,8 @@
   // produce modal
   let showProduceModal = false;
   let produceAssignments: Record<string, string> = {}; // quote_item_id -> spool_id
+  let produceMeters: Record<string, string> = {}; // quote_item_id -> filament_m (override)
+  let produceGrams: Record<string, string> = {}; // quote_item_id -> gramas (override direto)
   let producing = false;
   let produceError = "";
 
@@ -520,6 +522,8 @@
   function openProduce() {
     if (!quote) return;
     produceAssignments = {};
+    produceMeters = {};
+    produceGrams = {};
     for (const it of quote.items) {
       const matCode = it.gcode_meta?.material ?? null;
       const candidate = spools.find(
@@ -528,6 +532,9 @@
           (matCode ? sp.material_type === matCode : true),
       );
       produceAssignments[it.id] = candidate?.id ?? "";
+      const fm = Number(it.gcode_meta?.filament_m ?? 0);
+      produceMeters[it.id] = fm > 0 ? String(fm) : "";
+      produceGrams[it.id] = "";
     }
     produceError = "";
     showProduceModal = true;
@@ -544,10 +551,19 @@
     produceError = "";
     producing = true;
     try {
-      const consumption = quote.items.map((it) => ({
-        quote_item_id: it.id,
-        spool_id: produceAssignments[it.id],
-      }));
+      const consumption = quote.items.map((it) => {
+        const a: {
+          quote_item_id: string;
+          spool_id: string;
+          grams?: string;
+          filament_m?: number;
+        } = { quote_item_id: it.id, spool_id: produceAssignments[it.id] };
+        const g = parseFloat(produceGrams[it.id] ?? "");
+        const m = parseFloat(produceMeters[it.id] ?? "");
+        if (Number.isFinite(g) && g > 0) a.grams = String(g);
+        else if (Number.isFinite(m) && m > 0) a.filament_m = m;
+        return a;
+      });
       if (consumption.some((c) => !c.spool_id)) {
         throw new Error("Selecione um spool para cada peça.");
       }
@@ -1181,14 +1197,15 @@
     <div class="modal">
       <h2>Produzir orçamento</h2>
       <p class="dim">
-        Atribua uma bobina (spool) por peça. O sistema vai debitar gramas e
-        gravar o consumo real.
+        Atribua uma bobina por peça. A baixa usa o filamento informado — se o
+        gcode não trouxe a metragem, informe os <strong>metros</strong> ou direto
+        as <strong>gramas</strong> a debitar (gramas têm precedência).
       </p>
       {#if produceError}<div class="alert">{produceError}</div>{/if}
       <div class="table-wrap">
         <table>
           <thead>
-            <tr><th>Peça</th><th>Material</th><th>Spool</th></tr>
+            <tr><th>Peça</th><th>Material</th><th>Spool</th><th class="right">Metros</th><th class="right">Gramas</th></tr>
           </thead>
           <tbody>
             {#each quote.items as it (it.id)}
@@ -1206,10 +1223,18 @@
                     {/each}
                   </select>
                 </td>
+                <td class="right">
+                  <input class="num" type="number" step="0.01" min="0" placeholder="m"
+                         bind:value={produceMeters[it.id]} />
+                </td>
+                <td class="right">
+                  <input class="num" type="number" step="0.01" min="0" placeholder="g"
+                         bind:value={produceGrams[it.id]} />
+                </td>
               </tr>
             {/each}
             {#if quote.items.length === 0}
-              <tr><td colspan="3"><div class="empty">Nenhuma peça neste orçamento</div></td></tr>
+              <tr><td colspan="5"><div class="empty">Nenhuma peça neste orçamento</div></td></tr>
             {/if}
           </tbody>
         </table>
@@ -1550,5 +1575,8 @@
   .section-title .count {
     color: var(--muted);
     font-weight: 400;
+  }  .num {
+    width: 5.5rem;
+    text-align: right;
   }
 </style>
