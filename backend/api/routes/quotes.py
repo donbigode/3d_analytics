@@ -14,6 +14,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.api.deps import db_session, require_user
 from backend.api.schemas.quotes import (
+    CompleteRequest,
+    FailRequest,
     ProduceRequest,
     QuoteCreate,
     QuoteItemOut,
@@ -25,6 +27,7 @@ from backend.api.schemas.quotes import (
 )
 from backend.core.gcode.parser import GcodeMeta, parse_gcode_metadata
 from backend.core.models import (
+    ProductionOutcome,
     QuoteKind,
     QuoteStatus,
     ServiceKind,
@@ -41,6 +44,7 @@ from backend.infra.db.models import (
     Client,
     MaterialConsumption,
     MaterialVersion,
+    ProductionEvent,
     Quote,
     QuoteItem,
     QuoteService,
@@ -688,6 +692,73 @@ async def t_produce(
             )
         )
     q.status = QuoteStatus.EM_PRODUCAO
+    await session.commit()
+    return await _quote_out(session, q)
+
+
+async def _cycle_context_and_grams(session: AsyncSession, q: Quote):
+    """Snapshot per-piece context (material/colour/manufacturer + print
+    characteristics) and the total grams consumed in the current cycle, so the
+    ProductionEvent survives even if quote/spools change later."""
+    items = (
+        await session.execute(select(QuoteItem).where(QuoteItem.quote_id == q.id))
+    ).scalars().all()
+    ctx: list[dict] = []
+    grams = Decimal("0")
+    for it in items:
+        meta = it.gcode_meta or {}
+        cons = (
+            await session.execute(
+                select(MaterialConsumption).where(
+                    MaterialConsumption.quote_item_id == it.id
+                )
+            )
+        ).scalars().all()
+        sp = None
+        if cons:
+            sp = await session.get(Spool, cons[-1].spool_id)
+            grams += sum((c.grams_used or Decimal("0")) for c in cons)
+        ctx.append(
+            {
+                "name": it.name,
+                "material_type": (sp.material_type if sp else meta.get("material")),
+                "color": (sp.color if sp else None),
+                "manufacturer": (sp.manufacturer if sp else None),
+                "filament_m": meta.get("filament_m"),
+                "time_s": meta.get("time_s"),
+                "is_multi_color": bool(getattr(it, "is_multi_color", False)),
+                "machine": meta.get("machine"),
+                "model_source_url": getattr(it, "model_source_url", None),
+            }
+        )
+    return ctx, grams
+
+
+@router.post("/{quote_id}/transitions/complete", response_model=QuoteOut)
+async def t_complete(
+    quote_id: UUID,
+    payload: CompleteRequest,
+    _: User = Depends(require_user),
+    session: AsyncSession = Depends(db_session),
+):
+    q = await session.get(Quote, quote_id)
+    if not q:
+        raise HTTPException(404)
+    if q.status != QuoteStatus.EM_PRODUCAO:
+        raise HTTPException(409, "quote must be em_producao to complete")
+    ctx, _grams = await _cycle_context_and_grams(session, q)
+    session.add(
+        ProductionEvent(
+            quote_id=q.id,
+            kind=q.kind,
+            outcome=ProductionOutcome.SUCCESS,
+            attempts=max(1, payload.attempts),
+            context=ctx,
+            grams_wasted=None,
+        )
+    )
+    q.status = QuoteStatus.PRODUZIDO
+    q.produced_at = _now()
     await session.commit()
     return await _quote_out(session, q)
 
