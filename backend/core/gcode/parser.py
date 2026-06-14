@@ -69,7 +69,10 @@ RE_FUZZY_MATERIAL_TOKEN = re.compile(
 )
 
 _TIME_KEYWORDS = ("time", "duration", "duração", "duracao", "tempo")
-_FILAMENT_KEYWORDS = ("filament", "filamento", "extrusion")
+# NB: "extrusion" foi removido — casava com linhas de config "extrusion width
+# = 0.42mm" e gerava consumo espúrio. O consumo real ("filament used [mm]")
+# é coberto pelos regex de dialeto; a fuzzy fica restrita a "filament".
+_FILAMENT_KEYWORDS = ("filament", "filamento")
 _MATERIAL_KEYWORDS = ("material", "filament_type", "filament type")
 _MACHINE_KEYWORDS = ("printer", "machine", "model", "impressora")
 
@@ -164,45 +167,79 @@ def _fuzzy_extract_machine(line: str) -> str | None:
     return None
 
 
-def parse_gcode_metadata(path: Path, max_lines: int = 800) -> GcodeMeta:
+def _scan_line(line, t, f, mat, mach):
+    """Apply the pattern battery to one comment line; only fills fields still
+    None so the first match per field wins. Returns the updated tuple."""
+    # Dialect-specific fast path
+    if t is None and (m := RE_TIME.search(line)):
+        t = float(m.group(1))
+    elif t is None and (m := RE_TIME_HUMAN.search(line)):
+        t = _humantime_to_seconds(m.group(1))
+    if f is None and (m := RE_FILAMENT.search(line)):
+        f = float(m.group(1))
+    elif f is None and (m := RE_FILAMENT_MM.search(line)):
+        f = float(m.group(1)) / 1000.0
+    elif f is None and (m := RE_FILAMENT_M_BARE.search(line)):
+        f = float(m.group(1))
+    if mat is None and (m := RE_MATERIAL.search(line)):
+        mat = m.group(1).strip().upper()
+    elif mat is None and (m := RE_FILAMENT_TYPE.search(line)):
+        mat = m.group(1).strip().split(";")[0].upper()
+    if mach is None and (m := RE_MACHINE.search(line)):
+        mach = m.group(1).strip()
+    elif mach is None and (m := RE_PRINTER_MODEL.search(line)):
+        mach = m.group(1).strip()
+    # Generic fuzzy fallback — only if the specific patterns failed.
+    if t is None:
+        t = _fuzzy_extract_time(line)
+    if f is None:
+        f = _fuzzy_extract_filament(line)
+    if mat is None:
+        mat = _fuzzy_extract_material(line)
+    if mach is None:
+        mach = _fuzzy_extract_machine(line)
+    return t, f, mat, mach
+
+
+def _tail_comment_lines(path: Path, tail_bytes: int) -> list[str]:
+    """Comment lines from the last ``tail_bytes`` of the file. Creality Print
+    V7 / PrusaSlicer / Cura write the filament & time totals in a FOOTER, far
+    past the header — so we read the end of the file too."""
+    try:
+        size = path.stat().st_size
+    except OSError:
+        return []
+    with open(path, "rb") as fh:
+        if size > tail_bytes:
+            fh.seek(size - tail_bytes)
+            fh.readline()  # discard the partial first line after the seek
+        chunk = fh.read()
+    text = chunk.decode("utf-8", errors="ignore")
+    return [ln for ln in text.splitlines() if ln.startswith(";")]
+
+
+def parse_gcode_metadata(
+    path: Path, max_lines: int = 800, tail_bytes: int = 131072
+) -> GcodeMeta:
     t: float | None = None
     f: float | None = None
     mat: str | None = None
     mach: str | None = None
 
+    # 1) Head: material/machine and header-style stats live near the top.
     with open(path, "r", errors="ignore") as fh:
         for i, line in enumerate(fh):
             if i > max_lines:
                 break
             if not line.startswith(";"):
                 continue  # actual gcode commands; skip
-            # Dialect-specific fast path
-            if t is None and (m := RE_TIME.search(line)):
-                t = float(m.group(1))
-            elif t is None and (m := RE_TIME_HUMAN.search(line)):
-                t = _humantime_to_seconds(m.group(1))
-            if f is None and (m := RE_FILAMENT.search(line)):
-                f = float(m.group(1))
-            elif f is None and (m := RE_FILAMENT_MM.search(line)):
-                f = float(m.group(1)) / 1000.0
-            elif f is None and (m := RE_FILAMENT_M_BARE.search(line)):
-                f = float(m.group(1))
-            if mat is None and (m := RE_MATERIAL.search(line)):
-                mat = m.group(1).strip().upper()
-            elif mat is None and (m := RE_FILAMENT_TYPE.search(line)):
-                mat = m.group(1).strip().split(";")[0].upper()
-            if mach is None and (m := RE_MACHINE.search(line)):
-                mach = m.group(1).strip()
-            elif mach is None and (m := RE_PRINTER_MODEL.search(line)):
-                mach = m.group(1).strip()
-            # Generic fuzzy fallback — only if the specific patterns failed.
-            if t is None:
-                t = _fuzzy_extract_time(line)
-            if f is None:
-                f = _fuzzy_extract_filament(line)
-            if mat is None:
-                mat = _fuzzy_extract_material(line)
-            if mach is None:
-                mach = _fuzzy_extract_machine(line)
+            t, f, mat, mach = _scan_line(line, t, f, mat, mach)
+
+    # 2) Footer: if time/filament/material are still missing, scan the tail.
+    if t is None or f is None or mat is None:
+        for line in _tail_comment_lines(path, tail_bytes):
+            t, f, mat, mach = _scan_line(line, t, f, mat, mach)
+            if t is not None and f is not None and mat is not None:
+                break
 
     return GcodeMeta(time_s=t or 0.0, filament_m=f or 0.0, material=mat, machine=mach)
