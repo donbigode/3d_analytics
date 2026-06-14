@@ -14,6 +14,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.api.deps import db_session, require_user
 from backend.api.schemas.quotes import (
+    CompleteRequest,
+    FailRequest,
     ProduceRequest,
     QuoteCreate,
     QuoteItemOut,
@@ -25,6 +27,7 @@ from backend.api.schemas.quotes import (
 )
 from backend.core.gcode.parser import GcodeMeta, parse_gcode_metadata
 from backend.core.models import (
+    ProductionOutcome,
     QuoteKind,
     QuoteStatus,
     ServiceKind,
@@ -41,6 +44,7 @@ from backend.infra.db.models import (
     Client,
     MaterialConsumption,
     MaterialVersion,
+    ProductionEvent,
     Quote,
     QuoteItem,
     QuoteService,
@@ -644,18 +648,19 @@ async def t_produce(
     q = await session.get(Quote, quote_id)
     if not q:
         raise HTTPException(404)
-    # Commercial quotes reach produce through orcado → aprovado. Personal
-    # projects have no commercial pipeline: they finalize-and-produce in this
-    # single step (still debiting the selected spools), so we accept them
-    # straight from draft and stamp finalized_at here.
+    # Produce = "send to the printer queue": debit the selected spools and move
+    # to em_producao (the FIFO in Capacidade, where Concluir/Falhar happen).
+    # Commercial enters from aprovado; personal finalize-and-produces from draft.
+    # Either kind can re-produce from falhou (a fresh cycle that debits again).
     if q.kind == QuoteKind.COMMERCIAL:
-        if q.status != QuoteStatus.APROVADO:
-            raise HTTPException(409, "quote must be aprovado before produce")
+        if q.status not in (QuoteStatus.APROVADO, QuoteStatus.FALHOU):
+            raise HTTPException(409, "quote must be aprovado (ou falhou) before produce")
     elif q.kind == QuoteKind.PERSONAL:
-        if q.status != QuoteStatus.DRAFT:
-            raise HTTPException(409, "personal quote must be in draft to produce")
+        if q.status not in (QuoteStatus.DRAFT, QuoteStatus.FALHOU):
+            raise HTTPException(409, "personal quote must be in draft (ou falhou) to produce")
         await _assert_materials_resolved(session, q)
-        q.finalized_at = _now()
+        if q.finalized_at is None:
+            q.finalized_at = _now()
     else:
         raise HTTPException(400, "unsupported quote kind for produce")
 
@@ -686,8 +691,106 @@ async def t_produce(
                 unit_cost_snapshot=unit_cost,
             )
         )
+    q.status = QuoteStatus.EM_PRODUCAO
+    await session.commit()
+    return await _quote_out(session, q)
+
+
+async def _cycle_context_and_grams(session: AsyncSession, q: Quote):
+    """Snapshot per-piece context (material/colour/manufacturer + print
+    characteristics) and the total grams consumed in the current cycle, so the
+    ProductionEvent survives even if quote/spools change later."""
+    items = (
+        await session.execute(select(QuoteItem).where(QuoteItem.quote_id == q.id))
+    ).scalars().all()
+    ctx: list[dict] = []
+    grams = Decimal("0")
+    for it in items:
+        meta = it.gcode_meta or {}
+        cons = (
+            await session.execute(
+                select(MaterialConsumption).where(
+                    MaterialConsumption.quote_item_id == it.id
+                )
+            )
+        ).scalars().all()
+        sp = None
+        if cons:
+            sp = await session.get(Spool, cons[-1].spool_id)
+            grams += sum((c.grams_used or Decimal("0")) for c in cons)
+        ctx.append(
+            {
+                "name": it.name,
+                "material_type": (sp.material_type if sp else meta.get("material")),
+                "color": (sp.color if sp else None),
+                "manufacturer": (sp.manufacturer if sp else None),
+                "filament_m": meta.get("filament_m"),
+                "time_s": meta.get("time_s"),
+                "is_multi_color": bool(getattr(it, "is_multi_color", False)),
+                "machine": meta.get("machine"),
+                "model_source_url": getattr(it, "model_source_url", None),
+            }
+        )
+    return ctx, grams
+
+
+@router.post("/{quote_id}/transitions/complete", response_model=QuoteOut)
+async def t_complete(
+    quote_id: UUID,
+    payload: CompleteRequest,
+    _: User = Depends(require_user),
+    session: AsyncSession = Depends(db_session),
+):
+    q = await session.get(Quote, quote_id)
+    if not q:
+        raise HTTPException(404)
+    if q.status != QuoteStatus.EM_PRODUCAO:
+        raise HTTPException(409, "quote must be em_producao to complete")
+    ctx, _grams = await _cycle_context_and_grams(session, q)
+    session.add(
+        ProductionEvent(
+            quote_id=q.id,
+            kind=q.kind,
+            outcome=ProductionOutcome.SUCCESS,
+            attempts=max(1, payload.attempts),
+            context=ctx,
+            grams_wasted=None,
+        )
+    )
     q.status = QuoteStatus.PRODUZIDO
     q.produced_at = _now()
+    await session.commit()
+    return await _quote_out(session, q)
+
+
+@router.post("/{quote_id}/transitions/fail", response_model=QuoteOut)
+async def t_fail(
+    quote_id: UUID,
+    payload: FailRequest,
+    _: User = Depends(require_user),
+    session: AsyncSession = Depends(db_session),
+):
+    q = await session.get(Quote, quote_id)
+    if not q:
+        raise HTTPException(404)
+    if q.status != QuoteStatus.EM_PRODUCAO:
+        raise HTTPException(409, "quote must be em_producao to fail")
+    desc = (payload.failure_description or "").strip()
+    if not desc:
+        raise HTTPException(400, "failure_description is required")
+    ctx, grams = await _cycle_context_and_grams(session, q)
+    session.add(
+        ProductionEvent(
+            quote_id=q.id,
+            kind=q.kind,
+            outcome=ProductionOutcome.FAILURE,
+            attempts=max(1, payload.attempts),
+            failure_description=desc,
+            context=ctx,
+            grams_wasted=grams,
+        )
+    )
+    q.status = QuoteStatus.FALHOU
     await session.commit()
     return await _quote_out(session, q)
 

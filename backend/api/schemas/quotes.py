@@ -97,6 +97,15 @@ class ProduceRequest(BaseModel):
     consumption: list[ConsumptionAssignment]
 
 
+class CompleteRequest(BaseModel):
+    attempts: int = 1
+
+
+class FailRequest(BaseModel):
+    failure_description: str
+    attempts: int = 1
+
+
 class ServiceLineCreate(BaseModel):
     service_id: str
     quantity: Decimal

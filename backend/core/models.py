@@ -10,9 +10,16 @@ class QuoteStatus(StrEnum):
     DRAFT = "draft"
     ORCADO = "orcado"
     APROVADO = "aprovado"
+    EM_PRODUCAO = "em_producao"
     PRODUZIDO = "produzido"
     ENTREGUE = "entregue"
+    FALHOU = "falhou"
     CANCELADO = "cancelado"
+
+
+class ProductionOutcome(StrEnum):
+    SUCCESS = "success"
+    FAILURE = "failure"
 
 
 class ServiceKind(StrEnum):

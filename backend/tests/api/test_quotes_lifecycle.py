@@ -182,6 +182,9 @@ async def test_produce_consumes_spool(auth_client):
         json={"consumption": [{"quote_item_id": item_id, "spool_id": spool_id}]},
     )
     assert r.status_code == 200, r.text
+    assert r.json()["status"] == "em_producao"  # produce enfileira; material já debitado
+    r = await auth_client.post(f"/quotes/{qid}/transitions/complete", json={"attempts": 1})
+    assert r.status_code == 200, r.text
     assert r.json()["status"] == "produzido"
 
     s = (await auth_client.get(f"/spools/{spool_id}")).json()
@@ -289,6 +292,7 @@ async def test_commercial_can_deliver_after_produce(auth_client):
         f"/quotes/{qid}/transitions/produce",
         json={"consumption": [{"quote_item_id": item_id, "spool_id": spool_id}]},
     )
+    await auth_client.post(f"/quotes/{qid}/transitions/complete", json={"attempts": 1})
     r = await auth_client.post(f"/quotes/{qid}/transitions/deliver")
     assert r.status_code == 200, r.text
     assert r.json()["status"] == "entregue"

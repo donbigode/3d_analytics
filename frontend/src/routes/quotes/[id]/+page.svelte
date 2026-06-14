@@ -173,16 +173,18 @@
         draft: "Rascunho",
         orcado: "Orçado",
         aprovado: "Aprovado",
+        em_producao: "Em produção",
         produzido: "Produzido",
         entregue: "Entregue",
+        falhou: "Falhou",
         cancelado: "Cancelado",
       } as Record<string, string>
     )[s] ?? s;
   }
   function statusClass(s: string): string {
     if (s === "entregue" || s === "produzido") return "ok";
-    if (s === "cancelado") return "warn";
-    if (s === "aprovado") return "brand";
+    if (s === "cancelado" || s === "falhou") return "warn";
+    if (s === "aprovado" || s === "em_producao") return "brand";
     return "muted";
   }
 
@@ -1069,6 +1071,16 @@
           {/if}
           {#if quote.kind === "commercial" && quote.status === "aprovado"}
             <button on:click={openProduce} disabled={producing}>Produzir…</button>
+          {/if}
+          {#if quote.status === "em_producao"}
+            <a class="btn" href="/capacity" title="Concluir ou marcar falha na Capacidade">
+              Ver na Capacidade →
+            </a>
+          {/if}
+          {#if quote.status === "falhou"}
+            <button on:click={openProduce} disabled={producing} title="Tentar de novo: novo ciclo, deduz material novamente">
+              ↻ Re-produzir
+            </button>
           {/if}
           {#if quote.kind === "commercial" && quote.status === "produzido"}
             <button on:click={() => transition("deliver")} disabled={transitioning === "deliver"}>

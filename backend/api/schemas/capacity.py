@@ -19,6 +19,18 @@ class ForecastOut(BaseModel):
     jobs: list[ForecastJobOut]
 
 
+class InProductionJob(BaseModel):
+    quote_id: str
+    name: str
+    kind: str
+    hours: Decimal
+    entered_at: datetime | None
+
+
+class InProductionOut(BaseModel):
+    jobs: list[InProductionJob]
+
+
 class QuoteEtaOut(BaseModel):
     quote_id: str
     in_queue: bool
