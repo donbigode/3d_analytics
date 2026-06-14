@@ -12,17 +12,20 @@ from collections import Counter
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends
-from sqlalchemy import func, select
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.api.deps import db_session, require_user
+from backend.core.llm_features.runner import LLMUnavailable
 from backend.core.models import QuoteKind, QuoteStatus
+from backend.core.production.suggestions import generate_suggestions
 from backend.infra.db.models import (
     Client,
     LLMDigest,
     MaterialVersion,
     ProductionEvent,
+    ProductionSuggestion,
     Quote,
     QuoteItem,
     User,
@@ -68,6 +71,55 @@ async def failure_rates(
         for k, v in sorted(agg.items())
     ]
     return {"by_material": by_material}
+
+
+@router.get("/production-suggestions")
+async def production_suggestions(
+    _: User = Depends(require_user),
+    session: AsyncSession = Depends(db_session),
+):
+    row = (
+        await session.execute(
+            select(ProductionSuggestion)
+            .order_by(desc(ProductionSuggestion.generated_at))
+            .limit(1)
+        )
+    ).scalars().first()
+    total_fail = (
+        await session.scalar(
+            select(func.count(ProductionEvent.id)).where(
+                ProductionEvent.outcome == "failure"
+            )
+        )
+        or 0
+    )
+    if not row:
+        return {
+            "suggestions": [],
+            "generated_at": None,
+            "source_count": 0,
+            "current_failures": total_fail,
+            "stale": total_fail > 0,
+        }
+    body = row.body or {}
+    return {
+        "suggestions": body.get("suggestions", []),
+        "generated_at": row.generated_at.isoformat(),
+        "source_count": row.source_count,
+        "current_failures": total_fail,
+        "stale": total_fail != row.source_count,
+    }
+
+
+@router.post("/production-suggestions/generate")
+async def production_suggestions_generate(
+    _: User = Depends(require_user),
+    session: AsyncSession = Depends(db_session),
+):
+    try:
+        return await generate_suggestions(session)
+    except LLMUnavailable as exc:
+        raise HTTPException(503, f"IA indisponível: {exc}")
 
 
 @router.get("/overview")

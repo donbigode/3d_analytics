@@ -28,11 +28,18 @@ async def test_fill_failure_embeddings_sets_vectors(auth_client, monkeypatch):
         json={"failure_description": "warping", "attempts": 1})
 
     async with SessionFactory() as session:
+        # A suíte compartilha o DB, então pode haver outras falhas pendentes;
+        # garantimos pelo menos a nossa e checamos o vetor dela.
         n = await S.fill_failure_embeddings(session)
-        assert n == 1
+        assert n >= 1
+        import uuid as _uuid
         ev = (await session.execute(
-            select(ProductionEvent).where(ProductionEvent.outcome == "failure")
+            select(ProductionEvent).where(
+                ProductionEvent.outcome == "failure",
+                ProductionEvent.quote_id == _uuid.UUID(qid),
+            )
         )).scalars().first()
+        assert ev is not None
         assert ev.embedding is not None
         assert len(list(ev.embedding)) == 384
 
@@ -75,6 +82,27 @@ async def test_generate_suggestions_caches_llm_output(auth_client, monkeypatch):
         assert out["suggestions"][0]["material_type"] == "PLA"
         cached = (await session.execute(select(ProductionSuggestion))).scalars().all()
         assert len(cached) == 1
+
+
+@pytest.mark.asyncio
+async def test_suggestions_endpoints_generate_and_read(auth_client, monkeypatch):
+    import backend.api.routes.insights as I
+
+    async def fake_generate(session):
+        return {"suggestions": [{"material_type": "PLA", "advice": "x"}],
+                "source_count": 1, "provider": "llm"}
+    monkeypatch.setattr(I, "generate_suggestions", fake_generate)
+
+    # GET sempre responde 200 com a forma esperada (lista de sugestões).
+    r0 = await auth_client.get("/insights/production-suggestions")
+    assert r0.status_code == 200, r0.text
+    assert isinstance(r0.json()["suggestions"], list)
+    assert "stale" in r0.json()
+
+    # POST usa o gerador (stub) e devolve o payload dele.
+    r = await auth_client.post("/insights/production-suggestions/generate")
+    assert r.status_code == 200, r.text
+    assert r.json()["suggestions"][0]["material_type"] == "PLA"
 
 
 @pytest.mark.asyncio
