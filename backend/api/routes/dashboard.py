@@ -7,6 +7,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.api.deps import db_session, require_user
 from backend.core.accounting.cost import apply_markup, compute_quote_costs, load_settings_row
+from backend.core.accounting.sync import sync_sales
+from backend.core.accounting.dre import _sale_cpv
 from backend.api.schemas.dashboard import (
     CardEstoque,
     DashboardCards,
@@ -21,7 +23,9 @@ from backend.core.models import (
     WatcherInboxStatus,
 )
 from backend.infra.db.models import (
+    Expense,
     Quote,
+    Sale,
     Settings,
     Spool,
     User,
@@ -68,6 +72,10 @@ async def dashboard(
     period_from = from_ or (now - timedelta(days=30))
     period_to = to or now
 
+    await sync_sales(session)
+    pf_date = period_from.date()
+    pt_date = period_to.date()
+
     # ---------- quotes in period ----------
     q_stmt = select(Quote).where(
         Quote.created_at >= period_from,
@@ -84,7 +92,6 @@ async def dashboard(
 
     # Charts G1 + G3 + G6 are built up during the same loop.
     bucket_mode = _bucket_mode(period_from, period_to)
-    rev_exp_buckets: dict[str, dict[str, Decimal]] = {}
     cat_totals = {
         "filamento": Decimal(0),
         "energia": Decimal(0),
@@ -106,23 +113,6 @@ async def dashboard(
         cost_orcado = costs.cost_orcado
         total = apply_markup(cost_orcado, q.markup_pct, q.min_charge)
 
-        # Receita comercial: quotes commercial with status >= aprovado in period
-        is_commercial_revenue = q.kind == QuoteKind.COMMERCIAL.value and status_key in (
-            QuoteStatus.APROVADO.value,
-            QuoteStatus.PRODUZIDO.value,
-            QuoteStatus.ENTREGUE.value,
-        )
-        if is_commercial_revenue:
-            receita += total
-            # G1: bucket by approved_at (when the money "started flowing")
-            ts = q.approved_at or q.created_at
-            if ts is not None:
-                bk = _bucket_key(ts, bucket_mode)
-                slot = rev_exp_buckets.setdefault(
-                    bk, {"receita": Decimal(0), "despesa": Decimal(0)}
-                )
-                slot["receita"] += total
-
         # Despesa real: commercial produzido+ uses MaterialConsumption snapshots
         is_commercial_produced = q.kind == QuoteKind.COMMERCIAL.value and status_key in (
             QuoteStatus.PRODUZIDO.value,
@@ -131,22 +121,12 @@ async def dashboard(
         if is_commercial_produced:
             real_filament = costs.real_filament
             real_cost = costs.cpv
-            despesa += real_cost
 
             # G3: despesa por categoria (real)
             cat_totals["filamento"] += real_filament
             cat_totals["energia"] += item_energy
             cat_totals["mao_obra"] += services_cost
             cat_totals["depreciacao"] += item_dep
-
-            # G1: bucket by produced_at
-            ts = q.produced_at or q.created_at
-            if ts is not None:
-                bk = _bucket_key(ts, bucket_mode)
-                slot = rev_exp_buckets.setdefault(
-                    bk, {"receita": Decimal(0), "despesa": Decimal(0)}
-                )
-                slot["despesa"] += real_cost
 
             # G6: orçado (catalog-priced cost) vs real (consumption-based)
             variancia = Decimal(0)
@@ -171,6 +151,42 @@ async def dashboard(
             cat_totals["energia"] += item_energy
             cat_totals["mao_obra"] += services_cost
             cat_totals["depreciacao"] += item_dep
+
+    confirmed = (
+        await session.execute(
+            select(Sale).where(
+                Sale.is_sold.is_(True),
+                Sale.sold_at.is_not(None),
+                Sale.sold_at >= pf_date,
+                Sale.sold_at <= pt_date,
+            )
+        )
+    ).scalars().all()
+    receita = sum((s.confirmed_revenue or Decimal(0) for s in confirmed), Decimal(0))
+    despesa_vendas = sum((_sale_cpv(s) + s.variable_costs for s in confirmed), Decimal(0))
+
+    op_expenses = (
+        await session.execute(
+            select(Expense).where(
+                Expense.incurred_at >= pf_date,
+                Expense.incurred_at <= pt_date,
+            )
+        )
+    ).scalars().all()
+    despesa_ops = sum((e.amount for e in op_expenses), Decimal(0))
+    despesa = despesa_vendas + despesa_ops
+
+    # Gráfico receita_vs_despesa: receita+custo de venda por sold_at; despesa op. por incurred_at
+    rev_exp_buckets = {}
+    for s in confirmed:
+        bk = _bucket_key(datetime(s.sold_at.year, s.sold_at.month, s.sold_at.day), bucket_mode)
+        slot = rev_exp_buckets.setdefault(bk, {"receita": Decimal(0), "despesa": Decimal(0)})
+        slot["receita"] += s.confirmed_revenue or Decimal(0)
+        slot["despesa"] += _sale_cpv(s) + s.variable_costs
+    for e in op_expenses:
+        bk = _bucket_key(datetime(e.incurred_at.year, e.incurred_at.month, e.incurred_at.day), bucket_mode)
+        slot = rev_exp_buckets.setdefault(bk, {"receita": Decimal(0), "despesa": Decimal(0)})
+        slot["despesa"] += e.amount
 
     lucro = receita - despesa
     margem = (lucro / receita * Decimal(100)) if receita > 0 else Decimal(0)
