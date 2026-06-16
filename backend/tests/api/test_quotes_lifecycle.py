@@ -299,6 +299,24 @@ async def test_commercial_can_deliver_after_produce(auth_client):
 
 
 @pytest.mark.asyncio
+async def test_item_filament_g_set_and_clear(auth_client):
+    r = await auth_client.post("/quotes", json={"kind": "commercial"})
+    qid = r.json()["id"]
+    r = await auth_client.post(f"/quotes/{qid}/items", data={"name": "peça"})
+    assert r.status_code == 201, r.text
+    item_id = r.json()["items"][0]["id"]
+
+    r = await auth_client.put(f"/quotes/{qid}/items/{item_id}", json={"filament_g": 42})
+    assert r.status_code == 200, r.text
+    item = next(i for i in r.json()["items"] if i["id"] == item_id)
+    assert float(item["gcode_meta"].get("filament_g")) == 42.0
+
+    r = await auth_client.put(f"/quotes/{qid}/items/{item_id}", json={"filament_g": 0})
+    item = next(i for i in r.json()["items"] if i["id"] == item_id)
+    assert "filament_g" not in item["gcode_meta"]
+
+
+@pytest.mark.asyncio
 async def test_upload_unknown_material_creates_pending_item(auth_client):
     # No material seeded — item is accepted as pending; finalize is blocked
     # until material is registered and item resolved.

@@ -415,6 +415,15 @@ async def update_item(
         meta = dict(it.gcode_meta or {})
         meta["filament_m"] = float(payload.filament_m)
         it.gcode_meta = meta
+    if payload.filament_g is not None:
+        if payload.filament_g < 0:
+            raise HTTPException(400, "filament_g must be >= 0")
+        meta = dict(it.gcode_meta or {})
+        if payload.filament_g > 0:
+            meta["filament_g"] = float(payload.filament_g)
+        else:
+            meta.pop("filament_g", None)
+        it.gcode_meta = meta
     if payload.is_multi_color is not None:
         it.is_multi_color = bool(payload.is_multi_color)
     if payload.model_source_url is not None:
