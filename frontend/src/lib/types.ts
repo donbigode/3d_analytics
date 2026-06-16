@@ -109,6 +109,7 @@ export type QuoteItem = {
   gcode_meta: {
     time_s?: number | null;
     filament_m?: number | null;
+    filament_g?: number | null;
     material?: string | null;
     machine?: string | null;
   };
