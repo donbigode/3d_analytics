@@ -6,6 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.api.deps import db_session, require_user
+from backend.core.accounting.cost import apply_markup, compute_quote_costs, load_settings_row
 from backend.api.schemas.dashboard import (
     CardEstoque,
     DashboardCards,
@@ -20,11 +21,8 @@ from backend.core.models import (
     WatcherInboxStatus,
 )
 from backend.infra.db.models import (
-    MaterialConsumption,
-    MaterialVersion,
     Quote,
     QuoteItem,
-    QuoteService,
     Settings,
     Spool,
     User,
@@ -33,9 +31,6 @@ from backend.infra.db.models import (
 
 router = APIRouter()
 
-
-_DIAMETER_MM = Decimal("1.75")
-_PI = Decimal("3.14159265358979323846")
 
 
 def _q2(d: Decimal) -> Decimal:
@@ -69,16 +64,7 @@ async def dashboard(
     to: datetime | None = Query(None),
     kind: QuoteKind | None = Query(None),
 ):
-    settings_row = await session.get(Settings, 1)
-    if settings_row is None:
-        settings_row = Settings(
-            id=1,
-            energy_kwh_price=Decimal("0.95"),
-            printer_power_w=Decimal("150"),
-            printer_depreciation_per_hour=Decimal("0"),
-            stalled_quote_alert_days=7,
-            low_spool_threshold_g=Decimal("100"),
-        )
+    settings_row = load_settings_row(await session.get(Settings, 1))
 
     now = datetime.now(timezone.utc)
     period_from = from_ or (now - timedelta(days=30))
@@ -120,54 +106,13 @@ async def dashboard(
                 select(QuoteItem).where(QuoteItem.quote_id == q.id)
             )
         ).scalars().all()
-        services = (
-            await session.execute(
-                select(QuoteService).where(QuoteService.quote_id == q.id)
-            )
-        ).scalars().all()
 
-        item_grams_cost = Decimal(0)
-        item_energy = Decimal(0)
-        item_dep = Decimal(0)
-
-        for it in items:
-            mv = await session.get(MaterialVersion, it.material_version_id)
-            if mv is None:
-                continue
-            filament_m = Decimal(str(it.gcode_meta.get("filament_m", 0)))
-            time_s = Decimal(str(it.gcode_meta.get("time_s", 0)))
-            area = (_PI / Decimal(4)) * (_DIAMETER_MM ** 2)  # mm^2
-            grams_per_m = area * mv.density_g_cm3  # g per meter
-            grams = filament_m * grams_per_m * Decimal(it.quantity)
-            item_grams_cost += (grams / Decimal(1000)) * mv.price_per_kg_ref
-            hours = time_s / Decimal(3600)
-            item_energy += (
-                (settings_row.printer_power_w * hours / Decimal(1000))
-                * settings_row.energy_kwh_price
-            )
-            dep_rate = it.depreciation_rate_override or settings_row.printer_depreciation_per_hour
-            item_dep += hours * dep_rate
-
-        services_cost = sum((s.quantity * s.rate for s in services), Decimal(0))
-        cost_orcado = item_grams_cost + item_energy + item_dep + services_cost
-        total = cost_orcado * (Decimal(100) + q.markup_pct) / Decimal(100)
-        if total < q.min_charge:
-            total = q.min_charge
-
-        # Real filament — used by despesa, gasto_pessoal, G6 and category chart.
-        async def _real_filament_for(items_list) -> Decimal:
-            total = Decimal(0)
-            for it_inner in items_list:
-                cons = (
-                    await session.execute(
-                        select(MaterialConsumption).where(
-                            MaterialConsumption.quote_item_id == it_inner.id
-                        )
-                    )
-                ).scalars().all()
-                for c in cons:
-                    total += c.grams_used * c.unit_cost_snapshot
-            return total
+        costs = await compute_quote_costs(session, q, settings_row)
+        item_energy = costs.energy
+        item_dep = costs.depreciation
+        services_cost = costs.services
+        cost_orcado = costs.cost_orcado
+        total = apply_markup(cost_orcado, q.markup_pct, q.min_charge)
 
         # Receita comercial: quotes commercial with status >= aprovado in period
         is_commercial_revenue = q.kind == QuoteKind.COMMERCIAL.value and status_key in (
@@ -192,8 +137,8 @@ async def dashboard(
             QuoteStatus.ENTREGUE.value,
         )
         if is_commercial_produced:
-            real_filament = await _real_filament_for(items)
-            real_cost = real_filament + item_energy + item_dep + services_cost
+            real_filament = costs.real_filament
+            real_cost = costs.cpv
             despesa += real_cost
 
             # G3: despesa por categoria (real)
@@ -226,8 +171,8 @@ async def dashboard(
 
         # Gasto pessoal: personal produzido
         if q.kind == QuoteKind.PERSONAL.value and status_key == QuoteStatus.PRODUZIDO.value:
-            real_filament_p = await _real_filament_for(items)
-            real_cost_p = real_filament_p + item_energy + item_dep + services_cost
+            real_filament_p = costs.real_filament
+            real_cost_p = costs.cpv
             gasto_pessoal += real_cost_p
             # Personal also contributes to category breakdown (it's still an expense)
             cat_totals["filamento"] += real_filament_p
