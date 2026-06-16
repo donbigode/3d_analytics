@@ -44,3 +44,11 @@ class WatcherInboxStatus(StrEnum):
     PENDING = "pending"
     ASSIGNED = "assigned"
     DISCARDED = "discarded"
+
+
+class ExpenseCategory(StrEnum):
+    MAINTENANCE = "maintenance"
+    PARTS = "parts"
+    TOOLS = "tools"
+    LABOR = "labor"
+    OTHER = "other"
