@@ -119,6 +119,8 @@ async def _build_item_input(
         quantity=it.quantity,
         maintenance_per_hour=settings_row.printer_maintenance_per_hour or Decimal("0"),
         waste_pct=waste_pct,
+        filament_g=(float(it.gcode_meta["filament_g"])
+                    if it.gcode_meta.get("filament_g") not in (None, "") else None),
     )
 
 
