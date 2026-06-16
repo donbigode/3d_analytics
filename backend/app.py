@@ -10,7 +10,7 @@ from backend.core.rate_limit import limiter, rate_limit_exceeded_handler
 from backend.api.routes import (
     auth, users, clients, materials, services, spools,
     settings as settings_routes, quotes, dashboard, inbox, health,
-    calibration, capacity, trends, config, llm, library, insights,
+    calibration, capacity, trends, config, llm, library, insights, accounting,
 )
 from backend.infra.watcher.runner import start_background_task as start_watcher
 
@@ -76,3 +76,4 @@ app.include_router(config.router, prefix="/config", tags=["config"])
 app.include_router(llm.router, prefix="/llm", tags=["llm"])
 app.include_router(library.router, prefix="/library", tags=["library"])
 app.include_router(insights.router, prefix="/insights", tags=["insights"])
+app.include_router(accounting.router, prefix="/accounting", tags=["accounting"])
