@@ -19,6 +19,7 @@
   let exCategory: ExpenseCategory = "maintenance";
   let exDescription = "";
   let exAmount = "";
+  let exRecurring = false;
   let exDate = new Date().toISOString().slice(0, 10);
   let exSubmitting = false;
 
@@ -33,9 +34,11 @@
     { value: "parts", label: "Peças" },
     { value: "tools", label: "Ferramentas" },
     { value: "labor", label: "Mecânicos" },
+    { value: "equipment", label: "Máquinas/Equipamentos" },
     { value: "other", label: "Outros" },
   ];
   const catLabel = (c: string) => CATS.find((x) => x.value === c)?.label ?? c;
+  const fmtKind = (k: string) => (k === "personal" ? "Pessoal" : "Comercial");
 
   const BRL = new Intl.NumberFormat("pt-BR", {
     style: "currency",
@@ -99,11 +102,13 @@
           category: exCategory,
           description: exDescription,
           amount: exAmount,
+          is_recurring: exRecurring,
           incurred_at: exDate,
         }),
       });
       exDescription = "";
       exAmount = "";
+      exRecurring = false;
       await loadExpenses();
     } catch (err) {
       handleApiError(err);
@@ -196,6 +201,7 @@
     <Table
       columns={[
         { key: "quote_id", label: "Orçamento", mono: true, format: (v) => String(v).slice(0, 8) },
+        { key: "quote_kind", label: "Tipo", format: (v) => fmtKind(v as string) },
         { key: "quote_status", label: "Estado" },
         { key: "quote_total", label: "Total", mono: true, align: "right", format: (v) => money(v as string) },
         { key: "cpv_calc", label: "CPV", mono: true, align: "right", format: (v) => money(v as string) },
@@ -266,6 +272,13 @@
       Data
       <input type="date" bind:value={exDate} required />
     </label>
+    <label class="field recurring-field">
+      <span class="recurring-spacer">&nbsp;</span>
+      <span class="recurring-check toggle mono">
+        <input type="checkbox" bind:checked={exRecurring} />
+        recorrente (mensal)
+      </span>
+    </label>
   </Form>
 
   <section class="panel list-panel">
@@ -289,6 +302,12 @@
         },
         { key: "category", label: "Categoria", format: (v) => catLabel(v as string) },
         { key: "description", label: "Descrição" },
+        {
+          key: "is_recurring",
+          label: "Recorrência",
+          align: "center",
+          format: (v) => (v ? "mensal" : "—"),
+        },
         { key: "amount", label: "Valor", mono: true, align: "right", format: (v) => money(v as string) },
       ]}
       rows={expenses}
@@ -337,6 +356,14 @@
           <dd class="mono">{money(dre.receita_bruta)}</dd>
         </div>
         <div class="line deduction">
+          <dt><span class="op">(−)</span> Impostos</dt>
+          <dd class="mono">{money(dre.impostos)}</dd>
+        </div>
+        <div class="line subtotal">
+          <dt><span class="op">=</span> Receita líquida</dt>
+          <dd class="mono">{money(dre.receita_liquida)}</dd>
+        </div>
+        <div class="line deduction">
           <dt><span class="op">(−)</span> CPV</dt>
           <dd class="mono">{money(dre.cpv)}</dd>
         </div>
@@ -352,6 +379,10 @@
         <div class="group-head">
           <dt>Despesas operacionais</dt>
           <dd class="mono">{money(dre.total_despesas)}</dd>
+        </div>
+        <div class="line expense">
+          <dt><span class="op">(−)</span> Custo de estoque (não vendido)</dt>
+          <dd class="mono">{money(dre.custo_estoque)}</dd>
         </div>
         {#each Object.entries(dre.despesas) as [cat, val]}
           <div class="line expense">
@@ -503,6 +534,20 @@
     font-size: 0.68rem;
     color: var(--muted);
     letter-spacing: 0.04em;
+  }
+  .recurring-field .recurring-spacer {
+    display: block;
+    font-size: 0.66rem;
+  }
+  .recurring-check {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.55rem 0;
+  }
+  .recurring-check input {
+    width: auto;
+    margin: 0;
   }
   .head-sum {
     margin-left: 0.6rem;

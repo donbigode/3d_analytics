@@ -65,6 +65,7 @@
           printer_depreciation_per_hour: settings.printer_depreciation_per_hour,
           printer_maintenance_per_hour: settings.printer_maintenance_per_hour,
           printer_hours_per_day: settings.printer_hours_per_day,
+          revenue_tax_pct: settings.revenue_tax_pct,
           currency: settings.currency,
           business_name: settings.business_name,
           business_tagline: settings.business_tagline,
@@ -254,6 +255,11 @@
           required
         />
         <small class="hint">Usado pelo planejador de capacidade (/capacity) — quantas horas você consegue manter a impressora rodando por dia.</small>
+      </label>
+      <label class="field">
+        Imposto sobre receita (%)
+        <input type="number" step="0.01" min="0" bind:value={settings.revenue_tax_pct} required />
+        <small class="hint">Aplicado sobre a receita bruta no DRE (Simples, MEI, etc.). Use 0 se não recolhe.</small>
       </label>
     </form>
   </section>
