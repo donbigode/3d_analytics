@@ -27,8 +27,8 @@ class Sale(Base):
     )
     # Espelho — reescrito no sync
     quote_status: Mapped[str] = mapped_column(String(20), nullable=False)
-    quote_total: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False, default=0)
-    cpv_calc: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False, default=0)
+    quote_total: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False, default=0, server_default="0")
+    cpv_calc: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False, default=0, server_default="0")
     client_id: Mapped[UUID | None] = mapped_column(
         PG_UUID(as_uuid=True), ForeignKey("clients.id", ondelete="SET NULL")
     )
