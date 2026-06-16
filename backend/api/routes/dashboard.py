@@ -22,7 +22,6 @@ from backend.core.models import (
 )
 from backend.infra.db.models import (
     Quote,
-    QuoteItem,
     Settings,
     Spool,
     User,
@@ -30,7 +29,6 @@ from backend.infra.db.models import (
 )
 
 router = APIRouter()
-
 
 
 def _q2(d: Decimal) -> Decimal:
@@ -100,12 +98,6 @@ async def dashboard(
         status_key = q.status.value if hasattr(q.status, "value") else str(q.status)
         if status_key in estado_counts:
             estado_counts[status_key] += 1
-
-        items = (
-            await session.execute(
-                select(QuoteItem).where(QuoteItem.quote_id == q.id)
-            )
-        ).scalars().all()
 
         costs = await compute_quote_costs(session, q, settings_row)
         item_energy = costs.energy
