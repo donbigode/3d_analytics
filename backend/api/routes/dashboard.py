@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.api.deps import db_session, require_user
-from backend.core.accounting.cost import apply_markup, compute_quote_costs, load_settings_row
+from backend.core.accounting.cost import compute_quote_costs, load_settings_row
 from backend.core.accounting.sync import sync_sales
 from backend.core.accounting.dre import _sale_cpv
 from backend.api.schemas.dashboard import (
@@ -111,7 +111,6 @@ async def dashboard(
         item_dep = costs.depreciation
         services_cost = costs.services
         cost_orcado = costs.cost_orcado
-        total = apply_markup(cost_orcado, q.markup_pct, q.min_charge)
 
         # Despesa real: commercial produzido+ uses MaterialConsumption snapshots
         is_commercial_produced = q.kind == QuoteKind.COMMERCIAL.value and status_key in (
