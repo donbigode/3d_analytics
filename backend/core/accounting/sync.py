@@ -30,7 +30,7 @@ async def sync_sales(session: AsyncSession) -> dict[str, int]:
     quotes = (
         await session.execute(
             select(Quote).where(
-                Quote.kind == QuoteKind.COMMERCIAL.value,
+                Quote.kind.in_((QuoteKind.COMMERCIAL.value, QuoteKind.PERSONAL.value)),
                 Quote.status.in_(ACTIVE_STATUSES),
             )
         )
@@ -58,6 +58,7 @@ async def sync_sales(session: AsyncSession) -> dict[str, int]:
             updated += 1
 
         sale.quote_status = _status_value(q.status)
+        sale.quote_kind = _status_value(q.kind)
         sale.quote_total = total
         sale.cpv_calc = costs.cpv
         sale.client_id = q.client_id

@@ -24,14 +24,13 @@ async def test_sync_creates_preserves_and_marks_stale():
         q_appr = await _mk_quote(s, user, QuoteStatus.APROVADO)
         q_pers = await _mk_quote(s, user, QuoteStatus.PRODUZIDO, kind=QuoteKind.PERSONAL)
 
-    # 1º sync: cria linha só para o comercial; ignora o pessoal
+    # 1º sync: cria linha para o comercial e para o pessoal (ambos aprovado+)
     async with session_module.SessionFactory() as s:
         res = await sync_sales(s)
-        assert res["created"] == 1
+        assert res["created"] == 2
         sales = (await s.execute(select(Sale))).scalars().all()
-        assert len(sales) == 1
-        sale = sales[0]
-        assert sale.quote_id == q_appr.id
+        assert len(sales) == 2
+        sale = next(s for s in sales if s.quote_id == q_appr.id)
         assert sale.is_sold is False
         # usuário confirma a venda na mão
         sale.is_sold = True
@@ -41,8 +40,8 @@ async def test_sync_creates_preserves_and_marks_stale():
     # 2º sync: preserva os editáveis, atualiza espelho
     async with session_module.SessionFactory() as s:
         res = await sync_sales(s)
-        assert res["created"] == 0 and res["updated"] == 1
-        sale = (await s.execute(select(Sale))).scalars().one()
+        assert res["created"] == 0 and res["updated"] == 2
+        sale = (await s.execute(select(Sale).where(Sale.quote_id == q_appr.id))).scalars().one()
         assert sale.is_sold is True
         assert sale.confirmed_revenue == Decimal("999")
 
@@ -53,6 +52,21 @@ async def test_sync_creates_preserves_and_marks_stale():
         await s.commit()
         res = await sync_sales(s)
         assert res["stale"] == 1
-        sale = (await s.execute(select(Sale))).scalars().one()
+        sale = (await s.execute(select(Sale).where(Sale.quote_id == q_appr.id))).scalars().one()
         assert sale.is_stale is True
         assert sale.confirmed_revenue == Decimal("999")
+
+
+@pytest.mark.asyncio
+async def test_sync_includes_personal_with_kind():
+    async with session_module.SessionFactory() as s:
+        user = User(name="u", email="syncp@t.com", password_hash="x")
+        s.add(user); await s.commit()
+        await _mk_quote(s, user, QuoteStatus.APROVADO, kind=QuoteKind.COMMERCIAL)
+        await _mk_quote(s, user, QuoteStatus.PRODUZIDO, kind=QuoteKind.PERSONAL)
+
+    async with session_module.SessionFactory() as s:
+        res = await sync_sales(s)
+        assert res["created"] == 2
+        kinds = {sale.quote_kind for sale in (await s.execute(select(Sale))).scalars().all()}
+        assert kinds == {"commercial", "personal"}
