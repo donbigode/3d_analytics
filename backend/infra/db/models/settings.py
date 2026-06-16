@@ -20,6 +20,7 @@ class Settings(Base):
     # Wear-out budget independent of depreciation: bicos, lubrificação,
     # correias, build plates, lubrificante. Soma reta no custo do item.
     printer_maintenance_per_hour: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False, default=Decimal("0"))
+    revenue_tax_pct: Mapped[Decimal] = mapped_column(Numeric(5, 2), nullable=False, default=Decimal("0"), server_default="0")
     currency: Mapped[str] = mapped_column(String(3), nullable=False, default="BRL")
     business_name: Mapped[str] = mapped_column(String(120), nullable=False, default="Sua Marca")
     business_tagline: Mapped[str | None] = mapped_column(String(200))

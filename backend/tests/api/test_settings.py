@@ -35,6 +35,13 @@ async def test_settings_logo_upload(auth_client, tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_settings_revenue_tax(auth_client):
+    r = await auth_client.put("/settings", json={"revenue_tax_pct": "6.00"})
+    assert r.status_code == 200, r.text
+    assert r.json()["revenue_tax_pct"] == "6.00"
+
+
+@pytest.mark.asyncio
 async def test_settings_logo_rejects_bad_extension(auth_client, tmp_path, monkeypatch):
     from backend.settings import AppSettings
     from backend.infra.storage import branding as branding_mod

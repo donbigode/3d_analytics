@@ -53,6 +53,7 @@ class QuoteItemUpdate(BaseModel):
     # wasn't recognised on upload or the user wants to correct the parse.
     time_s: float | None = None
     filament_m: float | None = None
+    filament_g: float | None = None
     is_multi_color: bool | None = None
     model_source_url: str | None = None
     model_source_author: str | None = None

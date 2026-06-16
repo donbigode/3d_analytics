@@ -42,6 +42,7 @@ class ExpenseCreate(BaseModel):
     description: str
     amount: Decimal
     incurred_at: date
+    is_recurring: bool = False
 
 
 class ExpenseUpdate(BaseModel):
@@ -49,6 +50,7 @@ class ExpenseUpdate(BaseModel):
     description: str | None = None
     amount: Decimal | None = None
     incurred_at: date | None = None
+    is_recurring: bool | None = None
 
 
 class ExpenseOut(BaseModel):
@@ -57,14 +59,35 @@ class ExpenseOut(BaseModel):
     description: str
     amount: Decimal
     incurred_at: date
+    is_recurring: bool
 
 
 class DreOut(BaseModel):
     receita_bruta: Decimal
+    impostos: Decimal
+    receita_liquida: Decimal
     cpv: Decimal
     custos_variaveis: Decimal
     lucro_bruto: Decimal
     despesas: dict[str, Decimal]
+    custo_estoque: Decimal
     total_despesas: Decimal
     resultado_liquido: Decimal
     margem_liquida_pct: Decimal
+
+
+class MonthlyDreOut(DreOut):
+    month: str
+
+
+class ProfitabilityRow(BaseModel):
+    label: str
+    receita: Decimal
+    custo: Decimal
+    margem: Decimal
+    margem_pct: Decimal
+
+
+class ProfitabilityOut(BaseModel):
+    by_client: list[ProfitabilityRow]
+    by_material: list[ProfitabilityRow]

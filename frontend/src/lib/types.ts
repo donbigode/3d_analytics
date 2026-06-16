@@ -109,6 +109,7 @@ export type QuoteItem = {
   gcode_meta: {
     time_s?: number | null;
     filament_m?: number | null;
+    filament_g?: number | null;
     material?: string | null;
     machine?: string | null;
   };
@@ -232,6 +233,7 @@ export type Settings = {
   stalled_quote_alert_days: number;
   low_spool_threshold_g: number | string;
   printer_hours_per_day?: number;
+  revenue_tax_pct: number | string;
 };
 
 export type ForecastJob = {
@@ -391,6 +393,7 @@ export type RankingRow = {
 export type Sale = {
   id: string;
   quote_id: string;
+  quote_kind: string;
   quote_status: string;
   quote_total: string;
   cpv_calc: string;
@@ -404,23 +407,48 @@ export type Sale = {
   notes: string | null;
 };
 
-export type ExpenseCategory = "maintenance" | "parts" | "tools" | "labor" | "other";
+export type ExpenseCategory =
+  | "maintenance"
+  | "parts"
+  | "tools"
+  | "labor"
+  | "equipment"
+  | "other";
 
 export type Expense = {
   id: string;
   category: ExpenseCategory;
   description: string;
   amount: string;
+  is_recurring: boolean;
   incurred_at: string;
 };
 
 export type Dre = {
   receita_bruta: string;
+  impostos: string;
+  receita_liquida: string;
   cpv: string;
   custos_variaveis: string;
+  custo_estoque: string;
   lucro_bruto: string;
   despesas: Record<string, string>;
   total_despesas: string;
   resultado_liquido: string;
   margem_liquida_pct: string;
+};
+
+export type MonthlyDre = Dre & { month: string };
+
+export type ProfitabilityRow = {
+  label: string;
+  receita: string;
+  custo: string;
+  margem: string;
+  margem_pct: string;
+};
+
+export type Profitability = {
+  by_client: ProfitabilityRow[];
+  by_material: ProfitabilityRow[];
 };

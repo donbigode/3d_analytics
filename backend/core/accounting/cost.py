@@ -5,12 +5,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.pricing.cost import depreciation_cost, energy_cost, filament_cost
+from backend.core.quote_service import effective_grams_per_unit
 from backend.infra.db.models import (
     MaterialConsumption, MaterialVersion, QuoteItem, QuoteService, Settings,
 )
 
 _DIAMETER_MM = Decimal("1.75")
-_PI = Decimal("3.14159265358979323846")
 
 
 @dataclass
@@ -71,11 +71,14 @@ async def compute_quote_costs(session: AsyncSession, quote, settings_row: Settin
         mv = await session.get(MaterialVersion, it.material_version_id)
         if mv is None:
             continue
-        filament_m = Decimal(str(it.gcode_meta.get("filament_m", 0)))
         time_s = float(it.gcode_meta.get("time_s", 0))
-        area = (_PI / Decimal(4)) * (_DIAMETER_MM ** 2)
-        grams_per_m = area * mv.density_g_cm3
-        grams = filament_m * grams_per_m * Decimal(it.quantity)
+        filament_m = float(it.gcode_meta.get("filament_m", 0) or 0)
+        raw_g = it.gcode_meta.get("filament_g")
+        filament_g = float(raw_g) if raw_g not in (None, "") else None
+        grams_unit = effective_grams_per_unit(
+            filament_m, filament_g, mv.density_g_cm3, _DIAMETER_MM, Decimal("0")
+        )
+        grams = grams_unit * Decimal(it.quantity)
         catalog_filament += filament_cost(grams, mv.price_per_kg_ref)
         energy += energy_cost(time_s, settings_row.printer_power_w, settings_row.energy_kwh_price)
         dep_rate = it.depreciation_rate_override or settings_row.printer_depreciation_per_hour

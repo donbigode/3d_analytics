@@ -119,6 +119,8 @@ async def _build_item_input(
         quantity=it.quantity,
         maintenance_per_hour=settings_row.printer_maintenance_per_hour or Decimal("0"),
         waste_pct=waste_pct,
+        filament_g=(float(it.gcode_meta["filament_g"])
+                    if it.gcode_meta.get("filament_g") not in (None, "") else None),
     )
 
 
@@ -412,6 +414,15 @@ async def update_item(
             raise HTTPException(400, "filament_m must be >= 0")
         meta = dict(it.gcode_meta or {})
         meta["filament_m"] = float(payload.filament_m)
+        it.gcode_meta = meta
+    if payload.filament_g is not None:
+        if payload.filament_g < 0:
+            raise HTTPException(400, "filament_g must be >= 0")
+        meta = dict(it.gcode_meta or {})
+        if payload.filament_g > 0:
+            meta["filament_g"] = float(payload.filament_g)
+        else:
+            meta.pop("filament_g", None)
         it.gcode_meta = meta
     if payload.is_multi_color is not None:
         it.is_multi_color = bool(payload.is_multi_color)

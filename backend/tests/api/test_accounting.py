@@ -79,3 +79,44 @@ async def test_dre_shape(auth_client):
     for key in ["receita_bruta", "cpv", "custos_variaveis", "lucro_bruto",
                 "despesas", "resultado_liquido", "margem_liquida_pct"]:
         assert key in r.json()
+
+
+@pytest.mark.asyncio
+async def test_dre_v2_shape(auth_client):
+    r = await auth_client.get("/accounting/dre?from=2026-06-01&to=2026-06-30")
+    assert r.status_code == 200, r.text
+    for key in ["impostos", "receita_liquida", "custo_estoque"]:
+        assert key in r.json()
+
+
+@pytest.mark.asyncio
+async def test_expense_equipment_and_recurring(auth_client):
+    r = await auth_client.post("/accounting/expenses", json={
+        "category": "equipment", "description": "Impressora X1", "amount": "3000.00",
+        "incurred_at": "2026-06-01", "is_recurring": False,
+    })
+    assert r.status_code == 201, r.text
+    assert r.json()["category"] == "equipment"
+    r = await auth_client.post("/accounting/expenses", json={
+        "category": "other", "description": "Internet", "amount": "100.00",
+        "incurred_at": "2026-06-01", "is_recurring": True,
+    })
+    assert r.json()["is_recurring"] is True
+
+
+@pytest.mark.asyncio
+async def test_dre_monthly_shape(auth_client):
+    r = await auth_client.get("/accounting/dre/monthly?from=2026-01-01&to=2026-02-28")
+    assert r.status_code == 200, r.text
+    assert [x["month"] for x in r.json()] == ["2026-01", "2026-02"]
+
+
+@pytest.mark.asyncio
+async def test_dre_export_xlsx(auth_client):
+    import io
+    from openpyxl import load_workbook
+    r = await auth_client.get("/accounting/dre/export.xlsx?from=2026-06-01&to=2026-06-30")
+    assert r.status_code == 200, r.text
+    assert "spreadsheetml" in r.headers["content-type"]
+    wb = load_workbook(io.BytesIO(r.content))
+    assert {"DRE mensal", "Vendas", "Despesas", "Custo de estoque", "Lucratividade"} <= set(wb.sheetnames)

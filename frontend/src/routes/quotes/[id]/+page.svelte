@@ -398,6 +398,11 @@
     if (!isFinite(meters) || meters < 0) return;
     patchItem(itemId, { filament_m: meters }, "filament");
   }
+  function saveGrams(itemId: string, value: string) {
+    const g = value === "" ? 0 : Number(value);
+    if (!Number.isFinite(g) || g < 0) return;
+    patchItem(itemId, { filament_g: g }, "filament");
+  }
   function patchMaterial(itemId: string, materialId: string) {
     if (!materialId) return;
     patchItem(itemId, { material_id: materialId }, "material");
@@ -723,18 +728,42 @@
                   </td>
                   <td class="right mono">
                     {#if isDraft}
-                      <input
-                        type="number"
-                        class="inline right"
-                        min="0"
-                        step="0.01"
-                        value={Number(it.gcode_meta?.filament_m ?? 0).toFixed(2)}
-                        disabled={savingField[it.id] === "filament"}
-                        on:change={(e) => patchFilament(it.id, (e.currentTarget as HTMLInputElement).value)}
-                      />
-                      <span class="unit">m</span>
+                      <div class="fil-stack">
+                        <span class="fil-row">
+                          <input
+                            type="number"
+                            class="inline right"
+                            min="0"
+                            step="0.01"
+                            value={Number(it.gcode_meta?.filament_m ?? 0).toFixed(2)}
+                            disabled={savingField[it.id] === "filament"}
+                            on:change={(e) => patchFilament(it.id, (e.currentTarget as HTMLInputElement).value)}
+                          />
+                          <span class="unit">m</span>
+                        </span>
+                        <span class="fil-row">
+                          <input
+                            type="number"
+                            class="inline right"
+                            min="0"
+                            step="0.1"
+                            placeholder="gastas"
+                            title="Se preenchido, ignora os metros pro custo"
+                            value={it.gcode_meta?.filament_g ?? ""}
+                            disabled={savingField[it.id] === "filament"}
+                            on:change={(e) => saveGrams(it.id, (e.currentTarget as HTMLInputElement).value)}
+                          />
+                          <span class="unit">g</span>
+                        </span>
+                        {#if it.gcode_meta?.filament_g}
+                          <span class="badge weight" title="O custo está sendo calculado pelas gramas, não pelos metros.">por peso</span>
+                        {/if}
+                      </div>
                     {:else}
                       {fmtNum(it.gcode_meta?.filament_m, 2)} m
+                      {#if it.gcode_meta?.filament_g}
+                        <span class="badge weight" title="O custo está sendo calculado pelas gramas, não pelos metros.">{fmtNum(it.gcode_meta.filament_g, 1)} g · por peso</span>
+                      {/if}
                     {/if}
                   </td>
                   <td class="right mono">
@@ -1391,6 +1420,29 @@
     text-transform: uppercase;
     letter-spacing: 0.04em;
     font-weight: 600;
+  }
+  .fil-stack {
+    display: inline-flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 0.25rem;
+  }
+  .fil-row {
+    display: inline-flex;
+    align-items: center;
+    white-space: nowrap;
+  }
+  .badge.weight {
+    display: inline-block;
+    padding: 0.05rem 0.4rem;
+    border-radius: 999px;
+    background: #e0f2fe;
+    color: #075985;
+    font-size: 0.66rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    font-weight: 600;
+    white-space: nowrap;
   }
   .hint.warn { color: #92400e; font-size: 0.85em; margin: 0.25rem 0 0; }
   .hint { color: #6b7280; font-size: 0.85em; }
