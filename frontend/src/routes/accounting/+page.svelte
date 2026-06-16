@@ -4,9 +4,17 @@
   import { handleApiError, requireAuth } from "$lib/guard";
   import Table from "$lib/components/Table.svelte";
   import Form from "$lib/components/Form.svelte";
-  import type { Sale, Expense, Dre, ExpenseCategory } from "$lib/types";
+  import type {
+    Sale,
+    Expense,
+    Dre,
+    ExpenseCategory,
+    MonthlyDre,
+    Profitability,
+  } from "$lib/types";
 
-  let tab: "vendas" | "despesas" | "dre" = "vendas";
+  let tab: "vendas" | "despesas" | "dre" | "lucratividade" = "vendas";
+  let dreMode: "periodo" | "mensal" = "periodo";
 
   let sales: Sale[] = [];
   let salesError = "";
@@ -28,6 +36,13 @@
   let dreError = "";
   let from = new Date().toISOString().slice(0, 8) + "01";
   let to = new Date().toISOString().slice(0, 10);
+
+  let monthly: MonthlyDre[] = [];
+  let monthlyLoading = false;
+
+  let prof: Profitability | null = null;
+  let profLoading = false;
+  let profError = "";
 
   const CATS: { value: ExpenseCategory; label: string }[] = [
     { value: "maintenance", label: "Manutenção" },
@@ -51,6 +66,12 @@
   function shortDate(v: string | null): string {
     if (!v) return "—";
     return v.slice(0, 10).split("-").reverse().join("/");
+  }
+  const MONTHS_PT = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
+  function monthLabel(m: string): string {
+    const [y, mm] = m.split("-");
+    const idx = Number(mm) - 1;
+    return `${MONTHS_PT[idx] ?? mm}/${(y ?? "").slice(2)}`;
   }
 
   async function loadSales() {
@@ -141,10 +162,75 @@
     }
   }
 
+  async function loadMonthly() {
+    dreError = "";
+    monthlyLoading = true;
+    try {
+      monthly = await api<MonthlyDre[]>(`/accounting/dre/monthly?from=${from}&to=${to}`);
+    } catch (err) {
+      handleApiError(err);
+      dreError = errorMessage(err, "Falha ao gerar o DRE mensal.");
+    } finally {
+      monthlyLoading = false;
+    }
+  }
+  async function loadProfitability() {
+    profError = "";
+    profLoading = true;
+    try {
+      prof = await api<Profitability>(`/accounting/profitability?from=${from}&to=${to}`);
+    } catch (err) {
+      handleApiError(err);
+      profError = errorMessage(err, "Falha ao gerar a lucratividade.");
+    } finally {
+      profLoading = false;
+    }
+  }
+  function exportXlsx() {
+    window.open(`/api/accounting/dre/export.xlsx?from=${from}&to=${to}`, "_blank");
+  }
+
+  function generateDre() {
+    if (dreMode === "mensal") loadMonthly();
+    else loadDre();
+  }
+  function setDreMode(m: typeof dreMode) {
+    dreMode = m;
+    if (m === "mensal" && monthly.length === 0) loadMonthly();
+    else if (m === "periodo" && !dre) loadDre();
+  }
+
   function openTab(t: typeof tab) {
     tab = t;
-    if (t === "dre" && !dre) loadDre();
+    if (t === "dre") {
+      if (dreMode === "mensal" && monthly.length === 0) loadMonthly();
+      else if (dreMode === "periodo" && !dre) loadDre();
+    }
+    if (t === "lucratividade" && !prof) loadProfitability();
   }
+
+  type DreAmountKey =
+    | "receita_bruta"
+    | "impostos"
+    | "receita_liquida"
+    | "cpv"
+    | "custos_variaveis"
+    | "lucro_bruto"
+    | "custo_estoque"
+    | "resultado_liquido";
+  function sumMonthly(key: DreAmountKey): number {
+    return monthly.reduce((acc, m) => acc + Number(m[key] || 0), 0);
+  }
+  function sumMonthlyCat(cat: string): number {
+    return monthly.reduce((acc, m) => acc + Number(m.despesas[cat] || 0), 0);
+  }
+  $: monthlyCats = Array.from(
+    new Set(monthly.flatMap((m) => Object.keys(m.despesas))),
+  ).sort();
+  $: totalReceitaLiquida = sumMonthly("receita_liquida");
+  $: totalResultado = sumMonthly("resultado_liquido");
+  $: totalMargemPct =
+    totalReceitaLiquida !== 0 ? (totalResultado / totalReceitaLiquida) * 100 : 0;
 
   $: confirmedCount = sales.filter((s) => s.is_sold).length;
   $: expenseTotal = expenses.reduce((acc, e) => acc + Number(e.amount || 0), 0);
@@ -178,6 +264,14 @@
   </button>
   <button type="button" class="subtab" class:active={tab === "dre"} on:click={() => openTab("dre")}>
     <span class="idx">03</span> DRE
+  </button>
+  <button
+    type="button"
+    class="subtab"
+    class:active={tab === "lucratividade"}
+    on:click={() => openTab("lucratividade")}
+  >
+    <span class="idx">04</span> Lucratividade
   </button>
 </nav>
 
@@ -324,6 +418,21 @@
   <section class="panel dre-controls">
     <div class="panel-head">
       <h2 class="section-title">Demonstrativo de resultado</h2>
+      <div class="head-tools">
+        <div class="segmented mono" role="group" aria-label="Modo do DRE">
+          <button
+            type="button"
+            class:active={dreMode === "periodo"}
+            on:click={() => setDreMode("periodo")}>Período</button
+          >
+          <button
+            type="button"
+            class:active={dreMode === "mensal"}
+            on:click={() => setDreMode("mensal")}>Mensal</button
+          >
+        </div>
+        <button class="tiny ghost" on:click={exportXlsx}>Exportar XLSX</button>
+      </div>
     </div>
     <div class="period">
       <label class="field">
@@ -334,14 +443,96 @@
         Até
         <input type="date" bind:value={to} />
       </label>
-      <button class="generate" on:click={loadDre} disabled={dreLoading}>
-        {dreLoading ? "Calculando…" : "Gerar"}
+      <button class="generate" on:click={generateDre} disabled={dreLoading || monthlyLoading}>
+        {dreLoading || monthlyLoading ? "Calculando…" : "Gerar"}
       </button>
     </div>
     {#if dreError}<div class="alert">{dreError}</div>{/if}
   </section>
 
-  {#if dreLoading && !dre}
+  {#if dreMode === "mensal"}
+    {#if monthlyLoading && monthly.length === 0}
+      <div class="state mono">Calculando demonstrativo mensal…</div>
+    {:else if monthly.length > 0}
+      <section class="ledger panel" aria-label="DRE mensal">
+        <div class="ledger-mast">
+          <span class="ledger-eyebrow mono">DRE mensal</span>
+          <span class="ledger-range mono">{shortDate(from)} — {shortDate(to)}</span>
+        </div>
+        <div class="grid-wrap">
+          <table class="dre-grid">
+            <thead>
+              <tr>
+                <th class="acct">Conta</th>
+                {#each monthly as m}<th class="num">{monthLabel(m.month)}</th>{/each}
+                <th class="num total">Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="acct">Receita bruta</td>
+                {#each monthly as m}<td class="num mono">{money(m.receita_bruta)}</td>{/each}
+                <td class="num mono total">{money(sumMonthly("receita_bruta"))}</td>
+              </tr>
+              <tr class="muted">
+                <td class="acct"><span class="op">(−)</span> Impostos</td>
+                {#each monthly as m}<td class="num mono">{money(m.impostos)}</td>{/each}
+                <td class="num mono total">{money(sumMonthly("impostos"))}</td>
+              </tr>
+              <tr class="sub">
+                <td class="acct"><span class="op">=</span> Receita líquida</td>
+                {#each monthly as m}<td class="num mono">{money(m.receita_liquida)}</td>{/each}
+                <td class="num mono total">{money(sumMonthly("receita_liquida"))}</td>
+              </tr>
+              <tr class="muted">
+                <td class="acct"><span class="op">(−)</span> CPV</td>
+                {#each monthly as m}<td class="num mono">{money(m.cpv)}</td>{/each}
+                <td class="num mono total">{money(sumMonthly("cpv"))}</td>
+              </tr>
+              <tr class="muted">
+                <td class="acct"><span class="op">(−)</span> Custos variáveis</td>
+                {#each monthly as m}<td class="num mono">{money(m.custos_variaveis)}</td>{/each}
+                <td class="num mono total">{money(sumMonthly("custos_variaveis"))}</td>
+              </tr>
+              <tr class="sub">
+                <td class="acct"><span class="op">=</span> Lucro bruto</td>
+                {#each monthly as m}<td class="num mono">{money(m.lucro_bruto)}</td>{/each}
+                <td class="num mono total">{money(sumMonthly("lucro_bruto"))}</td>
+              </tr>
+              {#each monthlyCats as cat}
+                <tr class="muted">
+                  <td class="acct expense"><span class="op">(−)</span> {catLabel(cat)}</td>
+                  {#each monthly as m}<td class="num mono">{money(m.despesas[cat] ?? 0)}</td>{/each}
+                  <td class="num mono total">{money(sumMonthlyCat(cat))}</td>
+                </tr>
+              {/each}
+              <tr class="muted">
+                <td class="acct expense"><span class="op">(−)</span> Custo de estoque</td>
+                {#each monthly as m}<td class="num mono">{money(m.custo_estoque)}</td>{/each}
+                <td class="num mono total">{money(sumMonthly("custo_estoque"))}</td>
+              </tr>
+              <tr class="result">
+                <td class="acct"><span class="op">=</span> Resultado líquido</td>
+                {#each monthly as m}
+                  <td class="num mono" class:neg={Number(m.resultado_liquido) < 0}>
+                    {money(m.resultado_liquido)}
+                  </td>
+                {/each}
+                <td class="num mono total" class:neg={totalResultado < 0}>{money(totalResultado)}</td>
+              </tr>
+              <tr class="margin-row">
+                <td class="acct">Margem %</td>
+                {#each monthly as m}<td class="num mono">{m.margem_liquida_pct}%</td>{/each}
+                <td class="num mono total">{totalMargemPct.toFixed(1)}%</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    {:else}
+      <div class="state mono">Selecione um período e gere o demonstrativo mensal.</div>
+    {/if}
+  {:else if dreLoading && !dre}
     <div class="state mono">Calculando demonstrativo…</div>
   {:else if dre}
     <section class="ledger panel" aria-label="Demonstrativo de resultado">
@@ -410,6 +601,55 @@
     </section>
   {:else}
     <div class="state mono">Selecione um período e gere o demonstrativo.</div>
+  {/if}
+{/if}
+
+{#if tab === "lucratividade"}
+  <section class="panel dre-controls">
+    <div class="panel-head">
+      <h2 class="section-title">Lucratividade</h2>
+    </div>
+    <div class="period">
+      <label class="field">
+        De
+        <input type="date" bind:value={from} />
+      </label>
+      <label class="field">
+        Até
+        <input type="date" bind:value={to} />
+      </label>
+      <button class="generate" on:click={loadProfitability} disabled={profLoading}>
+        {profLoading ? "Calculando…" : "Gerar"}
+      </button>
+    </div>
+    {#if profError}<div class="alert">{profError}</div>{/if}
+  </section>
+
+  {#if profLoading && !prof}
+    <div class="state mono">Calculando lucratividade…</div>
+  {:else if prof}
+    {#each [{ title: "Por cliente", rows: prof.by_client, empty: "Nenhum cliente no período" }, { title: "Por material", rows: prof.by_material, empty: "Nenhum material no período" }] as block}
+      <section class="panel list-panel">
+        <div class="panel-head">
+          <h2 class="section-title">
+            {block.title} <span class="count">· {block.rows.length}</span>
+          </h2>
+        </div>
+        <Table
+          columns={[
+            { key: "label", label: block.title.replace("Por ", "") },
+            { key: "receita", label: "Receita", mono: true, align: "right", format: (v) => money(v as string) },
+            { key: "custo", label: "Custo", mono: true, align: "right", format: (v) => money(v as string) },
+            { key: "margem", label: "Margem", mono: true, align: "right", format: (v) => money(v as string) },
+            { key: "margem_pct", label: "Margem %", mono: true, align: "right", format: (v) => `${v}%` },
+          ]}
+          rows={block.rows as unknown as Record<string, unknown>[]}
+          empty={block.empty}
+        />
+      </section>
+    {/each}
+  {:else}
+    <div class="state mono">Selecione um período e gere a lucratividade.</div>
   {/if}
 {/if}
 
@@ -570,6 +810,118 @@
   }
   .generate {
     height: fit-content;
+  }
+
+  /* ---------- segmented control ---------- */
+  .segmented {
+    display: inline-flex;
+    border: 1px solid var(--line-strong);
+    background: var(--paper);
+  }
+  .segmented button {
+    background: transparent;
+    border: 0;
+    border-right: 1px solid var(--line);
+    color: var(--muted);
+    padding: 0.4rem 0.8rem;
+    font-size: 0.66rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: background 120ms ease, color 120ms ease;
+  }
+  .segmented button:last-child {
+    border-right: 0;
+  }
+  .segmented button:hover {
+    color: var(--ink);
+  }
+  .segmented button.active {
+    background: var(--ink);
+    color: var(--paper);
+  }
+
+  /* ---------- DRE monthly grid ---------- */
+  .grid-wrap {
+    overflow-x: auto;
+  }
+  .dre-grid {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.86rem;
+  }
+  .dre-grid th,
+  .dre-grid td {
+    padding: 0.5rem 0.85rem;
+    border-bottom: 1px solid var(--line);
+    white-space: nowrap;
+  }
+  .dre-grid thead th {
+    font-family: var(--font-mono);
+    font-weight: 500;
+    font-size: 0.64rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--muted);
+    border-bottom: 1px solid var(--line-strong);
+    background: var(--paper);
+    position: sticky;
+    top: 0;
+  }
+  .dre-grid .acct {
+    text-align: left;
+    color: var(--ink);
+  }
+  .dre-grid .acct.expense {
+    padding-left: 1.6rem;
+    color: var(--muted);
+  }
+  .dre-grid .num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+  .dre-grid .total {
+    border-left: 1px solid var(--line-strong);
+    font-weight: 600;
+  }
+  .dre-grid .op {
+    display: inline-block;
+    width: 1.4rem;
+    color: var(--muted);
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+  }
+  .dre-grid tr.muted td {
+    color: var(--muted);
+  }
+  .dre-grid tr.sub td {
+    font-weight: 600;
+    border-bottom: 1px solid var(--line-strong);
+  }
+  .dre-grid tr.sub td.acct {
+    color: var(--ink);
+  }
+  .dre-grid tr.result td {
+    border-top: 2px solid var(--ink);
+    border-bottom: none;
+    font-weight: 600;
+    color: var(--ok);
+  }
+  .dre-grid tr.result td.acct {
+    color: var(--ink);
+    font-family: var(--font-display);
+  }
+  .dre-grid tr.result td.neg {
+    color: var(--danger);
+  }
+  .dre-grid tr.margin-row td {
+    border-bottom: none;
+    color: var(--muted);
+    font-size: 0.78rem;
+  }
+  .dre-grid tr.margin-row td.acct {
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
   }
 
   .state {

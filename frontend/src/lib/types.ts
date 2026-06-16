@@ -437,3 +437,18 @@ export type Dre = {
   resultado_liquido: string;
   margem_liquida_pct: string;
 };
+
+export type MonthlyDre = Dre & { month: string };
+
+export type ProfitabilityRow = {
+  label: string;
+  receita: string;
+  custo: string;
+  margem: string;
+  margem_pct: string;
+};
+
+export type Profitability = {
+  by_client: ProfitabilityRow[];
+  by_material: ProfitabilityRow[];
+};
