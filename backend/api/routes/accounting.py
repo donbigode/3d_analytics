@@ -2,6 +2,7 @@ from datetime import date, datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -11,6 +12,7 @@ from backend.api.schemas.accounting import (
     ProfitabilityOut, SaleOut, SaleUpdate, SyncOut,
 )
 from backend.core.accounting.dre import compute_dre
+from backend.core.accounting.export_xlsx import build_dre_xlsx
 from backend.core.accounting.monthly import compute_dre_monthly
 from backend.core.accounting.profitability import compute_profitability
 from backend.core.accounting.sync import sync_sales
@@ -143,6 +145,20 @@ async def dre_monthly(
     from_: date = Query(..., alias="from"), to: date = Query(...),
 ):
     return [MonthlyDreOut(**row) for row in await compute_dre_monthly(session, from_, to)]
+
+
+@router.get("/dre/export.xlsx")
+async def dre_export(
+    _: User = Depends(require_user), session: AsyncSession = Depends(db_session),
+    from_: date = Query(..., alias="from"), to: date = Query(...),
+):
+    data = await build_dre_xlsx(session, from_, to)
+    headers = {"Content-Disposition": f'attachment; filename="dre_{from_}_{to}.xlsx"'}
+    return StreamingResponse(
+        iter([data]),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers=headers,
+    )
 
 
 @router.get("/profitability", response_model=ProfitabilityOut)

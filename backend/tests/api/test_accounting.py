@@ -109,3 +109,14 @@ async def test_dre_monthly_shape(auth_client):
     r = await auth_client.get("/accounting/dre/monthly?from=2026-01-01&to=2026-02-28")
     assert r.status_code == 200, r.text
     assert [x["month"] for x in r.json()] == ["2026-01", "2026-02"]
+
+
+@pytest.mark.asyncio
+async def test_dre_export_xlsx(auth_client):
+    import io
+    from openpyxl import load_workbook
+    r = await auth_client.get("/accounting/dre/export.xlsx?from=2026-06-01&to=2026-06-30")
+    assert r.status_code == 200, r.text
+    assert "spreadsheetml" in r.headers["content-type"]
+    wb = load_workbook(io.BytesIO(r.content))
+    assert {"DRE mensal", "Vendas", "Despesas", "Custo de estoque", "Lucratividade"} <= set(wb.sheetnames)
