@@ -79,3 +79,18 @@ async def test_dre_shape(auth_client):
     for key in ["receita_bruta", "cpv", "custos_variaveis", "lucro_bruto",
                 "despesas", "resultado_liquido", "margem_liquida_pct"]:
         assert key in r.json()
+
+
+@pytest.mark.asyncio
+async def test_expense_equipment_and_recurring(auth_client):
+    r = await auth_client.post("/accounting/expenses", json={
+        "category": "equipment", "description": "Impressora X1", "amount": "3000.00",
+        "incurred_at": "2026-06-01", "is_recurring": False,
+    })
+    assert r.status_code == 201, r.text
+    assert r.json()["category"] == "equipment"
+    r = await auth_client.post("/accounting/expenses", json={
+        "category": "other", "description": "Internet", "amount": "100.00",
+        "incurred_at": "2026-06-01", "is_recurring": True,
+    })
+    assert r.json()["is_recurring"] is True

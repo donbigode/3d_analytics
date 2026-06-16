@@ -51,4 +51,5 @@ class ExpenseCategory(StrEnum):
     PARTS = "parts"
     TOOLS = "tools"
     LABOR = "labor"
+    EQUIPMENT = "equipment"
     OTHER = "other"

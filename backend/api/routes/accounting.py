@@ -29,7 +29,7 @@ def _sale_out(s: Sale) -> SaleOut:
 
 def _expense_out(e: Expense) -> ExpenseOut:
     return ExpenseOut(id=str(e.id), category=e.category, description=e.description,
-                      amount=e.amount, incurred_at=e.incurred_at)
+                      amount=e.amount, incurred_at=e.incurred_at, is_recurring=e.is_recurring)
 
 
 @router.post("/sync", response_model=SyncOut)
@@ -90,7 +90,8 @@ async def create_expense(
     _: User = Depends(require_user), session: AsyncSession = Depends(db_session),
 ):
     e = Expense(category=payload.category.value, description=payload.description,
-                amount=payload.amount, incurred_at=payload.incurred_at)
+                amount=payload.amount, incurred_at=payload.incurred_at,
+                is_recurring=payload.is_recurring)
     session.add(e); await session.commit(); await session.refresh(e)
     return _expense_out(e)
 

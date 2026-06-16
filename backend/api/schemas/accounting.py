@@ -42,6 +42,7 @@ class ExpenseCreate(BaseModel):
     description: str
     amount: Decimal
     incurred_at: date
+    is_recurring: bool = False
 
 
 class ExpenseUpdate(BaseModel):
@@ -49,6 +50,7 @@ class ExpenseUpdate(BaseModel):
     description: str | None = None
     amount: Decimal | None = None
     incurred_at: date | None = None
+    is_recurring: bool | None = None
 
 
 class ExpenseOut(BaseModel):
@@ -57,6 +59,7 @@ class ExpenseOut(BaseModel):
     description: str
     amount: Decimal
     incurred_at: date
+    is_recurring: bool
 
 
 class DreOut(BaseModel):
