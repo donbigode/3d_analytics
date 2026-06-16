@@ -387,3 +387,40 @@ export type RankingRow = {
   temporal_window: "day" | "week" | "month";
   source_provider: "anthropic" | "gemini" | "openai" | null;
 };
+
+export type Sale = {
+  id: string;
+  quote_id: string;
+  quote_status: string;
+  quote_total: string;
+  cpv_calc: string;
+  client_id: string | null;
+  is_stale: boolean;
+  is_sold: boolean;
+  confirmed_revenue: string | null;
+  variable_costs: string;
+  cpv_override: string | null;
+  sold_at: string | null;
+  notes: string | null;
+};
+
+export type ExpenseCategory = "maintenance" | "parts" | "tools" | "labor" | "other";
+
+export type Expense = {
+  id: string;
+  category: ExpenseCategory;
+  description: string;
+  amount: string;
+  incurred_at: string;
+};
+
+export type Dre = {
+  receita_bruta: string;
+  cpv: string;
+  custos_variaveis: string;
+  lucro_bruto: string;
+  despesas: Record<string, string>;
+  total_despesas: string;
+  resultado_liquido: string;
+  margem_liquida_pct: string;
+};
