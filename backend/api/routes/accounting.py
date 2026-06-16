@@ -63,13 +63,15 @@ async def update_sale(
     if not sale:
         raise HTTPException(404)
     data = payload.model_dump(exclude_unset=True)
-    # Conveniência: ao confirmar a venda sem informar valor/data, usa defaults.
-    if data.get("is_sold") and sale.confirmed_revenue is None and "confirmed_revenue" not in data:
-        data["confirmed_revenue"] = sale.quote_total
-    if data.get("is_sold") and sale.sold_at is None and "sold_at" not in data:
-        data["sold_at"] = datetime.now(timezone.utc).date()
     for k, v in data.items():
         setattr(sale, k, v)
+    # Uma venda confirmada precisa de receita e data: preenche defaults se
+    # ficaram nulos (inclusive se o cliente mandou null explícito).
+    if sale.is_sold:
+        if sale.confirmed_revenue is None:
+            sale.confirmed_revenue = sale.quote_total
+        if sale.sold_at is None:
+            sale.sold_at = datetime.now(timezone.utc).date()
     await session.commit(); await session.refresh(sale)
     return _sale_out(sale)
 

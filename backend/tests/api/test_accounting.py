@@ -39,6 +39,24 @@ async def test_sales_listed_after_sync_and_patch(auth_client):
 
 
 @pytest.mark.asyncio
+async def test_confirming_sale_backfills_revenue_and_date(auth_client):
+    """Confirmar a venda sem (ou com null explícito) receita/data preenche
+    defaults a partir de quote_total/hoje — nunca deixa venda vendida sem receita."""
+    await _seed_commercial_quote()
+    sale = (await auth_client.get("/accounting/sales")).json()[0]
+    quote_total = sale["quote_total"]
+
+    r = await auth_client.patch(f"/accounting/sales/{sale['id']}", json={
+        "is_sold": True, "confirmed_revenue": None, "sold_at": None,
+    })
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["is_sold"] is True
+    assert body["confirmed_revenue"] == quote_total
+    assert body["sold_at"] is not None
+
+
+@pytest.mark.asyncio
 async def test_expenses_crud(auth_client):
     r = await auth_client.post("/accounting/expenses", json={
         "category": "parts", "description": "bico 0.4", "amount": "40.00",

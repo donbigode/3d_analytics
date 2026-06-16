@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.api.deps import db_session, require_user
 from backend.core.accounting.cost import compute_quote_costs, load_settings_row
 from backend.core.accounting.sync import sync_sales
-from backend.core.accounting.dre import _sale_cpv
+from backend.core.accounting.dre import sale_cpv
 from backend.api.schemas.dashboard import (
     CardEstoque,
     DashboardCards,
@@ -162,7 +162,7 @@ async def dashboard(
         )
     ).scalars().all()
     receita = sum((s.confirmed_revenue or Decimal(0) for s in confirmed), Decimal(0))
-    despesa_vendas = sum((_sale_cpv(s) + s.variable_costs for s in confirmed), Decimal(0))
+    despesa_vendas = sum((sale_cpv(s) + s.variable_costs for s in confirmed), Decimal(0))
 
     op_expenses = (
         await session.execute(
@@ -181,7 +181,7 @@ async def dashboard(
         bk = _bucket_key(datetime(s.sold_at.year, s.sold_at.month, s.sold_at.day), bucket_mode)
         slot = rev_exp_buckets.setdefault(bk, {"receita": Decimal(0), "despesa": Decimal(0)})
         slot["receita"] += s.confirmed_revenue or Decimal(0)
-        slot["despesa"] += _sale_cpv(s) + s.variable_costs
+        slot["despesa"] += sale_cpv(s) + s.variable_costs
     for e in op_expenses:
         bk = _bucket_key(datetime(e.incurred_at.year, e.incurred_at.month, e.incurred_at.day), bucket_mode)
         slot = rev_exp_buckets.setdefault(bk, {"receita": Decimal(0), "despesa": Decimal(0)})

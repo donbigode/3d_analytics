@@ -12,7 +12,7 @@ def _q2(d: Decimal) -> Decimal:
     return d.quantize(Decimal("0.01"))
 
 
-def _sale_cpv(sale: Sale) -> Decimal:
+def sale_cpv(sale: Sale) -> Decimal:
     return sale.cpv_override if sale.cpv_override is not None else sale.cpv_calc
 
 
@@ -30,7 +30,7 @@ async def compute_dre(session: AsyncSession, period_from: date, period_to: date)
     ).scalars().all()
 
     receita = sum((s.confirmed_revenue or Decimal(0) for s in sales), Decimal(0))
-    cpv = sum((_sale_cpv(s) for s in sales), Decimal(0))
+    cpv = sum((sale_cpv(s) for s in sales), Decimal(0))
     variaveis = sum((s.variable_costs for s in sales), Decimal(0))
     lucro_bruto = receita - cpv - variaveis
 
