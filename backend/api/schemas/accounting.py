@@ -64,10 +64,13 @@ class ExpenseOut(BaseModel):
 
 class DreOut(BaseModel):
     receita_bruta: Decimal
+    impostos: Decimal
+    receita_liquida: Decimal
     cpv: Decimal
     custos_variaveis: Decimal
     lucro_bruto: Decimal
     despesas: dict[str, Decimal]
+    custo_estoque: Decimal
     total_despesas: Decimal
     resultado_liquido: Decimal
     margem_liquida_pct: Decimal
