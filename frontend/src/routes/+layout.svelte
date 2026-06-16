@@ -25,6 +25,7 @@
         { href: "/quotes", label: "Orçamentos", match: (p) => p.startsWith("/quotes") },
         { href: "/inbox", label: "Inbox", match: (p) => p.startsWith("/inbox") },
         { href: "/capacity", label: "Capacidade", match: (p) => p.startsWith("/capacity") },
+        { href: "/accounting", label: "Contábil", match: (p) => p.startsWith("/accounting") },
       ],
     },
     {
