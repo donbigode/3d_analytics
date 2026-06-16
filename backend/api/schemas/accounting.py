@@ -74,3 +74,7 @@ class DreOut(BaseModel):
     total_despesas: Decimal
     resultado_liquido: Decimal
     margem_liquida_pct: Decimal
+
+
+class MonthlyDreOut(DreOut):
+    month: str

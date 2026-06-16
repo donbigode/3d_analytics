@@ -102,3 +102,10 @@ async def test_expense_equipment_and_recurring(auth_client):
         "incurred_at": "2026-06-01", "is_recurring": True,
     })
     assert r.json()["is_recurring"] is True
+
+
+@pytest.mark.asyncio
+async def test_dre_monthly_shape(auth_client):
+    r = await auth_client.get("/accounting/dre/monthly?from=2026-01-01&to=2026-02-28")
+    assert r.status_code == 200, r.text
+    assert [x["month"] for x in r.json()] == ["2026-01", "2026-02"]
