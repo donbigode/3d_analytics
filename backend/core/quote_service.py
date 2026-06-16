@@ -5,6 +5,26 @@ from backend.core.pricing.cost import grams_from_meters
 from backend.core.pricing.quote import ItemInput
 
 
+def effective_grams_per_unit(
+    filament_m: float,
+    filament_g: float | None,
+    density: Decimal,
+    diameter_mm: Decimal,
+    waste_pct: Decimal,
+) -> Decimal:
+    """Gramas por peça para custo.
+
+    Se ``filament_g`` está preenchido e > 0, é o valor final (sem refugo).
+    Senão, deriva dos metros e aplica ``waste_pct``.
+    """
+    if filament_g is not None and filament_g > 0:
+        return Decimal(str(filament_g))
+    grams = grams_from_meters(filament_m, density, diameter_mm)
+    if waste_pct > 0:
+        grams = grams * (Decimal(100) + waste_pct) / Decimal(100)
+    return grams
+
+
 def gcode_to_item_input(
     meta: GcodeMeta,
     density: Decimal,
