@@ -49,3 +49,26 @@ async def test_compute_quote_costs_components():
         assert costs.energy == Decimal("0.10")
         assert costs.real_filament == Decimal("2.50")
         assert costs.cpv == costs.real_filament + costs.energy + costs.depreciation + costs.services
+
+
+@pytest.mark.asyncio
+async def test_compute_quote_costs_honors_filament_g():
+    async with session_module.SessionFactory() as s:
+        user = User(name="u", email="grams@t.com", password_hash="x")
+        mv = MaterialVersion(material_type="PLA", name="PLA", density_g_cm3=Decimal("1.24"),
+                             price_per_kg_ref=Decimal("100"))
+        settings = await s.merge(Settings(id=1, energy_kwh_price=Decimal("0"),
+                                          printer_power_w=Decimal("0"),
+                                          printer_depreciation_per_hour=Decimal("0")))
+        s.add_all([user, mv]); await s.commit()
+        q = Quote(kind=QuoteKind.COMMERCIAL.value, user_id=user.id,
+                  status=QuoteStatus.PRODUZIDO.value, markup_pct=Decimal("0"),
+                  min_charge=Decimal("0"))
+        s.add(q); await s.commit()
+        item = QuoteItem(quote_id=q.id, name="p",
+                         gcode_meta={"filament_m": 10, "time_s": 0, "filament_g": 50},
+                         material_version_id=mv.id, quantity=1)
+        s.add(item); await s.commit()
+
+        costs = await compute_quote_costs(s, q, settings)
+        assert costs.catalog_filament == Decimal("5.00")
