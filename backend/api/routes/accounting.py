@@ -7,10 +7,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.api.deps import db_session, require_user
 from backend.api.schemas.accounting import (
-    DreOut, ExpenseCreate, ExpenseOut, ExpenseUpdate, MonthlyDreOut, SaleOut, SaleUpdate, SyncOut,
+    DreOut, ExpenseCreate, ExpenseOut, ExpenseUpdate, MonthlyDreOut,
+    ProfitabilityOut, SaleOut, SaleUpdate, SyncOut,
 )
 from backend.core.accounting.dre import compute_dre
 from backend.core.accounting.monthly import compute_dre_monthly
+from backend.core.accounting.profitability import compute_profitability
 from backend.core.accounting.sync import sync_sales
 from backend.infra.db.models import Expense, Sale, User
 
@@ -141,3 +143,11 @@ async def dre_monthly(
     from_: date = Query(..., alias="from"), to: date = Query(...),
 ):
     return [MonthlyDreOut(**row) for row in await compute_dre_monthly(session, from_, to)]
+
+
+@router.get("/profitability", response_model=ProfitabilityOut)
+async def profitability(
+    _: User = Depends(require_user), session: AsyncSession = Depends(db_session),
+    from_: date = Query(..., alias="from"), to: date = Query(...),
+):
+    return ProfitabilityOut(**await compute_profitability(session, from_, to))

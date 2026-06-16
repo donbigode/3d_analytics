@@ -78,3 +78,16 @@ class DreOut(BaseModel):
 
 class MonthlyDreOut(DreOut):
     month: str
+
+
+class ProfitabilityRow(BaseModel):
+    label: str
+    receita: Decimal
+    custo: Decimal
+    margem: Decimal
+    margem_pct: Decimal
+
+
+class ProfitabilityOut(BaseModel):
+    by_client: list[ProfitabilityRow]
+    by_material: list[ProfitabilityRow]
