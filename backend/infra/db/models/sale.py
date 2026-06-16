@@ -32,6 +32,7 @@ class Sale(Base):
     client_id: Mapped[UUID | None] = mapped_column(
         PG_UUID(as_uuid=True), ForeignKey("clients.id", ondelete="SET NULL")
     )
+    quote_kind: Mapped[str] = mapped_column(String(20), nullable=False, server_default="commercial")
     is_stale: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default=false()
     )
