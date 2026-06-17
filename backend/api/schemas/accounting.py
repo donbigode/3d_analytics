@@ -20,6 +20,7 @@ class SaleOut(BaseModel):
     cpv_override: Decimal | None
     sold_at: date | None
     notes: str | None
+    itens_label: str = ""
 
 
 class SaleUpdate(BaseModel):
