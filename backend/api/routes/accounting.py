@@ -17,20 +17,27 @@ from backend.core.accounting.export_xlsx import build_dre_xlsx
 from backend.core.accounting.monthly import compute_dre_monthly
 from backend.core.accounting.profitability import compute_profitability
 from backend.core.accounting.sync import sync_sales
-from backend.infra.db.models import Expense, Sale, User
+from backend.infra.db.models import Client, Expense, Sale, User
 
 router = APIRouter()
 
 
-def _sale_out(s: Sale, itens_label: str = "") -> SaleOut:
+def _sale_out(s: Sale, itens_label: str = "", client_name: str | None = None) -> SaleOut:
     return SaleOut(
         id=str(s.id), quote_id=str(s.quote_id), quote_status=s.quote_status,
         quote_total=s.quote_total, cpv_calc=s.cpv_calc,
         client_id=str(s.client_id) if s.client_id else None,
         is_stale=s.is_stale, is_sold=s.is_sold, confirmed_revenue=s.confirmed_revenue,
         variable_costs=s.variable_costs, cpv_override=s.cpv_override,
-        sold_at=s.sold_at, notes=s.notes, itens_label=itens_label,
+        sold_at=s.sold_at, notes=s.notes, itens_label=itens_label, client_name=client_name,
     )
+
+
+async def _client_name(session: AsyncSession, s: Sale) -> str | None:
+    if not s.client_id:
+        return None
+    c = await session.get(Client, s.client_id)
+    return c.name if c else None
 
 
 def _expense_out(e: Expense) -> ExpenseOut:
@@ -57,7 +64,10 @@ async def list_sales(
     if is_stale is not None:
         stmt = stmt.where(Sale.is_stale.is_(is_stale))
     rows = (await session.execute(stmt)).scalars().all()
-    return [_sale_out(s, await sale_items_label(session, s)) for s in rows]
+    return [
+        _sale_out(s, await sale_items_label(session, s), await _client_name(session, s))
+        for s in rows
+    ]
 
 
 @router.patch("/sales/{sale_id}", response_model=SaleOut)

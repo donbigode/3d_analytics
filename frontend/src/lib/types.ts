@@ -399,6 +399,7 @@ export type Sale = {
   cpv_calc: string;
   itens_label: string;
   client_id: string | null;
+  client_name: string | null;
   is_stale: boolean;
   is_sold: boolean;
   confirmed_revenue: string | null;

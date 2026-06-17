@@ -295,6 +295,7 @@
     <Table
       columns={[
         { key: "quote_id", label: "Orçamento", mono: true, format: (v) => String(v).slice(0, 8) },
+        { key: "client_name", label: "Cliente" },
         { key: "quote_kind", label: "Tipo", format: (v) => fmtKind(v as string) },
         { key: "itens_label", label: "Itens" },
         { key: "quote_status", label: "Estado" },

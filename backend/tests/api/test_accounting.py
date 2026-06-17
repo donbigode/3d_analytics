@@ -163,3 +163,25 @@ async def test_xlsx_has_facts_sheet(auth_client):
     assert r.status_code == 200, r.text
     wb = load_workbook(io.BytesIO(r.content))
     assert "Fato (itens)" in wb.sheetnames
+
+
+@pytest.mark.asyncio
+async def test_sales_have_client_name(auth_client):
+    import sqlalchemy as sa
+    from decimal import Decimal
+    from backend.core.models import QuoteKind, QuoteStatus
+    from backend.infra.db import session as session_module
+    from backend.infra.db.models import Client, Quote, User
+    async with session_module.SessionFactory() as s:
+        u = (await s.execute(sa.select(User))).scalars().first()
+        cli = Client(name="Ana K")
+        s.add(cli); await s.commit()
+        q = Quote(kind=QuoteKind.COMMERCIAL.value, user_id=u.id, client_id=cli.id,
+                  status=QuoteStatus.APROVADO.value, markup_pct=Decimal("0"), min_charge=Decimal("0"))
+        s.add(q); await s.commit()
+        qid = str(q.id)
+
+    r = await auth_client.get("/accounting/sales")
+    assert r.status_code == 200, r.text
+    sale = next(x for x in r.json() if x["quote_id"] == qid)
+    assert sale["client_name"] == "Ana K"
