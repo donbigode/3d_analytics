@@ -36,6 +36,13 @@ async def lifespan(app: FastAPI):
         app.state.trends_task = start_trends()
         tasks.append(app.state.trends_task)
 
+    # Export pro data lake: sempre inicia o loop; ele se auto-gateia no
+    # ExportConfig.enabled a cada ciclo.
+    from backend.infra.scheduler.export import start_background_task as start_export
+
+    app.state.export_task = start_export()
+    tasks.append(app.state.export_task)
+
     try:
         yield
     finally:
