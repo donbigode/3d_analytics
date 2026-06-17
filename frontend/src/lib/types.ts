@@ -397,6 +397,7 @@ export type Sale = {
   quote_status: string;
   quote_total: string;
   cpv_calc: string;
+  itens_label: string;
   client_id: string | null;
   is_stale: boolean;
   is_sold: boolean;

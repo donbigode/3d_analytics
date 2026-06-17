@@ -296,6 +296,7 @@
       columns={[
         { key: "quote_id", label: "Orçamento", mono: true, format: (v) => String(v).slice(0, 8) },
         { key: "quote_kind", label: "Tipo", format: (v) => fmtKind(v as string) },
+        { key: "itens_label", label: "Itens" },
         { key: "quote_status", label: "Estado" },
         { key: "quote_total", label: "Total", mono: true, align: "right", format: (v) => money(v as string) },
         { key: "cpv_calc", label: "CPV", mono: true, align: "right", format: (v) => money(v as string) },
