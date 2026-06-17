@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { api, errorMessage } from "$lib/api";
   import { handleApiError, requireAuth } from "$lib/guard";
+  import type { ExportConfig } from "$lib/types";
 
   type Providers = {
     preferred_llm_provider: string;
@@ -45,6 +46,37 @@
   let saveOk = false;
   let saveError = "";
 
+  // Data Lake / export
+  let exportCfg: ExportConfig | null = null;
+  let exportDestination: "s3" | "databricks" = "s3";
+  let exportEnabled = false;
+  let s3BucketInput = "";
+  let s3RegionInput = "";
+  let s3PrefixInput = "";
+  let s3AccessKeyInput = "";
+  let s3SecretInput = "";
+  let dbxHostInput = "";
+  let dbxVolumeInput = "";
+  let dbxTokenInput = "";
+  let exportSaving = false;
+  let exportRunning = false;
+  let exportRunMsg = "";
+  let exportRunOk = false;
+
+  function syncExportDraft(c: ExportConfig) {
+    exportDestination = c.destination;
+    exportEnabled = c.enabled;
+    s3BucketInput = c.s3_bucket ?? "";
+    s3RegionInput = c.s3_region ?? "";
+    s3PrefixInput = c.s3_prefix ?? "";
+    s3AccessKeyInput = c.s3_access_key_id ?? "";
+    dbxHostInput = c.databricks_host ?? "";
+    dbxVolumeInput = c.databricks_volume_path ?? "";
+    // segredos nunca voltam crus: mantém o input vazio (= não altera)
+    s3SecretInput = "";
+    dbxTokenInput = "";
+  }
+
   async function load() {
     loading = true;
     pageError = "";
@@ -53,11 +85,76 @@
       preferred = providers.preferred_llm_provider;
       suggestionsEnabled = providers.llm_suggestions_enabled;
       digestAutoEnabled = providers.digest_auto_enabled;
+      exportCfg = await api<ExportConfig>("/config/export");
+      syncExportDraft(exportCfg);
     } catch (err) {
       handleApiError(err);
       pageError = errorMessage(err, "Falha ao carregar configurações.");
     } finally {
       loading = false;
+    }
+  }
+
+  async function saveExport() {
+    exportSaving = true;
+    saveError = "";
+    saveOk = false;
+    const payload: Record<string, unknown> = {
+      enabled: exportEnabled,
+      destination: exportDestination,
+    };
+    if (exportDestination === "s3") {
+      payload.s3_bucket = s3BucketInput;
+      payload.s3_region = s3RegionInput;
+      payload.s3_prefix = s3PrefixInput;
+      payload.s3_access_key_id = s3AccessKeyInput;
+      if (s3SecretInput) payload.s3_secret_access_key = s3SecretInput;
+    } else {
+      payload.databricks_host = dbxHostInput;
+      payload.databricks_volume_path = dbxVolumeInput;
+      if (dbxTokenInput) payload.databricks_token = dbxTokenInput;
+    }
+    try {
+      exportCfg = await api<ExportConfig>("/config/export", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      syncExportDraft(exportCfg);
+      saveOk = true;
+    } catch (err) {
+      handleApiError(err);
+      saveError = errorMessage(err, "Falha ao salvar o export.");
+    } finally {
+      exportSaving = false;
+    }
+  }
+
+  async function runExportNow() {
+    exportRunning = true;
+    exportRunMsg = "";
+    try {
+      const res = await api<{ ok: boolean; detail?: string; counts?: Record<string, number> }>(
+        "/config/export/run",
+        { method: "POST" },
+      );
+      exportRunOk = res.ok;
+      if (res.ok) {
+        const total = res.counts
+          ? Object.values(res.counts).reduce((a, b) => a + b, 0)
+          : 0;
+        exportRunMsg = `Export concluído — ${total} registros enviados.`;
+      } else {
+        exportRunMsg = res.detail ?? "Falha no export.";
+      }
+      exportCfg = await api<ExportConfig>("/config/export");
+      syncExportDraft(exportCfg);
+    } catch (err) {
+      handleApiError(err);
+      exportRunOk = false;
+      exportRunMsg = errorMessage(err, "Falha ao rodar o export.");
+    } finally {
+      exportRunning = false;
     }
   }
 
@@ -419,6 +516,115 @@
       botão "Coletar agora" em <a href="/trends">Tendências</a>.
     </p>
   </section>
+
+  {#if exportCfg}
+    <section class="panel">
+      <div class="panel-head">
+        <span class="page-eyebrow">Data Lake · Export</span>
+        <h2 class="section-title">Snapshot Parquet (S3 / Databricks)</h2>
+      </div>
+      <p class="status mono">
+        Último envio:
+        {#if exportCfg.last_run_at}
+          <strong class:on={exportCfg.last_run_status === "ok"}>
+            {exportCfg.last_run_status}
+          </strong>
+          · {new Date(exportCfg.last_run_at).toLocaleString("pt-BR")}
+        {:else}
+          <strong>nunca</strong>
+        {/if}
+      </p>
+      {#if exportCfg.last_run_detail}
+        <p class="hint mono">{exportCfg.last_run_detail}</p>
+      {/if}
+      <p class="hint">
+        Exporta todas as entidades como Parquet bruto (uma pasta por timestamp).
+        Segredos ficam mascarados após salvar — informe um novo pra trocar; deixe
+        em branco pra manter o atual.
+      </p>
+
+      <div class="form-grid">
+        <label class="field">
+          Destino
+          <select bind:value={exportDestination}>
+            <option value="s3">Amazon S3</option>
+            <option value="databricks">Databricks Volume</option>
+          </select>
+        </label>
+      </div>
+
+      {#if exportDestination === "s3"}
+        <div class="form-grid">
+          <label class="field">
+            Bucket
+            <input bind:value={s3BucketInput} placeholder="meu-bucket" autocomplete="off" />
+          </label>
+          <label class="field">
+            Região
+            <input bind:value={s3RegionInput} placeholder="us-east-1" autocomplete="off" />
+          </label>
+          <label class="field">
+            Prefixo (opcional)
+            <input bind:value={s3PrefixInput} placeholder="3d-analytics/export" autocomplete="off" />
+          </label>
+          <label class="field">
+            Access Key ID
+            <input bind:value={s3AccessKeyInput} placeholder="AKIA..." autocomplete="off" />
+          </label>
+          <label class="field">
+            Secret Access Key
+            {#if exportCfg.s3_secret_configured}
+              <span class="status mono">
+                atual: <span class="mask">{exportCfg.s3_secret_access_key_preview}</span>
+              </span>
+            {/if}
+            <input bind:value={s3SecretInput} type="password" placeholder="novo secret (vazio = manter)" autocomplete="off" />
+          </label>
+        </div>
+      {:else}
+        <div class="form-grid">
+          <label class="field">
+            Host
+            <input bind:value={dbxHostInput} placeholder="https://xxx.databricks.com" autocomplete="off" />
+          </label>
+          <label class="field">
+            Volume path
+            <input bind:value={dbxVolumeInput} placeholder="/Volumes/catalog/schema/vol/base" autocomplete="off" />
+          </label>
+          <label class="field full">
+            Token
+            {#if exportCfg.databricks_token_configured}
+              <span class="status mono">
+                atual: <span class="mask">{exportCfg.databricks_token_preview}</span>
+              </span>
+            {/if}
+            <input bind:value={dbxTokenInput} type="password" placeholder="novo token (vazio = manter)" autocomplete="off" />
+          </label>
+        </div>
+      {/if}
+
+      <div class="form-grid">
+        <label class="field check">
+          <input type="checkbox" bind:checked={exportEnabled} />
+          Enviar automaticamente 1x/dia
+        </label>
+      </div>
+
+      <div class="actions">
+        <button on:click={saveExport} disabled={exportSaving}>
+          {exportSaving ? "Salvando…" : "Salvar destino"}
+        </button>
+        <button class="ghost" on:click={runExportNow} disabled={exportRunning}>
+          {exportRunning ? "Exportando…" : "Exportar agora"}
+        </button>
+      </div>
+      {#if exportRunMsg}
+        <p class="status mono" class:run-ok={exportRunOk} class:run-err={!exportRunOk}>
+          {exportRunMsg}
+        </p>
+      {/if}
+    </section>
+  {/if}
 {/if}
 
 <style>
@@ -459,4 +665,6 @@
     text-transform: uppercase;
   }
   .hint { color: var(--muted); font-size: 0.85rem; margin-top: 0.5rem; }
+  .run-ok { color: var(--ok); }
+  .run-err { color: var(--danger); }
 </style>
