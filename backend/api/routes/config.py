@@ -122,7 +122,8 @@ async def put_export_config(payload: ExportConfigUpdate, _: User = Depends(requi
                 setattr(c, k, v)
         else:
             setattr(c, k, v if v != "" else None)
-    await session.commit(); await session.refresh(c)
+    await session.commit()
+    await session.refresh(c)
     return _export_out(c)
 
 
