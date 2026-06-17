@@ -9,7 +9,7 @@ from backend.core.accounting.facts import compute_facts
 from backend.core.accounting.monthly import compute_dre_monthly
 from backend.core.accounting.profitability import compute_profitability
 from backend.core.models import ExpenseCategory
-from backend.infra.db.models import Expense, MaterialConsumption, QuoteItem, Sale
+from backend.infra.db.models import Client, Expense, MaterialConsumption, QuoteItem, Sale
 
 _CAT_LABEL = {"maintenance": "Manutenção", "parts": "Peças", "tools": "Ferramentas",
               "labor": "Mecânicos", "equipment": "Máquinas/Equipamentos", "other": "Outros"}
@@ -43,12 +43,16 @@ async def build_dre_xlsx(session: AsyncSession, period_from: date, period_to: da
     line("Margem líquida %", "margem_liquida_pct")
 
     ws = wb.create_sheet("Vendas")
-    ws.append(["Orçamento", "Tipo", "Status", "Total", "CPV", "Receita", "Variáveis", "Data"])
+    ws.append(["Orçamento", "Cliente", "Tipo", "Status", "Total", "CPV", "Receita", "Variáveis", "Data"])
     sales = (await session.execute(select(Sale).where(
         Sale.is_sold.is_(True), Sale.is_stale.is_(False),
         Sale.sold_at >= period_from, Sale.sold_at <= period_to))).scalars().all()
     for s in sales:
-        ws.append([str(s.quote_id), s.quote_kind, s.quote_status, float(s.quote_total),
+        cname = ""
+        if s.client_id:
+            c = await session.get(Client, s.client_id)
+            cname = c.name if c else ""
+        ws.append([str(s.quote_id), cname, s.quote_kind, s.quote_status, float(s.quote_total),
                    float(s.cpv_calc), float(s.confirmed_revenue or 0), float(s.variable_costs),
                    s.sold_at.isoformat() if s.sold_at else ""])
 

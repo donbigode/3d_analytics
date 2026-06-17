@@ -21,6 +21,7 @@ class SaleOut(BaseModel):
     sold_at: date | None
     notes: str | None
     itens_label: str = ""
+    client_name: str | None = None
 
 
 class SaleUpdate(BaseModel):
