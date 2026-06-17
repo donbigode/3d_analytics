@@ -91,3 +91,27 @@ class ProfitabilityRow(BaseModel):
 class ProfitabilityOut(BaseModel):
     by_client: list[ProfitabilityRow]
     by_material: list[ProfitabilityRow]
+
+
+class FactRow(BaseModel):
+    sale_id: str
+    quote_id: str
+    quote_kind: str
+    cliente: str
+    status: str
+    sold_at: date | None
+    is_sold: bool
+    receita_venda: Decimal
+    custos_variaveis_venda: Decimal
+    cpv_venda: Decimal
+    item_id: str
+    nome: str
+    quantidade: int
+    material_type: str
+    cor_material: str | None
+    cor_bobina: str | None
+    filament_m: float | None
+    filament_g: float | None
+    gramas_total: Decimal
+    custo_filamento_item: Decimal
+    receita_item: Decimal

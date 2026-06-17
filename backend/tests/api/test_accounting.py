@@ -120,3 +120,10 @@ async def test_dre_export_xlsx(auth_client):
     assert "spreadsheetml" in r.headers["content-type"]
     wb = load_workbook(io.BytesIO(r.content))
     assert {"DRE mensal", "Vendas", "Despesas", "Custo de estoque", "Lucratividade"} <= set(wb.sheetnames)
+
+
+@pytest.mark.asyncio
+async def test_facts_endpoint_shape(auth_client):
+    r = await auth_client.get("/accounting/facts?from=2026-06-01&to=2026-06-30")
+    assert r.status_code == 200, r.text
+    assert isinstance(r.json(), list)

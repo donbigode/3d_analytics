@@ -8,10 +8,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.api.deps import db_session, require_user
 from backend.api.schemas.accounting import (
-    DreOut, ExpenseCreate, ExpenseOut, ExpenseUpdate, MonthlyDreOut,
+    DreOut, ExpenseCreate, ExpenseOut, ExpenseUpdate, FactRow, MonthlyDreOut,
     ProfitabilityOut, SaleOut, SaleUpdate, SyncOut,
 )
 from backend.core.accounting.dre import compute_dre
+from backend.core.accounting.facts import compute_facts
 from backend.core.accounting.export_xlsx import build_dre_xlsx
 from backend.core.accounting.monthly import compute_dre_monthly
 from backend.core.accounting.profitability import compute_profitability
@@ -167,3 +168,11 @@ async def profitability(
     from_: date = Query(..., alias="from"), to: date = Query(...),
 ):
     return ProfitabilityOut(**await compute_profitability(session, from_, to))
+
+
+@router.get("/facts", response_model=list[FactRow])
+async def facts(
+    _: User = Depends(require_user), session: AsyncSession = Depends(db_session),
+    from_: date = Query(..., alias="from"), to: date = Query(...),
+):
+    return [FactRow(**row) for row in await compute_facts(session, from_, to)]
