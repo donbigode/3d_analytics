@@ -5,6 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.accounting.dre import compute_dre
+from backend.core.accounting.facts import compute_facts
 from backend.core.accounting.monthly import compute_dre_monthly
 from backend.core.accounting.profitability import compute_profitability
 from backend.core.models import ExpenseCategory
@@ -79,6 +80,24 @@ async def build_dre_xlsx(session: AsyncSession, period_from: date, period_to: da
     ws.append(["Por material", "Receita", "Custo", "Margem", "Margem %"])
     for r in prof["by_material"]:
         ws.append([r["label"], float(r["receita"]), float(r["custo"]), float(r["margem"]), float(r["margem_pct"])])
+
+    ws = wb.create_sheet("Fato (itens)")
+    cols = ["sale_id", "quote_id", "quote_kind", "cliente", "status", "sold_at", "is_sold",
+            "receita_venda", "custos_variaveis_venda", "cpv_venda", "item_id", "nome",
+            "quantidade", "material_type", "cor_material", "cor_bobina", "filament_m",
+            "filament_g", "gramas_total", "custo_filamento_item", "receita_item"]
+    ws.append(cols)
+    for row in await compute_facts(session, period_from, period_to):
+        ws.append([
+            row["sale_id"], row["quote_id"], row["quote_kind"], row["cliente"], row["status"],
+            row["sold_at"].isoformat() if row["sold_at"] else "", row["is_sold"],
+            float(row["receita_venda"]), float(row["custos_variaveis_venda"]), float(row["cpv_venda"]),
+            row["item_id"], row["nome"], row["quantidade"], row["material_type"],
+            row["cor_material"] or "", row["cor_bobina"] or "",
+            row["filament_m"] if row["filament_m"] is not None else "",
+            row["filament_g"] if row["filament_g"] is not None else "",
+            float(row["gramas_total"]), float(row["custo_filamento_item"]), float(row["receita_item"]),
+        ])
 
     buf = io.BytesIO()
     wb.save(buf)

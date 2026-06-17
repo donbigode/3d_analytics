@@ -120,3 +120,46 @@ async def test_dre_export_xlsx(auth_client):
     assert "spreadsheetml" in r.headers["content-type"]
     wb = load_workbook(io.BytesIO(r.content))
     assert {"DRE mensal", "Vendas", "Despesas", "Custo de estoque", "Lucratividade"} <= set(wb.sheetnames)
+
+
+@pytest.mark.asyncio
+async def test_facts_endpoint_shape(auth_client):
+    r = await auth_client.get("/accounting/facts?from=2026-06-01&to=2026-06-30")
+    assert r.status_code == 200, r.text
+    assert isinstance(r.json(), list)
+
+
+@pytest.mark.asyncio
+async def test_sales_have_itens_label(auth_client):
+    import sqlalchemy as sa
+    from decimal import Decimal
+    from backend.core.models import QuoteKind, QuoteStatus
+    from backend.infra.db import session as session_module
+    from backend.infra.db.models import MaterialVersion, Quote, QuoteItem, User
+    async with session_module.SessionFactory() as s:
+        u = (await s.execute(sa.select(User))).scalars().first()
+        mv = MaterialVersion(material_type="PLA", name="PLA", color="Azul",
+                             density_g_cm3=Decimal("1.24"), price_per_kg_ref=Decimal("100"))
+        s.add(mv); await s.commit()
+        q = Quote(kind=QuoteKind.COMMERCIAL.value, user_id=u.id,
+                  status=QuoteStatus.APROVADO.value, markup_pct=Decimal("0"), min_charge=Decimal("0"))
+        s.add(q); await s.commit()
+        s.add(QuoteItem(quote_id=q.id, name="Vaso", gcode_meta={"filament_g": 10},
+                        material_version_id=mv.id, quantity=2))
+        await s.commit()
+        qid = str(q.id)
+
+    r = await auth_client.get("/accounting/sales")
+    assert r.status_code == 200, r.text
+    sale = next(x for x in r.json() if x["quote_id"] == qid)
+    assert sale["itens_label"] == "Vaso ×2 (Azul)"
+
+
+@pytest.mark.asyncio
+async def test_xlsx_has_facts_sheet(auth_client):
+    import io
+    from openpyxl import load_workbook
+    r = await auth_client.get("/accounting/dre/export.xlsx?from=2026-06-01&to=2026-06-30")
+    assert r.status_code == 200, r.text
+    wb = load_workbook(io.BytesIO(r.content))
+    assert "Fato (itens)" in wb.sheetnames
