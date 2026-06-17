@@ -23,6 +23,7 @@ from backend.infra.db.models import (
     Client,
     DataSourceRun,
     Expense,
+    ExportConfig,
     KeywordIdea,
     KeywordObservation,
     LLMSuggestion,
@@ -83,6 +84,7 @@ async def _isolated_engine_api(test_database_url):
                     DataSourceRun.__table__,
                     User.__table__,
                     Settings.__table__,
+                    ExportConfig.__table__,
                     CalibrationInsight.__table__,
                 ):
                     await s.execute(table.delete())
