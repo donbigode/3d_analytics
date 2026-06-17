@@ -20,5 +20,8 @@ jobs:
           username: deploy
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           script_stop: true
+          # Default do ssh-action é 10min; o rebuild da imagem (deps pesadas +
+          # exporting layers no disco lento do Lightsail) passa disso.
+          command_timeout: 30m
           script: |
             /opt/3d-analytics/deploy/deploy.sh
