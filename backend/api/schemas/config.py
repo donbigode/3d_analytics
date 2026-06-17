@@ -37,3 +37,34 @@ class ProvidersUpdate(BaseModel):
     reddit_client_id: str | None = None
     reddit_client_secret: str | None = None
     youtube_api_key: str | None = None
+
+
+class ExportConfigOut(BaseModel):
+    enabled: bool
+    destination: str
+    s3_bucket: str | None
+    s3_region: str | None
+    s3_prefix: str | None
+    s3_access_key_id: str | None
+    s3_secret_configured: bool
+    s3_secret_access_key_preview: str | None
+    databricks_host: str | None
+    databricks_volume_path: str | None
+    databricks_token_configured: bool
+    databricks_token_preview: str | None
+    last_run_at: str | None
+    last_run_status: str | None
+    last_run_detail: str | None
+
+
+class ExportConfigUpdate(BaseModel):
+    enabled: bool | None = None
+    destination: str | None = None
+    s3_bucket: str | None = None
+    s3_region: str | None = None
+    s3_prefix: str | None = None
+    s3_access_key_id: str | None = None
+    s3_secret_access_key: str | None = None
+    databricks_host: str | None = None
+    databricks_token: str | None = None
+    databricks_volume_path: str | None = None

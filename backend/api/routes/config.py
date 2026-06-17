@@ -11,8 +11,14 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.api.deps import db_session, require_user
-from backend.api.schemas.config import ProvidersOut, ProvidersUpdate
-from backend.infra.db.models import Settings, User
+from backend.api.schemas.config import (
+    ExportConfigOut,
+    ExportConfigUpdate,
+    ProvidersOut,
+    ProvidersUpdate,
+)
+from backend.core.export.runner import execute_export
+from backend.infra.db.models import ExportConfig, Settings, User
 
 router = APIRouter()
 
@@ -72,6 +78,57 @@ async def get_providers(
         youtube_configured=bool(s.youtube_api_key),
         youtube_key_preview=_mask(s.youtube_api_key),
     )
+
+
+async def _get_export_cfg(session: AsyncSession) -> ExportConfig:
+    cfg = await session.get(ExportConfig, 1)
+    if cfg is None:
+        cfg = ExportConfig(id=1)
+        session.add(cfg)
+        await session.commit()
+        await session.refresh(cfg)
+    return cfg
+
+
+def _export_out(c: ExportConfig) -> ExportConfigOut:
+    return ExportConfigOut(
+        enabled=c.enabled, destination=c.destination,
+        s3_bucket=c.s3_bucket, s3_region=c.s3_region, s3_prefix=c.s3_prefix,
+        s3_access_key_id=c.s3_access_key_id,
+        s3_secret_configured=bool(c.s3_secret_access_key),
+        s3_secret_access_key_preview=_mask(c.s3_secret_access_key),
+        databricks_host=c.databricks_host, databricks_volume_path=c.databricks_volume_path,
+        databricks_token_configured=bool(c.databricks_token),
+        databricks_token_preview=_mask(c.databricks_token),
+        last_run_at=c.last_run_at.isoformat() if c.last_run_at else None,
+        last_run_status=c.last_run_status, last_run_detail=c.last_run_detail,
+    )
+
+
+@router.get("/export", response_model=ExportConfigOut)
+async def get_export_config(_: User = Depends(require_user), session: AsyncSession = Depends(db_session)):
+    return _export_out(await _get_export_cfg(session))
+
+
+@router.put("/export", response_model=ExportConfigOut)
+async def put_export_config(payload: ExportConfigUpdate, _: User = Depends(require_user),
+                            session: AsyncSession = Depends(db_session)):
+    c = await _get_export_cfg(session)
+    data = payload.model_dump(exclude_unset=True)
+    for k, v in data.items():
+        if k in ("s3_secret_access_key", "databricks_token"):
+            # segredo só é sobrescrito quando vier um valor; vazio = não altera
+            if v:
+                setattr(c, k, v)
+        else:
+            setattr(c, k, v if v != "" else None)
+    await session.commit(); await session.refresh(c)
+    return _export_out(c)
+
+
+@router.post("/export/run")
+async def run_export_now(_: User = Depends(require_user), session: AsyncSession = Depends(db_session)):
+    return await execute_export(session)
 
 
 @router.put("/providers", response_model=ProvidersOut)
