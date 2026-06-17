@@ -454,3 +454,21 @@ export type Profitability = {
   by_client: ProfitabilityRow[];
   by_material: ProfitabilityRow[];
 };
+
+export type ExportConfig = {
+  enabled: boolean;
+  destination: "s3" | "databricks";
+  s3_bucket: string | null;
+  s3_region: string | null;
+  s3_prefix: string | null;
+  s3_access_key_id: string | null;
+  s3_secret_configured: boolean;
+  s3_secret_access_key_preview: string | null;
+  databricks_host: string | null;
+  databricks_volume_path: string | null;
+  databricks_token_configured: boolean;
+  databricks_token_preview: string | null;
+  last_run_at: string | null;
+  last_run_status: string | null;
+  last_run_detail: string | null;
+};
