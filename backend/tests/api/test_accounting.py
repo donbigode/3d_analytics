@@ -153,3 +153,13 @@ async def test_sales_have_itens_label(auth_client):
     assert r.status_code == 200, r.text
     sale = next(x for x in r.json() if x["quote_id"] == qid)
     assert sale["itens_label"] == "Vaso ×2 (Azul)"
+
+
+@pytest.mark.asyncio
+async def test_xlsx_has_facts_sheet(auth_client):
+    import io
+    from openpyxl import load_workbook
+    r = await auth_client.get("/accounting/dre/export.xlsx?from=2026-06-01&to=2026-06-30")
+    assert r.status_code == 200, r.text
+    wb = load_workbook(io.BytesIO(r.content))
+    assert "Fato (itens)" in wb.sheetnames
