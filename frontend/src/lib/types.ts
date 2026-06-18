@@ -102,6 +102,15 @@ export type ProductionSuggestionsOut = {
   stale: boolean;
 };
 
+export type QuotePhoto = {
+  id: string;
+  quote_item_id: string | null;
+  url: string;
+  width: number;
+  height: number;
+  sort_order: number;
+};
+
 export type QuoteItem = {
   id: string;
   name: string;
@@ -122,6 +131,7 @@ export type QuoteItem = {
   model_source_url?: string | null;
   model_source_author?: string | null;
   model_source_license?: string | null;
+  photos?: QuotePhoto[];
 };
 
 export type QuoteServiceLine = {
@@ -151,6 +161,7 @@ export type Quote = {
   approved_at: string | null;
   produced_at: string | null;
   delivered_at: string | null;
+  photos?: QuotePhoto[];
 };
 
 export type InboxItem = {
