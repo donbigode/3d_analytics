@@ -216,6 +216,41 @@
     }
   }
 
+  let photoVersion = 0; // cache-bust após upload/delete
+  let photoBusy = false;
+
+  async function uploadPhoto(file: File, quoteItemId: string | null) {
+    photoBusy = true;
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      if (quoteItemId) fd.append("quote_item_id", quoteItemId);
+      const res = await fetch(`/api/quotes/${id}/photos`, { method: "POST", body: fd });
+      if (!res.ok) throw new Error(await res.text());
+      photoVersion += 1;
+      await load();
+    } catch (err) {
+      handleApiError(err);
+      pageError = errorMessage(err, "Falha ao enviar a foto.");
+    } finally {
+      photoBusy = false;
+    }
+  }
+
+  async function deletePhoto(photoId: string) {
+    photoBusy = true;
+    try {
+      await api(`/quotes/${id}/photos/${photoId}`, { method: "DELETE" });
+      photoVersion += 1;
+      await load();
+    } catch (err) {
+      handleApiError(err);
+      pageError = errorMessage(err, "Falha ao remover a foto.");
+    } finally {
+      photoBusy = false;
+    }
+  }
+
   async function loadRefs() {
     try {
       [clients, services, spools, materials] = await Promise.all([
@@ -631,6 +666,36 @@
     <div class="main-col">
       <section class="panel">
         <div class="panel-head">
+          <h2 class="section-title">Fotos <span class="count">· {(quote.photos ?? []).length}</span></h2>
+        </div>
+        <div class="photo-grid">
+          {#each quote.photos ?? [] as p (p.id)}
+            <figure class="photo">
+              <img src={`/api${p.url}?v=${photoVersion}`} alt="foto do orçamento" />
+              <button class="ghost danger" title="Remover" disabled={photoBusy} on:click={() => deletePhoto(p.id)}>×</button>
+            </figure>
+          {/each}
+          <label class="photo-add">
+            + foto
+            <input
+              type="file"
+              accept="image/*"
+              capture="environment"
+              hidden
+              disabled={photoBusy}
+              on:change={(e) => {
+                const input = e.currentTarget as HTMLInputElement;
+                const f = input.files?.[0];
+                if (f) uploadPhoto(f, null);
+                input.value = "";
+              }}
+            />
+          </label>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
           <h2 class="section-title">Peças <span class="count">· {quote.items.length}</span></h2>
         </div>
         {#if itemError}<div class="alert">{itemError}</div>{/if}
@@ -692,7 +757,33 @@
             <tbody>
               {#each quote.items as it (it.id)}
                 <tr class:pending={it.material_pending}>
-                  <td>{it.name}</td>
+                  <td>
+                    {it.name}
+                    <div class="photo-grid small">
+                      {#each it.photos ?? [] as p (p.id)}
+                        <figure class="photo">
+                          <img src={`/api${p.url}?v=${photoVersion}`} alt="foto da peça" />
+                          <button class="ghost danger" title="Remover" disabled={photoBusy} on:click={() => deletePhoto(p.id)}>×</button>
+                        </figure>
+                      {/each}
+                      <label class="photo-add">
+                        + foto
+                        <input
+                          type="file"
+                          accept="image/*"
+                          capture="environment"
+                          hidden
+                          disabled={photoBusy}
+                          on:change={(e) => {
+                            const input = e.currentTarget as HTMLInputElement;
+                            const f = input.files?.[0];
+                            if (f) uploadPhoto(f, it.id);
+                            input.value = "";
+                          }}
+                        />
+                      </label>
+                    </div>
+                  </td>
                   <td class="mono">
                     {#if isDraft}
                       <select
@@ -1280,6 +1371,55 @@
 {/if}
 
 <style>
+  .photo-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+  .photo-grid.small {
+    gap: 0.3rem;
+    margin-top: 0.35rem;
+  }
+  .photo {
+    position: relative;
+    margin: 0;
+  }
+  .photo img {
+    width: 110px;
+    height: 110px;
+    object-fit: cover;
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    display: block;
+  }
+  .photo-grid.small .photo img {
+    width: 64px;
+    height: 64px;
+  }
+  .photo button {
+    position: absolute;
+    top: 2px;
+    right: 2px;
+    padding: 0 0.35rem;
+    line-height: 1.4;
+  }
+  .photo-add {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 110px;
+    height: 110px;
+    border: 1px dashed var(--line-strong);
+    border-radius: 4px;
+    cursor: pointer;
+    color: var(--muted);
+    font-size: 0.85rem;
+  }
+  .photo-grid.small .photo-add {
+    width: 64px;
+    height: 64px;
+    font-size: 0.7rem;
+  }
   .page-head {
     margin-bottom: 1.5rem;
   }

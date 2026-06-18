@@ -14,6 +14,7 @@ from backend.infra.db.models.production_event import ProductionEvent
 from backend.infra.db.models.production_suggestion import ProductionSuggestion
 from backend.infra.db.models.quote import Quote
 from backend.infra.db.models.quote_item import QuoteItem
+from backend.infra.db.models.quote_photo import QuotePhoto
 from backend.infra.db.models.quote_service import QuoteService
 from backend.infra.db.models.sale import Sale
 from backend.infra.db.models.service import Service
@@ -27,6 +28,6 @@ __all__ = [
     "KeywordIdea", "KeywordObservation", "LLMDigest", "LLMSuggestion", "EMBEDDING_DIM",
     "MaterialVersion", "MaterialConsumption", "ProductionEvent",
     "ProductionSuggestion",
-    "Quote", "QuoteItem", "QuoteService", "Sale", "Service", "Settings", "Spool",
+    "Quote", "QuoteItem", "QuotePhoto", "QuoteService", "Sale", "Service", "Settings", "Spool",
     "User", "WatcherInboxFile",
 ]

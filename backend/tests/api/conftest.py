@@ -31,6 +31,7 @@ from backend.infra.db.models import (
     MaterialVersion,
     Quote,
     QuoteItem,
+    QuotePhoto,
     QuoteService,
     Sale,
     Service,
@@ -66,6 +67,7 @@ async def _isolated_engine_api(test_database_url):
             async with factory() as s:
                 # order matters: delete dependents before parents
                 for table in (
+                    QuotePhoto.__table__,
                     MaterialConsumption.__table__,
                     QuoteService.__table__,
                     QuoteItem.__table__,

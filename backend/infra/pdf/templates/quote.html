@@ -4,6 +4,14 @@
 {% if quote.client %}<p>Cliente: <strong>{{ quote.client }}</strong></p>{% endif %}
 <p>Status: {{ quote.status }}</p>
 
+{% if cover_photos %}
+<div style="display:flex; flex-wrap:wrap; gap:6px; margin:10px 0;">
+  {% for url in cover_photos %}
+    <img src="{{ url }}" style="width:160px; height:160px; object-fit:cover; border:1px solid #e5e7eb; border-radius:4px;">
+  {% endfor %}
+</div>
+{% endif %}
+
 {% macro material_label(it) %}
   {%- if it.material_name -%}
     {{ it.material_name }}
@@ -36,6 +44,13 @@
             modelo: <a href="{{ it.model_source_url }}" style="color:#6b7280;">{{ it.model_source_url }}</a>
             {% if it.model_source_author %} · por {{ it.model_source_author }}{% endif %}
             {% if it.model_source_license %} · {{ it.model_source_license }}{% endif %}
+          </div>
+        {% endif %}
+        {% if it.photos %}
+          <div style="display:flex; flex-wrap:wrap; gap:4px; margin-top:4px;">
+            {% for url in it.photos %}
+              <img src="{{ url }}" style="width:64px; height:64px; object-fit:cover; border:1px solid #e5e7eb; border-radius:3px;">
+            {% endfor %}
           </div>
         {% endif %}
       </td>
