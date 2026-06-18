@@ -21,6 +21,15 @@ class QuoteUpdate(BaseModel):
     retail_mode: bool | None = None
 
 
+class QuotePhotoOut(BaseModel):
+    id: str
+    quote_item_id: str | None
+    url: str
+    width: int
+    height: int
+    sort_order: int
+
+
 class QuoteItemOut(BaseModel):
     id: str
     name: str
@@ -38,6 +47,7 @@ class QuoteItemOut(BaseModel):
     model_source_url: str | None = None
     model_source_author: str | None = None
     model_source_license: str | None = None
+    photos: list[QuotePhotoOut] = []
 
 
 class QuoteItemUpdate(BaseModel):
@@ -87,6 +97,7 @@ class QuoteOut(BaseModel):
     approved_at: datetime | None
     produced_at: datetime | None
     delivered_at: datetime | None
+    photos: list[QuotePhotoOut] = []
 
 
 class ConsumptionAssignment(BaseModel):

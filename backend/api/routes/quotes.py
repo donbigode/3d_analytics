@@ -8,7 +8,7 @@ from uuid import UUID
 logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
-from fastapi.responses import Response
+from fastapi.responses import FileResponse, Response
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,6 +21,7 @@ from backend.api.schemas.quotes import (
     QuoteItemOut,
     QuoteItemUpdate,
     QuoteOut,
+    QuotePhotoOut,
     QuoteServiceOut,
     QuoteUpdate,
     ServiceLineCreate,
@@ -47,6 +48,7 @@ from backend.infra.db.models import (
     ProductionEvent,
     Quote,
     QuoteItem,
+    QuotePhoto,
     QuoteService,
     Service,
     Settings,
@@ -56,6 +58,7 @@ from backend.infra.db.models import (
 from backend.infra.db.repos import material as material_repo
 from backend.infra.db.repos import quote as quote_repo
 from backend.infra.pdf.render import render_quote_pdf
+from backend.infra.storage import quote_photos as photo_storage
 from backend.infra.storage.gcodes import save_gcode
 from backend.settings import get_settings as get_app_settings
 
@@ -124,6 +127,17 @@ async def _build_item_input(
     )
 
 
+def _photo_out(p: QuotePhoto) -> QuotePhotoOut:
+    return QuotePhotoOut(
+        id=str(p.id),
+        quote_item_id=str(p.quote_item_id) if p.quote_item_id else None,
+        url=f"/quotes/photos/{p.id}/raw",
+        width=p.width,
+        height=p.height,
+        sort_order=p.sort_order,
+    )
+
+
 async def _quote_out(session: AsyncSession, q: Quote) -> QuoteOut:
     s = await _get_settings_row(session)
     items = await quote_repo.list_items(session, q.id)
@@ -155,6 +169,17 @@ async def _quote_out(session: AsyncSession, q: Quote) -> QuoteOut:
         min_charge=q.min_charge,
     )
 
+    photos = (await session.execute(
+        select(QuotePhoto)
+        .where(QuotePhoto.quote_id == q.id)
+        .order_by(QuotePhoto.sort_order, QuotePhoto.created_at)
+    )).scalars().all()
+    cover_photos = [_photo_out(p) for p in photos if p.quote_item_id is None]
+    photos_by_item: dict[str, list[QuotePhotoOut]] = {}
+    for p in photos:
+        if p.quote_item_id is not None:
+            photos_by_item.setdefault(str(p.quote_item_id), []).append(_photo_out(p))
+
     items_out = [
         QuoteItemOut(
             id=str(it.id),
@@ -172,6 +197,7 @@ async def _quote_out(session: AsyncSession, q: Quote) -> QuoteOut:
             model_source_url=it.model_source_url,
             model_source_author=it.model_source_author,
             model_source_license=it.model_source_license,
+            photos=photos_by_item.get(str(it.id), []),
         )
         for idx, it in enumerate(items)
     ]
@@ -205,6 +231,7 @@ async def _quote_out(session: AsyncSession, q: Quote) -> QuoteOut:
         approved_at=q.approved_at,
         produced_at=q.produced_at,
         delivered_at=q.delivered_at,
+        photos=cover_photos,
     )
 
 
@@ -488,6 +515,12 @@ async def delete_item(
     it = await session.get(QuoteItem, item_id)
     if not it or it.quote_id != quote_id:
         raise HTTPException(404)
+    # Remove os arquivos das fotos do item (o cascade do banco apaga as linhas).
+    item_photos = (await session.execute(
+        select(QuotePhoto).where(QuotePhoto.quote_item_id == item_id)
+    )).scalars().all()
+    for p in item_photos:
+        photo_storage.delete_photo(p.storage_path)
     await session.delete(it)
     await session.commit()
     return await _quote_out(session, q)
@@ -1003,3 +1036,73 @@ async def get_pdf(
             "Content-Disposition": f'attachment; filename="quote-{str(q.id)[:8]}.pdf"'
         },
     )
+
+
+# ---------- Fotos ----------
+
+
+@router.post("/{quote_id}/photos", response_model=QuotePhotoOut)
+async def add_photo(
+    quote_id: UUID,
+    file: UploadFile = File(...),
+    quote_item_id: str | None = Form(None),
+    _: User = Depends(require_user),
+    session: AsyncSession = Depends(db_session),
+):
+    q = await session.get(Quote, quote_id)
+    if not q:
+        raise HTTPException(404)
+    item_uuid = None
+    if quote_item_id:
+        item_uuid = UUID(quote_item_id)
+        it = await session.get(QuoteItem, item_uuid)
+        if it is None or it.quote_id != q.id:
+            raise HTTPException(400, "item não pertence ao orçamento")
+    content = await file.read()
+    if len(content) > 15 * 1024 * 1024:
+        raise HTTPException(413, "imagem maior que 15MB")
+    try:
+        saved = photo_storage.save_photo(content, file.filename or "foto.jpg")
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+
+    cond = QuotePhoto.quote_item_id.is_(None) if item_uuid is None else (QuotePhoto.quote_item_id == item_uuid)
+    siblings = (await session.execute(
+        select(QuotePhoto).where(QuotePhoto.quote_id == q.id, cond)
+    )).scalars().all()
+    photo = QuotePhoto(
+        quote_id=q.id, quote_item_id=item_uuid,
+        storage_path=saved.storage_path, content_type=saved.content_type,
+        size_bytes=saved.size_bytes, width=saved.width, height=saved.height,
+        sort_order=len(siblings),
+    )
+    session.add(photo)
+    await session.commit()
+    await session.refresh(photo)
+    return _photo_out(photo)
+
+
+@router.get("/photos/{photo_id}/raw")
+async def serve_photo(photo_id: UUID, session: AsyncSession = Depends(db_session)):
+    p = await session.get(QuotePhoto, photo_id)
+    if not p:
+        raise HTTPException(404)
+    full = Path(get_app_settings().storage_dir) / p.storage_path
+    if not full.exists():
+        raise HTTPException(404)
+    return FileResponse(full, media_type=p.content_type)
+
+
+@router.delete("/{quote_id}/photos/{photo_id}", status_code=204)
+async def delete_photo(
+    quote_id: UUID, photo_id: UUID,
+    _: User = Depends(require_user),
+    session: AsyncSession = Depends(db_session),
+):
+    p = await session.get(QuotePhoto, photo_id)
+    if p is None or p.quote_id != quote_id:
+        raise HTTPException(404)
+    photo_storage.delete_photo(p.storage_path)
+    await session.delete(p)
+    await session.commit()
+    return Response(status_code=204)
