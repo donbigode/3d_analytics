@@ -937,6 +937,22 @@ async def get_pdf(
     if items_total_after_markup < 0:
         items_total_after_markup = Decimal("0")
 
+    all_photos = (await session.execute(
+        select(QuotePhoto)
+        .where(QuotePhoto.quote_id == q.id)
+        .order_by(QuotePhoto.sort_order, QuotePhoto.created_at)
+    )).scalars().all()
+    cover_photo_uris = [
+        photo_storage.absolute_uri(p.storage_path)
+        for p in all_photos if p.quote_item_id is None
+    ]
+    item_photo_uris: dict[str, list[str]] = {}
+    for p in all_photos:
+        if p.quote_item_id is not None:
+            item_photo_uris.setdefault(str(p.quote_item_id), []).append(
+                photo_storage.absolute_uri(p.storage_path)
+            )
+
     item_dicts = []
     for idx, it in enumerate(items):
         sub = item_subtotals[idx]
@@ -976,6 +992,7 @@ async def get_pdf(
                 "model_source_url": it.model_source_url,
                 "model_source_author": it.model_source_author,
                 "model_source_license": it.model_source_license,
+                "photos": item_photo_uris.get(str(it.id), []),
             }
         )
     total_pieces = sum(int(it.quantity or 1) for it in items)
@@ -1017,6 +1034,7 @@ async def get_pdf(
             "status": q.status,
             "client": client_name,
         },
+        "cover_photos": cover_photo_uris,
         "items": item_dicts,
         "services": service_dicts,
         "total_pieces": int(total_pieces),
