@@ -56,7 +56,8 @@ async def test_dashboard_aligned_with_dre_v2(auth_client):
         u = (await s.execute(sa.select(User))).scalars().first()
         q = Quote(kind=QuoteKind.COMMERCIAL.value, user_id=u.id,
                   status=QuoteStatus.ENTREGUE.value, markup_pct=Decimal("0"), min_charge=Decimal("0"))
-        q2 = Quote(kind=QuoteKind.PERSONAL.value, user_id=u.id,
+        # Comercial não-vendido: material vira custo de estoque (despesa).
+        q2 = Quote(kind=QuoteKind.COMMERCIAL.value, user_id=u.id,
                    status=QuoteStatus.PRODUZIDO.value, markup_pct=Decimal("0"), min_charge=Decimal("0"))
         s.add_all([q, q2]); await s.commit()
         s.add(Sale(quote_id=q.id, quote_status="entregue", quote_kind="commercial",

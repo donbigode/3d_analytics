@@ -1,12 +1,12 @@
 from datetime import date
 from decimal import Decimal
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.core.models import ExpenseCategory
+from backend.core.models import ExpenseCategory, QuoteKind
 from backend.infra.db.models import (
-    Expense, MaterialConsumption, QuoteItem, Sale, Settings,
+    Expense, MaterialConsumption, Quote, QuoteItem, Sale, Settings,
 )
 
 
@@ -35,9 +35,19 @@ def _next_day(d: date) -> date:
 
 
 async def _custo_estoque(session: AsyncSession, period_from: date, period_to: date) -> Decimal:
+    """Material de orçamentos COMERCIAIS não-vendidos no período (WIP que ainda pode vender).
+
+    Vendidos saem (viram CPV da venda); pessoais saem (viram perda operacional pelo CPV
+    cheio em ``_perda_operacional``, então o material deles não conta aqui de novo).
+    """
     sold_quote_ids = set(
         (await session.execute(
             select(Sale.quote_id).where(Sale.is_sold.is_(True), Sale.is_stale.is_(False))
+        )).scalars().all()
+    )
+    personal_quote_ids = set(
+        (await session.execute(
+            select(Quote.id).where(Quote.kind == QuoteKind.PERSONAL.value)
         )).scalars().all()
     )
     rows = (
@@ -52,9 +62,47 @@ async def _custo_estoque(session: AsyncSession, period_from: date, period_to: da
     ).all()
     total = Decimal(0)
     for cons, quote_id in rows:
-        if quote_id in sold_quote_ids:
+        if quote_id in sold_quote_ids or quote_id in personal_quote_ids:
             continue
         total += cons.grams_used * cons.unit_cost_snapshot
+    return total
+
+
+async def _perda_operacional(session: AsyncSession, period_from: date, period_to: date) -> Decimal:
+    """Uso pessoal produzido e NÃO vendido = perda operacional pelo CPV cheio.
+
+    Atribuído ao período pela data de produção (menor ``consumed_at`` da baixa de
+    material do orçamento); sem baixa, cai no ``created_at`` da venda.
+    """
+    sales = (
+        await session.execute(
+            select(Sale).where(
+                Sale.quote_kind == QuoteKind.PERSONAL.value,
+                Sale.is_sold.is_(False),
+                Sale.is_stale.is_(False),
+            )
+        )
+    ).scalars().all()
+    if not sales:
+        return Decimal(0)
+
+    sale_by_quote = {s.quote_id: s for s in sales}
+    prod_rows = (
+        await session.execute(
+            select(QuoteItem.quote_id, func.min(MaterialConsumption.consumed_at))
+            .join(MaterialConsumption, MaterialConsumption.quote_item_id == QuoteItem.id)
+            .where(QuoteItem.quote_id.in_(sale_by_quote.keys()))
+            .group_by(QuoteItem.quote_id)
+        )
+    ).all()
+    prod_date = {qid: dt for qid, dt in prod_rows}
+
+    total = Decimal(0)
+    for quote_id, sale in sale_by_quote.items():
+        dt = prod_date.get(quote_id) or sale.created_at
+        d = dt.date() if hasattr(dt, "date") else dt
+        if period_from <= d <= period_to:
+            total += sale_cpv(sale)
     return total
 
 
@@ -93,7 +141,8 @@ async def compute_dre(session: AsyncSession, period_from: date, period_to: date)
             despesas[e.category] = despesas.get(e.category, Decimal(0)) + e.amount
 
     custo_estoque = await _custo_estoque(session, period_from, period_to)
-    total_despesas = sum(despesas.values(), Decimal(0)) + custo_estoque
+    perda_operacional = await _perda_operacional(session, period_from, period_to)
+    total_despesas = sum(despesas.values(), Decimal(0)) + custo_estoque + perda_operacional
 
     resultado = lucro_bruto - total_despesas
     margem = (resultado / receita * Decimal(100)) if receita > 0 else Decimal(0)
@@ -107,6 +156,7 @@ async def compute_dre(session: AsyncSession, period_from: date, period_to: date)
         "lucro_bruto": _q2(lucro_bruto),
         "despesas": {k: _q2(v) for k, v in despesas.items()},
         "custo_estoque": _q2(custo_estoque),
+        "perda_operacional": _q2(perda_operacional),
         "total_despesas": _q2(total_despesas),
         "resultado_liquido": _q2(resultado),
         "margem_liquida_pct": _q2(margem),

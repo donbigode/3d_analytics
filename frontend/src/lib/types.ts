@@ -435,6 +435,7 @@ export type Dre = {
   custo_estoque: string;
   lucro_bruto: string;
   despesas: Record<string, string>;
+  perda_operacional: string;
   total_despesas: string;
   resultado_liquido: string;
   margem_liquida_pct: string;

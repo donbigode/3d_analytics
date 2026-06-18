@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.api.deps import db_session, require_user
 from backend.core.accounting.cost import compute_quote_costs, load_settings_row
 from backend.core.accounting.sync import sync_sales
-from backend.core.accounting.dre import sale_cpv, _custo_estoque
+from backend.core.accounting.dre import sale_cpv, _custo_estoque, _perda_operacional
 from backend.api.schemas.dashboard import (
     CardEstoque,
     DashboardCards,
@@ -175,7 +175,8 @@ async def dashboard(
     ).scalars().all()
     despesa_ops = sum((e.amount for e in op_expenses), Decimal(0))
     custo_estoque = await _custo_estoque(session, pf_date, pt_date)
-    despesa = despesa_vendas + despesa_ops + custo_estoque
+    perda_operacional = await _perda_operacional(session, pf_date, pt_date)
+    despesa = despesa_vendas + despesa_ops + custo_estoque + perda_operacional
     settings_tax = await session.get(Settings, 1)
     tax_pct = settings_tax.revenue_tax_pct if settings_tax else Decimal(0)
     impostos = receita * tax_pct / Decimal(100)
@@ -191,10 +192,10 @@ async def dashboard(
         bk = _bucket_key(datetime(e.incurred_at.year, e.incurred_at.month, e.incurred_at.day), bucket_mode)
         slot = rev_exp_buckets.setdefault(bk, {"receita": Decimal(0), "despesa": Decimal(0)})
         slot["despesa"] += e.amount
-    if custo_estoque:
+    if custo_estoque or perda_operacional:
         bk = _bucket_key(datetime(pt_date.year, pt_date.month, pt_date.day), bucket_mode)
         slot = rev_exp_buckets.setdefault(bk, {"receita": Decimal(0), "despesa": Decimal(0)})
-        slot["despesa"] += custo_estoque
+        slot["despesa"] += custo_estoque + perda_operacional
 
     lucro = receita - despesa - impostos
     margem = (lucro / receita * Decimal(100)) if receita > 0 else Decimal(0)

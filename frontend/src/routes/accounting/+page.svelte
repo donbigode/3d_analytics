@@ -217,6 +217,7 @@
     | "custos_variaveis"
     | "lucro_bruto"
     | "custo_estoque"
+    | "perda_operacional"
     | "resultado_liquido";
   function sumMonthly(key: DreAmountKey): number {
     return monthly.reduce((acc, m) => acc + Number(m[key] || 0), 0);
@@ -513,6 +514,11 @@
                 {#each monthly as m}<td class="num mono">{money(m.custo_estoque)}</td>{/each}
                 <td class="num mono total">{money(sumMonthly("custo_estoque"))}</td>
               </tr>
+              <tr class="muted">
+                <td class="acct expense"><span class="op">(−)</span> Perda operacional (uso pessoal)</td>
+                {#each monthly as m}<td class="num mono">{money(m.perda_operacional)}</td>{/each}
+                <td class="num mono total">{money(sumMonthly("perda_operacional"))}</td>
+              </tr>
               <tr class="result">
                 <td class="acct"><span class="op">=</span> Resultado líquido</td>
                 {#each monthly as m}
@@ -576,6 +582,10 @@
         <div class="line expense">
           <dt><span class="op">(−)</span> Custo de estoque (não vendido)</dt>
           <dd class="mono">{money(dre.custo_estoque)}</dd>
+        </div>
+        <div class="line expense">
+          <dt><span class="op">(−)</span> Perda operacional (uso pessoal)</dt>
+          <dd class="mono">{money(dre.perda_operacional)}</dd>
         </div>
         {#each Object.entries(dre.despesas) as [cat, val]}
           <div class="line expense">
