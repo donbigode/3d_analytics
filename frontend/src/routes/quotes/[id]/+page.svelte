@@ -586,6 +586,34 @@
     );
   }
 
+  // Label descritiva de um rolo no seletor de produzir:
+  // tipo · fabricante · cor · restante/total (%) · loja · MM/AAAA · notas
+  function spoolLabel(sp: Spool): string {
+    const parts: string[] = [sp.material_type];
+    if (sp.manufacturer) parts.push(sp.manufacturer);
+    if (sp.color) parts.push(sp.color);
+    const rem = Number(sp.remaining_grams) || 0;
+    const init = Number(sp.initial_grams) || 0;
+    if (init > 0) {
+      const pct = Math.round((rem / init) * 100);
+      parts.push(`${fmtNum(rem, 0)}/${fmtNum(init, 0)}g (${pct}%)`);
+    } else {
+      parts.push(`${fmtNum(rem, 0)}g`);
+    }
+    if (sp.purchased_from) parts.push(sp.purchased_from);
+    if (sp.purchased_at) {
+      const d = new Date(sp.purchased_at);
+      if (!isNaN(d.getTime())) {
+        parts.push(`${String(d.getMonth() + 1).padStart(2, "0")}/${d.getFullYear()}`);
+      }
+    }
+    if (sp.notes && sp.notes.trim()) {
+      const n = sp.notes.trim();
+      parts.push(n.length > 30 ? `${n.slice(0, 30)}…` : n);
+    }
+    return parts.join(" · ");
+  }
+
   async function confirmProduce() {
     if (!quote) return;
     produceError = "";
@@ -1336,9 +1364,7 @@
                   <select bind:value={produceAssignments[it.id]}>
                     <option value="">—</option>
                     {#each spoolsForItem(it.gcode_meta?.material) as sp}
-                      <option value={sp.id}>
-                        {sp.material_type}{sp.manufacturer ? ` · ${sp.manufacturer}` : ""}{sp.color ? ` · ${sp.color}` : ""} · {fmtNum(sp.remaining_grams, 0)}g
-                      </option>
+                      <option value={sp.id}>{spoolLabel(sp)}</option>
                     {/each}
                   </select>
                 </td>
