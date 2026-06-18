@@ -1246,7 +1246,7 @@
                     <option value="">—</option>
                     {#each spoolsForItem(it.gcode_meta?.material) as sp}
                       <option value={sp.id}>
-                        {sp.material_type} · {fmtNum(sp.remaining_grams, 0)}g · {sp.purchased_from ?? "—"}
+                        {sp.material_type}{sp.manufacturer ? ` · ${sp.manufacturer}` : ""}{sp.color ? ` · ${sp.color}` : ""} · {fmtNum(sp.remaining_grams, 0)}g
                       </option>
                     {/each}
                   </select>

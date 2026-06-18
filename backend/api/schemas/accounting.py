@@ -73,6 +73,7 @@ class DreOut(BaseModel):
     lucro_bruto: Decimal
     despesas: dict[str, Decimal]
     custo_estoque: Decimal
+    perda_operacional: Decimal
     total_despesas: Decimal
     resultado_liquido: Decimal
     margem_liquida_pct: Decimal

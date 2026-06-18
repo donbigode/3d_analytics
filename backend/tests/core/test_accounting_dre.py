@@ -67,7 +67,8 @@ async def test_dre_v2_tax_recurring_and_unsold_stock():
         q_sold = Quote(kind=QuoteKind.COMMERCIAL.value, user_id=user.id,
                        status=QuoteStatus.ENTREGUE.value, markup_pct=Decimal("0"),
                        min_charge=Decimal("0"))
-        q_unsold = Quote(kind=QuoteKind.PERSONAL.value, user_id=user.id,
+        # Comercial não-vendido: material vira custo de estoque (WIP que ainda pode vender).
+        q_unsold = Quote(kind=QuoteKind.COMMERCIAL.value, user_id=user.id,
                          status=QuoteStatus.PRODUZIDO.value, markup_pct=Decimal("0"),
                          min_charge=Decimal("0"))
         s.add_all([q_sold, q_unsold]); await s.commit()
@@ -97,6 +98,75 @@ async def test_dre_v2_tax_recurring_and_unsold_stock():
     assert dre["custo_estoque"] == Decimal("50.00")
     assert dre["despesas"]["other"] == Decimal("100.00")
     assert dre["resultado_liquido"] == Decimal("750.00")
+
+
+@pytest.mark.asyncio
+async def test_dre_personal_unsold_is_operational_loss_full_cpv():
+    """Uso pessoal não-vendido vira perda operacional pelo CPV cheio (não só material),
+    e sai do custo de estoque (que fica só com comercial não-vendido)."""
+    from datetime import datetime, timezone
+    async with session_module.SessionFactory() as s:
+        await s.merge(Settings(id=1, revenue_tax_pct=Decimal("0")))
+        user = User(name="u", email="perda@t.com", password_hash="x")
+        s.add(user); await s.commit()
+        q_personal = Quote(kind=QuoteKind.PERSONAL.value, user_id=user.id,
+                           status=QuoteStatus.PRODUZIDO.value, markup_pct=Decimal("0"),
+                           min_charge=Decimal("0"))
+        q_comm = Quote(kind=QuoteKind.COMMERCIAL.value, user_id=user.id,
+                       status=QuoteStatus.PRODUZIDO.value, markup_pct=Decimal("0"),
+                       min_charge=Decimal("0"))
+        s.add_all([q_personal, q_comm]); await s.commit()
+        # CPV cheio do pessoal = 70 (material 50 + máquina/energia 20)
+        s.add(Sale(quote_id=q_personal.id, quote_status="produzido", quote_kind="personal",
+                   quote_total=Decimal("0"), cpv_calc=Decimal("70"), is_sold=False,
+                   variable_costs=Decimal("0")))
+        item_p = QuoteItem(quote_id=q_personal.id, name="p", gcode_meta={}, quantity=1)
+        item_c = QuoteItem(quote_id=q_comm.id, name="c", gcode_meta={}, quantity=1)
+        spool = Spool(material_type="PLA", purchased_at=date(2026, 6, 1),
+                      purchased_price=Decimal("100"), initial_grams=Decimal("1000"),
+                      remaining_grams=Decimal("700"))
+        s.add_all([item_p, item_c, spool]); await s.commit()
+        # produção (data) + material: pessoal 100g*0.50=50 ; comercial 200g*0.50=100
+        s.add(MaterialConsumption(quote_item_id=item_p.id, spool_id=spool.id,
+                                  grams_used=Decimal("100"), unit_cost_snapshot=Decimal("0.50"),
+                                  consumed_at=datetime(2026, 6, 12, tzinfo=timezone.utc)))
+        s.add(MaterialConsumption(quote_item_id=item_c.id, spool_id=spool.id,
+                                  grams_used=Decimal("200"), unit_cost_snapshot=Decimal("0.50"),
+                                  consumed_at=datetime(2026, 6, 13, tzinfo=timezone.utc)))
+        await s.commit()
+
+    async with session_module.SessionFactory() as s:
+        dre = await compute_dre(s, date(2026, 6, 1), date(2026, 6, 30))
+
+    assert dre["perda_operacional"] == Decimal("70.00")   # CPV cheio, não os 50 de material
+    assert dre["custo_estoque"] == Decimal("100.00")       # só o comercial não-vendido
+    assert dre["receita_bruta"] == Decimal("0.00")
+    assert dre["resultado_liquido"] == Decimal("-170.00")  # -(100 estoque + 70 perda)
+
+
+@pytest.mark.asyncio
+async def test_dre_personal_sold_is_revenue_not_loss():
+    """Pessoal marcado como vendido vira receita normal; perda operacional = 0."""
+    async with session_module.SessionFactory() as s:
+        await s.merge(Settings(id=1, revenue_tax_pct=Decimal("0")))
+        user = User(name="u", email="psold@t.com", password_hash="x")
+        s.add(user); await s.commit()
+        q = Quote(kind=QuoteKind.PERSONAL.value, user_id=user.id,
+                  status=QuoteStatus.ENTREGUE.value, markup_pct=Decimal("0"),
+                  min_charge=Decimal("0"))
+        s.add(q); await s.commit()
+        s.add(Sale(quote_id=q.id, quote_status="entregue", quote_kind="personal",
+                   quote_total=Decimal("200"), cpv_calc=Decimal("70"), is_sold=True,
+                   confirmed_revenue=Decimal("200"), variable_costs=Decimal("0"),
+                   sold_at=date(2026, 6, 10)))
+        await s.commit()
+
+    async with session_module.SessionFactory() as s:
+        dre = await compute_dre(s, date(2026, 6, 1), date(2026, 6, 30))
+
+    assert dre["perda_operacional"] == Decimal("0.00")
+    assert dre["receita_bruta"] == Decimal("200.00")
+    assert dre["cpv"] == Decimal("70.00")
 
 
 @pytest.mark.asyncio

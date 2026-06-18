@@ -39,6 +39,7 @@ async def build_dre_xlsx(session: AsyncSession, period_from: date, period_to: da
                    *[float(m["despesas"][cat.value]) for m in monthly],
                    float(total["despesas"][cat.value])])
     line("(-) Custo de estoque", "custo_estoque")
+    line("(-) Perda operacional (uso pessoal)", "perda_operacional")
     line("= Resultado líquido", "resultado_liquido")
     line("Margem líquida %", "margem_liquida_pct")
 
