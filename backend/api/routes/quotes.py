@@ -5,8 +5,6 @@ from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
 from uuid import UUID
 
-logger = logging.getLogger(__name__)
-
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, Response
 from sqlalchemy import select, func
@@ -61,6 +59,8 @@ from backend.infra.pdf.render import render_quote_pdf
 from backend.infra.storage import quote_photos as photo_storage
 from backend.infra.storage.gcodes import save_gcode
 from backend.settings import get_settings as get_app_settings
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
