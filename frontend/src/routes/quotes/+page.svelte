@@ -46,6 +46,18 @@
     return clients.find((c) => c.id === id)?.name ?? "—";
   }
 
+  function itemNames(q: Quote): string[] {
+    return (q.items ?? []).map((it) => it.name).filter(Boolean);
+  }
+
+  // Resumo dos nomes das peças: até 3, depois "+N". Lista completa no title.
+  function itemsSummary(q: Quote): string {
+    const names = itemNames(q);
+    if (names.length === 0) return "—";
+    if (names.length <= 3) return names.join(" · ");
+    return `${names.slice(0, 3).join(" · ")} +${names.length - 3}`;
+  }
+
   function fmtMoney(v: number | string): string {
     const n = typeof v === "string" ? parseFloat(v) : v;
     return n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
@@ -170,6 +182,7 @@
       <thead>
         <tr>
           <th>#</th>
+          <th>Itens</th>
           <th>Tipo</th>
           <th>Status</th>
           <th>Cliente</th>
@@ -182,6 +195,7 @@
         {#each rows as q (q.id)}
           <tr>
             <td class="mono">{q.id.slice(0, 8)}</td>
+            <td class="items-cell" title={itemNames(q).join(", ")}>{itemsSummary(q)}</td>
             <td>
               <span class="tag {q.kind === 'commercial' ? 'brand' : 'muted'}">
                 {q.kind === "commercial" ? "comercial" : "pessoal"}
@@ -200,7 +214,7 @@
         {/each}
         {#if rows.length === 0}
           <tr>
-            <td colspan="7"><div class="empty">Nenhum orçamento encontrado</div></td>
+            <td colspan="8"><div class="empty">Nenhum orçamento encontrado</div></td>
           </tr>
         {/if}
       </tbody>
@@ -233,6 +247,10 @@
   .table-wrap {
     border: 1px solid var(--line);
     overflow-x: auto;
+  }
+  .items-cell {
+    max-width: 22rem;
+    font-size: 0.9rem;
   }
   table {
     width: 100%;
