@@ -7,7 +7,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, Response
-from sqlalchemy import select, func
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.api.deps import db_session, require_user
@@ -19,6 +19,7 @@ from backend.api.schemas.quotes import (
     QuoteItemOut,
     QuoteItemUpdate,
     QuoteOut,
+    QuotePeopleUpdate,
     QuotePhotoOut,
     QuoteServiceOut,
     QuoteUpdate,
@@ -44,8 +45,10 @@ from backend.infra.db.models import (
     MaterialConsumption,
     MaterialVersion,
     ProductionEvent,
+    Person,
     Quote,
     QuoteItem,
+    QuotePerson,
     QuotePhoto,
     QuoteService,
     Service,
@@ -180,6 +183,11 @@ async def _quote_out(session: AsyncSession, q: Quote) -> QuoteOut:
         if p.quote_item_id is not None:
             photos_by_item.setdefault(str(p.quote_item_id), []).append(_photo_out(p))
 
+    person_rows = (await session.execute(
+        select(QuotePerson.person_id).where(QuotePerson.quote_id == q.id)
+    )).scalars().all()
+    person_ids = [str(pid) for pid in person_rows]
+
     items_out = [
         QuoteItemOut(
             id=str(it.id),
@@ -232,6 +240,7 @@ async def _quote_out(session: AsyncSession, q: Quote) -> QuoteOut:
         produced_at=q.produced_at,
         delivered_at=q.delivered_at,
         photos=cover_photos,
+        person_ids=person_ids,
     )
 
 
@@ -1054,6 +1063,35 @@ async def get_pdf(
             "Content-Disposition": f'attachment; filename="quote-{str(q.id)[:8]}.pdf"'
         },
     )
+
+
+# ---------- Pessoas (projeto pessoal) ----------
+
+
+@router.put("/{quote_id}/people", response_model=QuoteOut)
+async def set_quote_people(
+    quote_id: UUID,
+    payload: QuotePeopleUpdate,
+    _: User = Depends(require_user),
+    session: AsyncSession = Depends(db_session),
+):
+    q = await session.get(Quote, quote_id)
+    if not q:
+        raise HTTPException(404)
+    if q.kind != QuoteKind.PERSONAL.value:
+        raise HTTPException(400, "atribuição de pessoa só para orçamento pessoal")
+    ids = [UUID(x) for x in payload.person_ids]
+    if ids:
+        found = set((await session.execute(
+            select(Person.id).where(Person.id.in_(ids))
+        )).scalars().all())
+        if found != set(ids):
+            raise HTTPException(400, "pessoa inexistente")
+    await session.execute(delete(QuotePerson).where(QuotePerson.quote_id == q.id))
+    for pid in ids:
+        session.add(QuotePerson(quote_id=q.id, person_id=pid))
+    await session.commit()
+    return await _quote_out(session, q)
 
 
 # ---------- Fotos ----------
