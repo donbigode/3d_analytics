@@ -1361,7 +1361,11 @@
                 <td>{it.name}</td>
                 <td class="mono">{it.gcode_meta?.material ?? "—"}</td>
                 <td>
-                  <select bind:value={produceAssignments[it.id]}>
+                  <select
+                    value={produceAssignments[it.id] ?? ""}
+                    on:change={(e) =>
+                      (produceAssignments[it.id] = (e.currentTarget as HTMLSelectElement).value)}
+                  >
                     <option value="">—</option>
                     {#each spoolsForItem(it.gcode_meta?.material) as sp}
                       <option value={sp.id}>{spoolLabel(sp)}</option>
