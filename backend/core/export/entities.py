@@ -1,8 +1,8 @@
 from backend.infra.db.models import (
     Asset, CalibrationInsight, Client, DataSourceRun, Expense, KeywordIdea,
     KeywordObservation, LLMDigest, LLMSuggestion, MaterialConsumption, MaterialVersion,
-    ProductionEvent, ProductionSuggestion, Quote, QuoteItem, QuoteService, Sale,
-    Service, Spool, User, WatcherInboxFile,
+    Person, ProductionEvent, ProductionSuggestion, Quote, QuoteItem, QuotePerson,
+    QuoteService, Sale, Service, Spool, User, WatcherInboxFile,
 )
 
 # (nome no destino, model, colunas excluídas). Segredos (settings, export_config)
@@ -11,6 +11,8 @@ EXPORT_ENTITIES: list[tuple[str, type, set[str]]] = [
     ("quotes", Quote, set()),
     ("quote_items", QuoteItem, set()),
     ("quote_services", QuoteService, set()),
+    ("people", Person, set()),
+    ("quote_people", QuotePerson, set()),
     ("sales", Sale, set()),
     ("expenses", Expense, set()),
     ("material_versions", MaterialVersion, set()),
