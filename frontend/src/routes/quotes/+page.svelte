@@ -2,10 +2,11 @@
   import { onMount } from "svelte";
   import { api, errorMessage } from "$lib/api";
   import { handleApiError, requireAuth } from "$lib/guard";
-  import type { Client, Quote, QuoteKind, QuoteStatus } from "$lib/types";
+  import type { Client, Person, Quote, QuoteKind, QuoteStatus } from "$lib/types";
 
   let rows: Quote[] = [];
   let clients: Client[] = [];
+  let people: Person[] = [];
   let loading = true;
   let listError = "";
 
@@ -104,6 +105,30 @@
     }
   }
 
+  async function loadPeople() {
+    try {
+      people = await api<Person[]>("/people");
+    } catch (err) {
+      handleApiError(err);
+    }
+  }
+
+  async function togglePerson(q: Quote, personId: string) {
+    const current = new Set(q.person_ids ?? []);
+    if (current.has(personId)) current.delete(personId);
+    else current.add(personId);
+    try {
+      const updated = await api<Quote>(`/quotes/${q.id}/people`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ person_ids: [...current] }),
+      });
+      rows = rows.map((r) => (r.id === q.id ? updated : r));
+    } catch (err) {
+      handleApiError(err);
+    }
+  }
+
   function resetFilters() {
     fStatus = "";
     fKind = "";
@@ -114,6 +139,7 @@
   onMount(() => {
     if (requireAuth()) return;
     loadClients();
+    loadPeople();
     load();
   });
 </script>
@@ -200,6 +226,20 @@
               <span class="tag {q.kind === 'commercial' ? 'brand' : 'muted'}">
                 {q.kind === "commercial" ? "comercial" : "pessoal"}
               </span>
+              {#if q.kind === "personal" && people.length > 0}
+                <div class="people-chips">
+                  {#each people.filter((p) => p.active || (q.person_ids ?? []).includes(p.id)) as p (p.id)}
+                    <button
+                      type="button"
+                      class="chip"
+                      class:on={(q.person_ids ?? []).includes(p.id)}
+                      on:click={() => togglePerson(q, p.id)}
+                    >
+                      {p.name}
+                    </button>
+                  {/each}
+                </div>
+              {/if}
             </td>
             <td>
               <span class="tag {statusClass(q.status)}">{statusLabel(q.status)}</span>
@@ -251,6 +291,26 @@
   .items-cell {
     max-width: 22rem;
     font-size: 0.9rem;
+  }
+  .people-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem;
+    margin-top: 0.3rem;
+  }
+  .chip {
+    font-size: 0.72rem;
+    padding: 0.05rem 0.45rem;
+    border: 1px solid var(--line-strong);
+    border-radius: 999px;
+    background: var(--paper);
+    color: var(--muted);
+    cursor: pointer;
+  }
+  .chip.on {
+    background: var(--brand);
+    border-color: var(--brand);
+    color: #fff;
   }
   table {
     width: 100%;

@@ -13,7 +13,9 @@ from backend.infra.db.models.material_consumption import MaterialConsumption
 from backend.infra.db.models.production_event import ProductionEvent
 from backend.infra.db.models.production_suggestion import ProductionSuggestion
 from backend.infra.db.models.quote import Quote
+from backend.infra.db.models.person import Person
 from backend.infra.db.models.quote_item import QuoteItem
+from backend.infra.db.models.quote_person import QuotePerson
 from backend.infra.db.models.quote_photo import QuotePhoto
 from backend.infra.db.models.quote_service import QuoteService
 from backend.infra.db.models.sale import Sale
@@ -28,6 +30,7 @@ __all__ = [
     "KeywordIdea", "KeywordObservation", "LLMDigest", "LLMSuggestion", "EMBEDDING_DIM",
     "MaterialVersion", "MaterialConsumption", "ProductionEvent",
     "ProductionSuggestion",
-    "Quote", "QuoteItem", "QuotePhoto", "QuoteService", "Sale", "Service", "Settings", "Spool",
+    "Person",
+    "Quote", "QuoteItem", "QuotePerson", "QuotePhoto", "QuoteService", "Sale", "Service", "Settings", "Spool",
     "User", "WatcherInboxFile",
 ]

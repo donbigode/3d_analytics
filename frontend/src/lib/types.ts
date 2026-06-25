@@ -162,6 +162,29 @@ export type Quote = {
   produced_at: string | null;
   delivered_at: string | null;
   photos?: QuotePhoto[];
+  person_ids?: string[];
+};
+
+export type Person = {
+  id: string;
+  name: string;
+  active: boolean;
+  sort_order: number;
+};
+
+export type PersonalProjectPerson = {
+  person_id: string;
+  name: string;
+  count: number;
+  grams: number | string;
+  cpv: number | string;
+  monthly: { month: string; count: number }[];
+};
+
+export type PersonalProjects = {
+  people: PersonalProjectPerson[];
+  shared_count: number;
+  unassigned_count: number;
 };
 
 export type InboxItem = {

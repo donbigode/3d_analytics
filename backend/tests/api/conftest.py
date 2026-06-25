@@ -29,8 +29,10 @@ from backend.infra.db.models import (
     LLMSuggestion,
     MaterialConsumption,
     MaterialVersion,
+    Person,
     Quote,
     QuoteItem,
+    QuotePerson,
     QuotePhoto,
     QuoteService,
     Sale,
@@ -67,6 +69,7 @@ async def _isolated_engine_api(test_database_url):
             async with factory() as s:
                 # order matters: delete dependents before parents
                 for table in (
+                    QuotePerson.__table__,
                     QuotePhoto.__table__,
                     MaterialConsumption.__table__,
                     QuoteService.__table__,
@@ -76,6 +79,7 @@ async def _isolated_engine_api(test_database_url):
                     Sale.__table__,
                     Expense.__table__,
                     Quote.__table__,
+                    Person.__table__,
                     Spool.__table__,
                     Service.__table__,
                     MaterialVersion.__table__,

@@ -1,6 +1,12 @@
 from backend.core.export.entities import EXPORT_ENTITIES, columns_for
 
 
+def test_people_entities_exported():
+    names = {name for name, _m, _ex in EXPORT_ENTITIES}
+    assert "people" in names
+    assert "quote_people" in names
+
+
 def test_secrets_excluded_and_users_has_no_hash():
     names = {name for name, _model, _ex in EXPORT_ENTITIES}
     assert "settings" not in names

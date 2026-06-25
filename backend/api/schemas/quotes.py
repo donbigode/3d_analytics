@@ -98,6 +98,11 @@ class QuoteOut(BaseModel):
     produced_at: datetime | None
     delivered_at: datetime | None
     photos: list[QuotePhotoOut] = []
+    person_ids: list[str] = []
+
+
+class QuotePeopleUpdate(BaseModel):
+    person_ids: list[str]
 
 
 class ConsumptionAssignment(BaseModel):

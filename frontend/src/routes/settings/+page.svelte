@@ -3,7 +3,7 @@
   import { api, errorMessage } from "$lib/api";
   import { handleApiError, requireAuth } from "$lib/guard";
   import { appSettings } from "$lib/stores/settings";
-  import type { Settings } from "$lib/types";
+  import type { Person, Settings } from "$lib/types";
 
   let settings: Settings | null = null;
   let loading = true;
@@ -128,9 +128,63 @@
     }
   }
 
+  // Pessoas (projetos pessoais)
+  let people: Person[] = [];
+  let newPersonName = "";
+  let peopleError = "";
+
+  async function loadPeople() {
+    try {
+      people = await api<Person[]>("/people");
+    } catch (err) {
+      handleApiError(err);
+    }
+  }
+
+  async function addPerson() {
+    const name = newPersonName.trim();
+    if (!name) return;
+    peopleError = "";
+    try {
+      await api<Person>("/people", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name }),
+      });
+      newPersonName = "";
+      await loadPeople();
+    } catch (err) {
+      handleApiError(err);
+      peopleError = errorMessage(err, "Falha ao adicionar pessoa.");
+    }
+  }
+
+  async function togglePersonActive(p: Person) {
+    try {
+      await api<Person>(`/people/${p.id}`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ active: !p.active }),
+      });
+      await loadPeople();
+    } catch (err) {
+      handleApiError(err);
+    }
+  }
+
+  async function deletePerson(p: Person) {
+    try {
+      await api(`/people/${p.id}`, { method: "DELETE" });
+      await loadPeople();
+    } catch (err) {
+      handleApiError(err);
+    }
+  }
+
   onMount(() => {
     if (requireAuth()) return;
     load();
+    loadPeople();
   });
 </script>
 
@@ -282,6 +336,37 @@
     </form>
   </section>
 
+  <section class="panel">
+    <div class="panel-head">
+      <h2 class="section-title">Pessoas (projetos pessoais)</h2>
+    </div>
+    <p class="hint">
+      Quem aparece pra marcar nos projetos pessoais (Otávio, Ana…). Inativar
+      mantém o histórico; excluir remove as atribuições.
+    </p>
+    {#if peopleError}<div class="alert">{peopleError}</div>{/if}
+    <ul class="people-list">
+      {#each people as p (p.id)}
+        <li class:inactive={!p.active}>
+          <span class="name">{p.name}</span>
+          <span class="row-actions">
+            <button type="button" class="ghost tiny" on:click={() => togglePersonActive(p)}>
+              {p.active ? "inativar" : "ativar"}
+            </button>
+            <button type="button" class="ghost tiny danger" on:click={() => deletePerson(p)}>excluir</button>
+          </span>
+        </li>
+      {/each}
+      {#if people.length === 0}
+        <li class="empty-row">Nenhuma pessoa cadastrada</li>
+      {/if}
+    </ul>
+    <form class="add-person" on:submit|preventDefault={addPerson}>
+      <input bind:value={newPersonName} placeholder="Nome da pessoa" />
+      <button type="submit" disabled={!newPersonName.trim()}>+ adicionar</button>
+    </form>
+  </section>
+
   <div class="bottom-actions">
     {#if saveError}<div class="alert">{saveError}</div>{/if}
     {#if saveOk}<div class="ok">Configurações salvas.</div>{/if}
@@ -294,6 +379,19 @@
 <style>
   .panel { margin-bottom: 1.5rem; }
   .panel + .panel { margin-top: 1.5rem; }
+  .people-list { list-style: none; margin: 0.5rem 0; padding: 0; }
+  .people-list li {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.4rem 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .people-list li.inactive .name { color: var(--muted); text-decoration: line-through; }
+  .people-list .row-actions { display: flex; gap: 0.4rem; }
+  .people-list .empty-row { color: var(--muted); font-size: 0.85rem; }
+  .add-person { display: flex; gap: 0.5rem; margin-top: 0.6rem; }
+  .add-person input { flex: 1; }
   .logo-block {
     display: grid;
     grid-template-columns: 160px 1fr;

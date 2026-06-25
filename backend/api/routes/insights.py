@@ -9,14 +9,15 @@ activity, and a few attention flags.
 from __future__ import annotations
 
 from collections import Counter
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.api.deps import db_session, require_user
+from backend.core.insights.personal_projects import compute_personal_projects
 from backend.core.llm_features.runner import LLMUnavailable
 from backend.core.models import QuoteKind, QuoteStatus
 from backend.core.production.suggestions import generate_suggestions
@@ -36,6 +37,18 @@ router = APIRouter()
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+@router.get("/personal-projects")
+async def personal_projects(
+    period_from: date | None = Query(None),
+    period_to: date | None = Query(None),
+    _: User = Depends(require_user),
+    session: AsyncSession = Depends(db_session),
+):
+    pt = period_to or _now().date()
+    pf = period_from or (pt - timedelta(days=365))
+    return await compute_personal_projects(session, pf, pt)
 
 
 @router.get("/failure-rates")

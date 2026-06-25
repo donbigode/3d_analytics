@@ -6,6 +6,7 @@
     CalibrationInsight,
     CalibrationInsightApplyResult,
     FailureRateRow,
+    PersonalProjects,
     ProductionSuggestionsOut,
   } from "$lib/types";
 
@@ -34,6 +35,7 @@
   let rows: CalibrationInsight[] = [];
   let overview: Overview | null = null;
   let overviewError = "";
+  let personal: PersonalProjects | null = null;
   let failureRates: FailureRateRow[] = [];
   let suggestions: ProductionSuggestionsOut | null = null;
   let generatingSuggestions = false;
@@ -57,6 +59,11 @@
       handleApiError(err);
     }
     await loadSuggestions();
+    try {
+      personal = await api<PersonalProjects>("/insights/personal-projects");
+    } catch (err) {
+      handleApiError(err);
+    }
   }
 
   async function loadSuggestions() {
@@ -221,6 +228,42 @@
 
 {#if overviewError}
   <div class="banner alert">{overviewError}</div>
+{/if}
+
+{#if personal && (personal.people.length > 0 || personal.unassigned_count > 0)}
+  <section class="panel">
+    <div class="panel-head">
+      <span class="page-eyebrow">Projetos pessoais · últimos 12 meses</span>
+      <h2 class="form-title">Quem sobe mais projeto pessoal</h2>
+    </div>
+    <table class="pp-table">
+      <thead>
+        <tr>
+          <th>Pessoa</th>
+          <th class="pp-num">Projetos</th>
+          <th class="pp-num">Filamento (g)</th>
+          <th class="pp-num">Custo</th>
+        </tr>
+      </thead>
+      <tbody>
+        {#each personal.people as p (p.person_id)}
+          <tr>
+            <td>{p.name}</td>
+            <td class="pp-num">{p.count}</td>
+            <td class="pp-num">{Number(p.grams).toLocaleString("pt-BR", { maximumFractionDigits: 0 })}</td>
+            <td class="pp-num">{fmtMoney(p.cpv)}</td>
+          </tr>
+        {/each}
+        {#if personal.people.length === 0}
+          <tr><td colspan="4" class="pp-empty">Nenhum projeto pessoal atribuído ainda</td></tr>
+        {/if}
+      </tbody>
+    </table>
+    <p class="pp-hint">
+      Compartilhados (2+ pessoas): {personal.shared_count} · Sem marcação: {personal.unassigned_count}.
+      Projeto compartilhado conta pra cada pessoa.
+    </p>
+  </section>
 {/if}
 
 {#if overview}
@@ -567,6 +610,15 @@
 {/if}
 
 <style>
+  .pp-table { width: 100%; border-collapse: collapse; }
+  .pp-table th, .pp-table td {
+    padding: 0.4rem 0.6rem;
+    border-bottom: 1px solid var(--line);
+    text-align: left;
+  }
+  .pp-num { text-align: right; font-variant-numeric: tabular-nums; }
+  .pp-empty { color: var(--muted); text-align: center; }
+  .pp-hint { color: var(--muted); font-size: 0.85rem; margin-top: 0.5rem; }
   .page-head {
     margin-bottom: 1.5rem;
   }

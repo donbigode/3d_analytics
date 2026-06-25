@@ -9,6 +9,7 @@
     Material,
     MarkupSuggestionOut,
     PricingOut,
+    Person,
     Quote,
     QuoteItem,
     Service,
@@ -27,6 +28,7 @@
   let services: Service[] = [];
   let spools: Spool[] = [];
   let materials: Material[] = [];
+  let people: Person[] = [];
 
   // resolve pending material modal
   let resolveItem: QuoteItem | null = null;
@@ -253,14 +255,32 @@
 
   async function loadRefs() {
     try {
-      [clients, services, spools, materials] = await Promise.all([
+      [clients, services, spools, materials, people] = await Promise.all([
         api<Client[]>("/clients"),
         api<Service[]>("/services"),
         api<Spool[]>("/spools"),
         api<Material[]>("/materials"),
+        api<Person[]>("/people"),
       ]);
     } catch (err) {
       handleApiError(err);
+    }
+  }
+
+  async function togglePerson(personId: string, checked: boolean) {
+    if (!quote) return;
+    const current = new Set(quote.person_ids ?? []);
+    if (checked) current.add(personId);
+    else current.delete(personId);
+    try {
+      quote = await api<Quote>(`/quotes/${id}/people`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ person_ids: [...current] }),
+      });
+    } catch (err) {
+      handleApiError(err);
+      metaError = errorMessage(err, "Falha ao salvar atribuição.");
     }
   }
 
@@ -692,6 +712,30 @@
 
   <div class="layout">
     <div class="main-col">
+      {#if quote.kind === "personal"}
+        <section class="panel">
+          <div class="panel-head">
+            <h2 class="section-title">Projeto pessoal de</h2>
+          </div>
+          <p class="hint">Marque de quem é — pode ser dos dois. Editável a qualquer momento.</p>
+          <div class="people-checks">
+            {#each people.filter((p) => p.active || (quote?.person_ids ?? []).includes(p.id)) as p (p.id)}
+              <label class="person-check">
+                <input
+                  type="checkbox"
+                  checked={(quote.person_ids ?? []).includes(p.id)}
+                  on:change={(e) => togglePerson(p.id, (e.currentTarget as HTMLInputElement).checked)}
+                />
+                {p.name}
+              </label>
+            {/each}
+            {#if people.length === 0}
+              <span class="hint">Cadastre pessoas em <a href="/settings">Configurações</a>.</span>
+            {/if}
+          </div>
+        </section>
+      {/if}
+
       <section class="panel">
         <div class="panel-head">
           <h2 class="section-title">Fotos <span class="count">· {(quote.photos ?? []).length}</span></h2>
@@ -1401,6 +1445,17 @@
 {/if}
 
 <style>
+  .people-checks {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem 1.25rem;
+  }
+  .person-check {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    cursor: pointer;
+  }
   .photo-grid {
     display: flex;
     flex-wrap: wrap;
