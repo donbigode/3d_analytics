@@ -585,16 +585,25 @@
     produceMeters = {};
     produceGrams = {};
     for (const it of quote.items) {
-      const matCode = it.gcode_meta?.material ?? null;
-      const candidate = spools.find(
-        (sp) =>
-          sp.status === "open" &&
-          (matCode ? sp.material_type === matCode : true),
-      );
+      const available = spoolsForItem(it.gcode_meta?.material);
+      // Prefere o rolo que casa com o filamento considerado no orçamento
+      // (mesmo fabricante + cor do material_id); senão, o primeiro disponível.
+      const consideredMat = it.material_id
+        ? materials.find((m) => m.id === it.material_id)
+        : null;
+      const candidate =
+        (consideredMat &&
+          available.find(
+            (sp) =>
+              (sp.manufacturer ?? null) === (consideredMat.manufacturer ?? null) &&
+              (sp.color ?? null) === (consideredMat.color ?? null),
+          )) ||
+        available[0];
       produceAssignments[it.id] = candidate?.id ?? "";
       const fm = Number(it.gcode_meta?.filament_m ?? 0);
       produceMeters[it.id] = fm > 0 ? String(fm) : "";
-      produceGrams[it.id] = "";
+      const fg = Number(it.gcode_meta?.filament_g ?? 0);
+      produceGrams[it.id] = fg > 0 ? String(fg) : "";
     }
     produceError = "";
     showProduceModal = true;
@@ -604,6 +613,18 @@
     return spools.filter(
       (sp) => sp.status === "open" && (matCode ? sp.material_type === matCode : true),
     );
+  }
+
+  // Descreve o filamento considerado no orçamento (material_id) pra exibir no
+  // modal de produção — tipo · fabricante · cor. Cai no código do gcode se
+  // a peça não tiver material atribuído.
+  function consideredMaterialLabel(it: QuoteItem): string {
+    const m = it.material_id ? materials.find((mm) => mm.id === it.material_id) : null;
+    if (!m) return it.gcode_meta?.material ?? "—";
+    const parts = [m.material_type];
+    if (m.manufacturer) parts.push(m.manufacturer);
+    if (m.color) parts.push(m.color);
+    return parts.join(" · ");
   }
 
   // Label descritiva de um rolo no seletor de produzir:
@@ -1403,7 +1424,7 @@
             {#each quote.items as it (it.id)}
               <tr>
                 <td>{it.name}</td>
-                <td class="mono">{it.gcode_meta?.material ?? "—"}</td>
+                <td>{consideredMaterialLabel(it)}</td>
                 <td>
                   <select
                     value={produceAssignments[it.id] ?? ""}
