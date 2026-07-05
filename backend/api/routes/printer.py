@@ -1,3 +1,4 @@
+from decimal import Decimal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
@@ -6,10 +7,16 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.api.deps import db_session, require_user
-from backend.api.schemas.printer import PrintJobIn
+from backend.api.routes.quotes import apply_production
+from backend.api.schemas.printer import PrintJobIn, PrintJobLinkIn
+from backend.api.schemas.quotes import ConsumptionAssignment
 from backend.core.models import PrinterJobStatus
-from backend.infra.db.models import PrinterJob, User
+from backend.core.pricing.cost import grams_from_meters
+from backend.core.quote_service import grams_for_item
+from backend.infra.db.models import MaterialVersion, PrinterJob, Quote, QuoteItem, User
 from backend.settings import get_settings
+
+_DIAMETER = Decimal("1.75")
 
 ingest_router = APIRouter()
 router = APIRouter()
@@ -117,3 +124,67 @@ async def discard_printer_job(
         raise HTTPException(404)
     rec.inbox_status = PrinterJobStatus.DISCARDED
     await session.commit()
+
+
+@router.post("/{job_id}/link")
+async def link_printer_job(
+    job_id: UUID,
+    payload: PrintJobLinkIn,
+    _: User = Depends(require_user),
+    session: AsyncSession = Depends(db_session),
+):
+    job = await session.get(PrinterJob, job_id)
+    if not job or job.inbox_status != PrinterJobStatus.PENDING:
+        raise HTTPException(409, "job not pending")
+    q = await session.get(Quote, UUID(payload.quote_id))
+    if not q:
+        raise HTTPException(404, "quote not found")
+
+    items = (
+        await session.execute(select(QuoteItem).where(QuoteItem.quote_id == q.id))
+    ).scalars().all()
+    if not items:
+        raise HTTPException(409, "quote has no items")
+
+    # pesos por item = gramas estimadas (fallback: peso igual)
+    weights: list[Decimal] = []
+    densities: list[Decimal] = []
+    for it in items:
+        mv = await session.get(MaterialVersion, it.material_version_id)
+        if not mv:
+            raise HTTPException(409, f"item '{it.name}' has unresolved material")
+        densities.append(mv.density_g_cm3)
+        est = grams_for_item(it.gcode_meta, mv.density_g_cm3, it.quantity)
+        weights.append(est if est > 0 else Decimal("0"))
+    total_w = sum(weights)
+    n = len(items)
+
+    total_mm = Decimal(str(job.filament_used_mm))
+    total_s = Decimal(str(job.time_s))
+
+    assignments: list[ConsumptionAssignment] = []
+    total_grams = Decimal("0")
+    for idx, it in enumerate(items):
+        frac = (weights[idx] / total_w) if total_w > 0 else (Decimal("1") / n)
+        item_mm = total_mm * frac
+        item_grams = grams_from_meters(float(item_mm) / 1000.0, densities[idx], _DIAMETER)
+        total_grams += item_grams
+        # persiste real (gramas + tempo) no gcode_meta p/ o analítico de variância
+        meta = dict(it.gcode_meta or {})
+        meta["filament_g"] = float(item_grams)
+        meta["time_s"] = float(total_s * frac)
+        it.gcode_meta = meta
+        assignments.append(
+            ConsumptionAssignment(
+                quote_item_id=str(it.id),
+                spool_id=payload.spool_id,
+                grams=item_grams,
+            )
+        )
+
+    await apply_production(session, q, assignments)
+    job.inbox_status = PrinterJobStatus.LINKED
+    job.quote_id = q.id
+    job.grams = total_grams
+    await session.commit()
+    return {"quote_id": str(q.id), "grams": float(total_grams), "status": q.status}
