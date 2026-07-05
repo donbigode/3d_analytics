@@ -20,17 +20,18 @@ A K1 roda **Klipper + Moonraker**, cuja REST HTTP local é a fonte confiável
 
 O serviço roda no **Lightsail (nuvem)**; a impressora está na **LAN de casa/loja**.
 A nuvem **não** alcança `192.168.x.x` diretamente. Solução escolhida: **agente local
-que empurra** (push). Um Raspberry Pi Zero na rede faz o `GET` no Moonraker (que está
-do lado dele) e o `POST` autenticado pro Lightsail. Nada da LAN é exposto à internet;
-o Lightsail nunca precisa alcançar a rede de casa.
+que empurra** (push). Um **container Docker** na rede faz o `GET` async no Moonraker
+(que está do lado dele) e o `POST` autenticado pro Lightsail. Roda no notebook agora;
+como é imagem Docker, é só re-dockar num Raspberry (ou qualquer host da LAN) depois.
+Nada da LAN é exposto à internet; o Lightsail nunca precisa alcançar a rede de casa.
 
 ## 3. Arquitetura
 
 ```
 K1 (Moonraker, LAN)
-      │  GET /server/history/list
+      │  GET async /server/history/list
       ▼
-Agente local (Raspberry Pi Zero)  ── repo SEPARADO
+Agente local (container Docker: notebook agora, portável p/ Pi)  ── repo SEPARADO
       │  POST (Bearer token do agente)
       ▼
 Lightsail: POST /ingest/print-jobs
@@ -56,8 +57,9 @@ Quote em_producao • MaterialConsumption debitado • printer_jobs = LINKED
 - Aba "Impressora" no inbox (frontend), reaproveitando a UX do inbox atual.
 - Testes.
 
-**Repo separado (agente, Raspberry Pi Zero) — fora deste repo:**
-- Poller do Moonraker que implementa o **contrato de ingestão** da seção 8.
+**Repo separado (agente, container Docker) — fora deste repo:**
+- Poller **async** do Moonraker que implementa o **contrato de ingestão** da seção 8.
+- Empacotado como imagem Docker: roda no notebook hoje, portável pra Pi/qualquer host da LAN.
 - A spec define o contrato pra que o repo do agente seja construído contra ele.
 
 ## 5. Contrato de ingestão — `POST /ingest/print-jobs`
@@ -155,7 +157,7 @@ descartá-los (`DELETE` → DISCARDED) ou linká-los a um orçamento que vá `fa
 
 - `AGENT_INGEST_TOKEN` em env var (`.env` / secret do Lightsail), fora do git.
 - Ingestão só aceita o token do agente; nenhum outro endpoint fica exposto sem sessão.
-- O agente guarda o token localmente no Pi; TLS no `POST` pro Lightsail (HTTPS já existe).
+- O agente guarda o token localmente (env var do container); TLS no `POST` pro Lightsail (HTTPS já existe).
 
 ## 11. Testes
 
@@ -172,4 +174,4 @@ descartá-los (`DELETE` → DISCARDED) ou linká-los a um orçamento que vá `fa
 - Automatizar `falhou` a partir de job `cancelled`/`error`.
 - Live status (job em andamento) — hoje só jobs finalizados.
 - Múltiplos filamentos por job (AMS/multicolor) — v1 assume um spool por job.
-- Empacotamento do agente (systemd no Pi) — vive no repo separado.
+- Empacotamento/deploy do agente (Dockerfile, compose) — vive no repo separado.
