@@ -134,7 +134,9 @@ async def link_printer_job(
     session: AsyncSession = Depends(db_session),
 ):
     job = await session.get(PrinterJob, job_id)
-    if not job or job.inbox_status != PrinterJobStatus.PENDING:
+    if not job:
+        raise HTTPException(404, "job not found")
+    if job.inbox_status != PrinterJobStatus.PENDING:
         raise HTTPException(409, "job not pending")
     q = await session.get(Quote, UUID(payload.quote_id))
     if not q:
@@ -150,6 +152,8 @@ async def link_printer_job(
     weights: list[Decimal] = []
     densities: list[Decimal] = []
     for it in items:
+        if it.material_version_id is None:
+            raise HTTPException(409, f"item '{it.name}' has unresolved material")
         mv = await session.get(MaterialVersion, it.material_version_id)
         if not mv:
             raise HTTPException(409, f"item '{it.name}' has unresolved material")
