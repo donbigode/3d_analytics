@@ -1,5 +1,6 @@
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.api.deps import db_session
@@ -26,6 +27,7 @@ def _require_agent(request: Request) -> None:
 async def ingest_print_job(
     payload: PrintJobIn,
     request: Request,
+    response: Response,
     session: AsyncSession = Depends(db_session),
 ):
     _require_agent(request)
@@ -40,6 +42,7 @@ async def ingest_print_job(
     )
     if existing:
         # Idempotente: nunca sobrescreve; devolve o registro já conhecido.
+        response.status_code = 200
         return {"id": str(existing.id), "inbox_status": existing.inbox_status}
 
     job = PrinterJob(
@@ -55,6 +58,20 @@ async def ingest_print_job(
         inbox_status=PrinterJobStatus.PENDING,
     )
     session.add(job)
-    await session.commit()
+    try:
+        await session.commit()
+    except IntegrityError:
+        # Corrida perdida contra uq_printer_jobs_machine_job: outro insert
+        # concorrente venceu. Recupera o registro já existente e devolve
+        # como idempotente, em vez de propagar 500.
+        await session.rollback()
+        existing = await session.scalar(
+            select(PrinterJob).where(
+                PrinterJob.machine == payload.machine,
+                PrinterJob.job_uid == payload.job_uid,
+            )
+        )
+        response.status_code = 200
+        return {"id": str(existing.id), "inbox_status": existing.inbox_status}
     await session.refresh(job)
     return {"id": str(job.id), "inbox_status": job.inbox_status}

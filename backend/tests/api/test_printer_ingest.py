@@ -80,7 +80,7 @@ async def test_ingest_inserts_and_is_idempotent(_token):
         first_id = r1.json()["id"]
         # reenvio do mesmo (machine, job_uid) não duplica
         r2 = await c.post("/ingest/print-jobs", json=_payload(job_uid="200"), headers=hdr)
-        assert r2.status_code == 201
+        assert r2.status_code == 200
         assert r2.json()["id"] == first_id
 
 
@@ -92,3 +92,15 @@ async def test_ingest_rejects_unknown_status(_token):
             "/ingest/print-jobs", json=_payload(status="printing"), headers=hdr
         )
         assert r.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_ingest_503_when_unconfigured(monkeypatch):
+    monkeypatch.delenv("AGENT_INGEST_TOKEN", raising=False)
+    async with await _ingest_client() as c:
+        r = await c.post(
+            "/ingest/print-jobs",
+            json=_payload(),
+            headers={"authorization": "Bearer whatever"},
+        )
+        assert r.status_code == 503
