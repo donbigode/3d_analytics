@@ -107,7 +107,8 @@ própria e testável isolada; apresentada na mesma UX de inbox.
 | `started_at` / `finished_at` | DateTime tz | |
 | `raw` | JSONB | payload bruto |
 | `inbox_status` | str | PENDING / LINKED / DISCARDED |
-| `quote_id` | UUID FK null | preenchido no link |
+| `quote_id` | UUID FK null | preenchido no atachar |
+| `spool_id` | UUID FK null | spool escolhido no atachar (migração 0031); pré-preenche o Produzir |
 | `created_at` | DateTime tz | server default |
 
 Índice único em `(machine, job_uid)`.
@@ -119,39 +120,53 @@ Moonraker dá `filament_used` em **mm**. Converte-se `mm → m` (`/1000`) e depo
 `grams_for_item` / spec `orcamento-gramas`). Sem lógica de conversão nova. A densidade
 final usada na baixa é a do **spool escolhido no link** (a impressora só sabe "genérico").
 
-## 8. Vínculo — `POST /printer-jobs/{id}/link`  (opção A: link = produce real)
+## 8. Atachar — `POST /printer-jobs/{id}/link`  (atachar ≠ produzir)
+
+> **Decisão revisada (2026-07-05):** o atachar é **controle manual** e NÃO produz.
+> Ele só **prepara** o orçamento; a baixa de estoque acontece depois, no passo
+> **Produzir** que já existe. Reverte a "opção A" (atachar = produz na hora).
 
 **Body:** `{ "quote_id": "...", "spool_id": "..." }`
 
 Comportamento:
-1. Valida que o job está `PENDING` (senão 409).
-2. Valida o orçamento no mesmo critério do `produce` existente
-   (`t_produce`, `quotes.py:708-718`): comercial em `aprovado`/`falhou`,
-   pessoal em `draft`/`falhou`. Caso contrário 409 com mensagem clara.
-3. Calcula `grams` reais a partir de `filament_used_mm` + densidade do spool (seção 7).
-4. **Executa a mesma máquina do `produce`** com override direto de gramas
-   (`ProduceRequest.consumption[].grams`, já suportado em `quotes.py:726-728`):
-   debita o spool escolhido, cria `MaterialConsumption`, move o quote pra `em_producao`.
-5. **Alocação por item:** o usuário escolhe **um** spool pro job.
-   - Quote com **1 item** → todas as gramas reais no item.
-   - Quote com **N itens** → distribui proporcionalmente às gramas estimadas de cada
-     item (fallback: divisão igual). Uma `MaterialConsumption` por item, somando o total real.
-6. Persiste `time_s` e `grams` reais no `gcode_meta` dos itens (campos que o analítico
-   de variância já lê), para comparar **estimado (slicer) × real (impressora)**.
-7. Marca `printer_jobs.inbox_status = LINKED`, grava `quote_id`. Re-link bloqueado (409).
+1. Valida que o job existe (senão 404) e está `PENDING` (senão 409). Re-atachar
+   é bloqueado porque um job já `LINKED` não é mais `PENDING`.
+2. Valida que o orçamento existe (senão 404) e tem ao menos um item (senão 409).
+   **Não** valida status de produção nem exige material resolvido — atachar não
+   produz, então não há pré-condição de `produce` aqui.
+3. **Alocação por item:** distribui `filament_used_mm` entre os itens
+   proporcionalmente às gramas estimadas de cada item (fallback: divisão igual),
+   e converte a fração de cada item em gramas reais pela densidade do item
+   (seção 7). Quote com 1 item → todas as gramas no item.
+4. **Grava o real no item:** escreve `filament_g` (gramas reais) e `time_s`
+   (tempo real, fração do item) no `gcode_meta` de cada item. É isso que faz o
+   `produce` seguinte debitar a quantidade real (o `produce` já lê `filament_g`).
+5. **Registra no job:** `quote_id`, `spool_id` escolhido, `grams` (total real),
+   `inbox_status = LINKED`. **Não** debita spool, **não** cria
+   `MaterialConsumption`, **não** muda o status do orçamento.
+6. Requer nova coluna `printer_jobs.spool_id` (FK spools, nullable) — guarda o
+   spool escolhido no atachar para o `produce` pré-selecioná-lo.
 
-**Jobs `cancelled`/`error`:** ainda entram no inbox (PENDING). O usuário pode
-descartá-los (`DELETE` → DISCARDED) ou linká-los a um orçamento que vá `falhou`
-(fora do v1 automatizar isso; por ora o link só cobre o caminho de produzir com sucesso).
+**Passo seguinte (já existe):** o usuário abre o orçamento e clica **Produzir**.
+O modal de produzir vem **pré-preenchido com o spool atachado** (via
+`printer_jobs.spool_id` do job ligado ao quote) e debita pelas gramas reais
+(`filament_g` gravado no passo 4). Uma baixa só, no controle do usuário.
+
+**Jobs `cancelled`/`error`:** entram no inbox (PENDING); o usuário descarta
+(`DELETE` → DISCARDED) ou atacha a um orçamento à vontade (v1 não automatiza
+`falhou`).
 
 ## 9. UX (frontend)
 
-- Nova aba **"Impressora"** no inbox, ao lado do inbox de gcode atual.
-- Lista os `printer_jobs` PENDING: `filename`, `machine`, gramas reais, tempo, status.
-- Ação "Linkar": seletor de **orçamento** (elegíveis pra produce) + seletor de **spool**.
-  Ao confirmar, chama `/printer-jobs/{id}/link` e o item some da lista.
-- Ação "Descartar" → `DELETE`.
-- Segue o padrão visual do inbox existente (usar skill `frontend-design` na implementação).
+- Os `printer_jobs` PENDING aparecem **dentro do Inbox**, numa seção "Impressora"
+  ao lado dos `.gcode` do watcher (não em página separada).
+- Cada linha: `filename`, `machine`, gramas reais, tempo, status.
+- Ação **"Atachar"**: seletor de **orçamento** (que o usuário criou) + seletor de
+  **spool**. Ao confirmar, chama `/printer-jobs/{id}/link`, o job sai da lista, e
+  a UI orienta a seguir no orçamento e clicar **Produzir**.
+- No orçamento, o modal **Produzir** pré-seleciona o spool atachado.
+- Ação **"Descartar"** → `DELETE`.
+- Segue o padrão visual do inbox existente (usar skill `frontend-design`).
 
 ## 10. Segurança
 
