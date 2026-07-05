@@ -1,15 +1,18 @@
+from uuid import UUID
+
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.api.deps import db_session
+from backend.api.deps import db_session, require_user
 from backend.api.schemas.printer import PrintJobIn
 from backend.core.models import PrinterJobStatus
-from backend.infra.db.models import PrinterJob
+from backend.infra.db.models import PrinterJob, User
 from backend.settings import get_settings
 
 ingest_router = APIRouter()
+router = APIRouter()
 
 _ALLOWED_STATUS = {"completed", "cancelled", "error"}
 
@@ -75,3 +78,42 @@ async def ingest_print_job(
         return {"id": str(existing.id), "inbox_status": existing.inbox_status}
     await session.refresh(job)
     return {"id": str(job.id), "inbox_status": job.inbox_status}
+
+
+@router.get("")
+async def list_printer_jobs(
+    _: User = Depends(require_user),
+    session: AsyncSession = Depends(db_session),
+):
+    rows = (
+        await session.execute(
+            select(PrinterJob)
+            .where(PrinterJob.inbox_status == PrinterJobStatus.PENDING)
+            .order_by(PrinterJob.created_at.desc())
+        )
+    ).scalars().all()
+    return [
+        {
+            "id": str(r.id),
+            "machine": r.machine,
+            "filename": r.filename,
+            "status": r.status,
+            "filament_used_mm": float(r.filament_used_mm),
+            "time_s": float(r.time_s),
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+        }
+        for r in rows
+    ]
+
+
+@router.delete("/{job_id}", status_code=204)
+async def discard_printer_job(
+    job_id: UUID,
+    _: User = Depends(require_user),
+    session: AsyncSession = Depends(db_session),
+):
+    rec = await session.get(PrinterJob, job_id)
+    if not rec:
+        raise HTTPException(404)
+    rec.inbox_status = PrinterJobStatus.DISCARDED
+    await session.commit()
