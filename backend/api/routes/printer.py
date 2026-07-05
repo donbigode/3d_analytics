@@ -7,13 +7,11 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.api.deps import db_session, require_user
-from backend.api.routes.quotes import apply_production
 from backend.api.schemas.printer import PrintJobIn, PrintJobLinkIn
-from backend.api.schemas.quotes import ConsumptionAssignment
 from backend.core.models import PrinterJobStatus
 from backend.core.pricing.cost import grams_from_meters
 from backend.core.quote_service import grams_for_item
-from backend.infra.db.models import MaterialVersion, PrinterJob, Quote, QuoteItem, User
+from backend.infra.db.models import MaterialVersion, PrinterJob, Quote, QuoteItem, Spool, User
 from backend.settings import get_settings
 
 _DIAMETER = Decimal("1.75")
@@ -141,6 +139,9 @@ async def link_printer_job(
     q = await session.get(Quote, UUID(payload.quote_id))
     if not q:
         raise HTTPException(404, "quote not found")
+    sp = await session.get(Spool, UUID(payload.spool_id))
+    if not sp:
+        raise HTTPException(404, "spool not found")
 
     items = (
         await session.execute(select(QuoteItem).where(QuoteItem.quote_id == q.id))
@@ -148,7 +149,7 @@ async def link_printer_job(
     if not items:
         raise HTTPException(409, "quote has no items")
 
-    # pesos por item = gramas estimadas (fallback: peso igual)
+    # pesos por item = gramas estimadas (fallback: divisão igual)
     weights: list[Decimal] = []
     densities: list[Decimal] = []
     for it in items:
@@ -162,33 +163,31 @@ async def link_printer_job(
         weights.append(est if est > 0 else Decimal("0"))
     total_w = sum(weights)
     n = len(items)
-
     total_mm = Decimal(str(job.filament_used_mm))
     total_s = Decimal(str(job.time_s))
 
-    assignments: list[ConsumptionAssignment] = []
     total_grams = Decimal("0")
     for idx, it in enumerate(items):
         frac = (weights[idx] / total_w) if total_w > 0 else (Decimal("1") / n)
         item_mm = total_mm * frac
         item_grams = grams_from_meters(float(item_mm) / 1000.0, densities[idx], _DIAMETER)
         total_grams += item_grams
-        # persiste real (gramas + tempo) no gcode_meta p/ o analítico de variância
+        qty = Decimal(str(it.quantity or 1))
         meta = dict(it.gcode_meta or {})
-        meta["filament_g"] = float(item_grams)
-        meta["time_s"] = float(total_s * frac)
+        # filament_g é PER-UNIT (grams_for_item multiplica por quantity depois)
+        meta["filament_g"] = float(item_grams / qty)
+        meta["time_s"] = float((total_s * frac) / qty)
         it.gcode_meta = meta
-        assignments.append(
-            ConsumptionAssignment(
-                quote_item_id=str(it.id),
-                spool_id=payload.spool_id,
-                grams=item_grams,
-            )
-        )
 
-    await apply_production(session, q, assignments)
-    job.inbox_status = PrinterJobStatus.LINKED
+    # atacha: vincula + registra spool, SEM baixar estoque e SEM mudar status
     job.quote_id = q.id
+    job.spool_id = sp.id
     job.grams = total_grams
+    job.inbox_status = PrinterJobStatus.LINKED
     await session.commit()
-    return {"quote_id": str(q.id), "grams": float(total_grams), "status": q.status}
+    return {
+        "quote_id": str(q.id),
+        "spool_id": str(sp.id),
+        "grams": float(total_grams),
+        "status": "attached",
+    }
