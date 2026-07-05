@@ -10,6 +10,7 @@ from backend.infra.db.models.llm_digest import LLMDigest
 from backend.infra.db.models.llm_suggestion import EMBEDDING_DIM, LLMSuggestion
 from backend.infra.db.models.material import MaterialVersion
 from backend.infra.db.models.material_consumption import MaterialConsumption
+from backend.infra.db.models.printer_job import PrinterJob
 from backend.infra.db.models.production_event import ProductionEvent
 from backend.infra.db.models.production_suggestion import ProductionSuggestion
 from backend.infra.db.models.quote import Quote
@@ -28,7 +29,7 @@ from backend.infra.db.models.watcher_inbox_file import WatcherInboxFile
 __all__ = [
     "Asset", "CalibrationInsight", "Client", "DataSourceRun", "Expense", "ExportConfig",
     "KeywordIdea", "KeywordObservation", "LLMDigest", "LLMSuggestion", "EMBEDDING_DIM",
-    "MaterialVersion", "MaterialConsumption", "ProductionEvent",
+    "MaterialVersion", "MaterialConsumption", "PrinterJob", "ProductionEvent",
     "ProductionSuggestion",
     "Person",
     "Quote", "QuoteItem", "QuotePerson", "QuotePhoto", "QuoteService", "Sale", "Service", "Settings", "Spool",

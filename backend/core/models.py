@@ -46,6 +46,12 @@ class WatcherInboxStatus(StrEnum):
     DISCARDED = "discarded"
 
 
+class PrinterJobStatus(StrEnum):
+    PENDING = "pending"
+    LINKED = "linked"
+    DISCARDED = "discarded"
+
+
 class ExpenseCategory(StrEnum):
     MAINTENANCE = "maintenance"
     PARTS = "parts"
