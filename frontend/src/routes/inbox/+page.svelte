@@ -3,12 +3,35 @@
   import { goto } from "$app/navigation";
   import { api, errorMessage } from "$lib/api";
   import { handleApiError, requireAuth } from "$lib/guard";
-  import type { AutoNameOut, Client, InboxItem, QuoteKind } from "$lib/types";
+  import type {
+    AutoNameOut,
+    Client,
+    InboxItem,
+    PrinterJobItem,
+    Quote,
+    QuoteKind,
+    Spool,
+  } from "$lib/types";
 
   let rows: InboxItem[] = [];
   let clients: Client[] = [];
   let loading = true;
   let listError = "";
+
+  // Impressora: jobs capturados do Moonraker (via agente local), atachados a
+  // um orçamento que o usuário criou. Atachar só vincula + grava as gramas
+  // reais; a baixa de estoque acontece depois, no "Produzir" do orçamento.
+  let pjRows: PrinterJobItem[] = [];
+  let pjError = "";
+  let spools: Spool[] = [];
+  let quotes: Quote[] = [];
+
+  let attaching: PrinterJobItem | null = null;
+  let aQuote = "";
+  let aSpool = "";
+  let aSubmitting = false;
+  let aError = "";
+  let aDone = "";
 
   let promoting: InboxItem | null = null;
   let pKind: QuoteKind = "commercial";
@@ -131,10 +154,79 @@
     }
   }
 
+  async function loadPrinterJobs() {
+    pjError = "";
+    try {
+      pjRows = await api<PrinterJobItem[]>("/printer-jobs");
+    } catch (err) {
+      handleApiError(err);
+      pjError = errorMessage(err, "Falha ao carregar impressos.");
+    }
+  }
+
+  async function loadAttachRefs() {
+    try {
+      [spools, quotes] = await Promise.all([
+        api<Spool[]>("/spools"),
+        api<Quote[]>("/quotes"),
+      ]);
+    } catch (err) {
+      handleApiError(err);
+    }
+  }
+
+  function openAttach(r: PrinterJobItem) {
+    attaching = r;
+    aQuote = "";
+    aSpool = "";
+    aError = "";
+    aDone = "";
+  }
+
+  async function confirmAttach() {
+    if (!attaching || !aQuote || !aSpool) return;
+    aError = "";
+    aSubmitting = true;
+    try {
+      await api(`/printer-jobs/${attaching.id}/link`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ quote_id: aQuote, spool_id: aSpool }),
+      });
+      attaching = null;
+      // Orienta o próximo passo manual: produzir o orçamento (baixa o estoque).
+      aDone = aQuote;
+      await loadPrinterJobs();
+    } catch (err) {
+      handleApiError(err);
+      aError = errorMessage(err, "Falha ao atachar.");
+    } finally {
+      aSubmitting = false;
+    }
+  }
+
+  async function discardPrinterJob(r: PrinterJobItem) {
+    if (!confirm(`Descartar impresso "${r.filename ?? r.machine}"?`)) return;
+    try {
+      await api(`/printer-jobs/${r.id}`, { method: "DELETE" });
+      await loadPrinterJobs();
+    } catch (err) {
+      handleApiError(err);
+      pjError = errorMessage(err, "Falha ao descartar.");
+    }
+  }
+
+  function mmToM(mm: number | null | undefined): number | null {
+    if (mm === null || mm === undefined) return null;
+    return mm / 1000;
+  }
+
   onMount(() => {
     if (requireAuth()) return;
     loadClients();
     load();
+    loadPrinterJobs();
+    loadAttachRefs();
   });
 </script>
 
@@ -194,6 +286,101 @@
     </table>
   </div>
 </section>
+
+<section class="panel list-panel">
+  <div class="panel-head">
+    <h2 class="section-title">Impressora <span class="count">· {pjRows.length}</span></h2>
+    <button class="tiny ghost" on:click={loadPrinterJobs}>Atualizar</button>
+  </div>
+  <p class="pj-lede">
+    Impressos capturados da impressora. <strong>Atachar</strong> vincula a um
+    orçamento que você criou e registra as gramas reais — a baixa de estoque
+    acontece depois, quando você <strong>Produzir</strong> o orçamento.
+  </p>
+  {#if pjError}<div class="alert">{pjError}</div>{/if}
+  {#if aDone}
+    <div class="ok">
+      Atachado. Agora abra o
+      <a href={`/quotes/${aDone}`}>orçamento</a> e clique em <strong>Produzir</strong>
+      para baixar o estoque pelas gramas reais (selecione o mesmo spool que você atachou).
+    </div>
+  {/if}
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Arquivo</th>
+          <th>Máquina</th>
+          <th class="right">Filamento</th>
+          <th class="right">Tempo</th>
+          <th>Status</th>
+          <th class="right">Ações</th>
+        </tr>
+      </thead>
+      <tbody>
+        {#each pjRows as r (r.id)}
+          <tr>
+            <td class="mono">{r.filename ?? "—"}</td>
+            <td class="mono">{r.machine}</td>
+            <td class="right mono">{fmtNum(mmToM(r.filament_used_mm), 2)} m</td>
+            <td class="right mono">{fmtDur(r.time_s)}</td>
+            <td class="mono">{r.status}</td>
+            <td class="right">
+              <button class="tiny" on:click={() => openAttach(r)}>atachar</button>
+              <button class="tiny danger" on:click={() => discardPrinterJob(r)}>descartar</button>
+            </td>
+          </tr>
+        {/each}
+        {#if pjRows.length === 0}
+          <tr>
+            <td colspan="6"><div class="empty">Nenhum impresso aguardando</div></td>
+          </tr>
+        {/if}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+{#if attaching}
+  <div class="modal-backdrop" on:click|self={() => (attaching = null)}>
+    <div class="modal">
+      <h2>Atachar impresso</h2>
+      <p class="dim mono">{attaching.filename ?? attaching.machine}</p>
+      {#if aError}<div class="alert">{aError}</div>{/if}
+      <form on:submit|preventDefault={confirmAttach} class="form-grid">
+        <label class="field full">
+          Orçamento
+          <select bind:value={aQuote}>
+            <option value="">— escolha —</option>
+            {#each quotes as q}
+              <option value={q.id}>{q.id.slice(0, 8)} · {q.kind} · {q.status}</option>
+            {/each}
+          </select>
+        </label>
+        <label class="field full">
+          Filamento usado (spool)
+          <select bind:value={aSpool}>
+            <option value="">— escolha —</option>
+            {#each spools as sp}
+              <option value={sp.id}>
+                {sp.material_type}{sp.color ? ` ${sp.color}` : ""} · {fmtNum(Number(sp.remaining_grams), 0)}g
+              </option>
+            {/each}
+          </select>
+        </label>
+        <div class="actions">
+          <button type="button" class="ghost" on:click={() => (attaching = null)} disabled={aSubmitting}>
+            Cancelar
+          </button>
+          <button type="submit" disabled={aSubmitting || !aQuote || !aSpool}>
+            {aSubmitting ? "Atachando…" : "Atachar"}
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+{/if}
 
 {#if promoting}
   <div class="modal-backdrop" on:click|self={() => (promoting = null)}>
@@ -342,5 +529,21 @@
   }
   .dim {
     color: var(--muted);
+  }
+  .pj-lede {
+    margin: 0.4rem 0 0.2rem;
+    font-size: 0.86rem;
+    color: var(--muted);
+    max-width: 60ch;
+  }
+  .ok {
+    margin-top: 0.75rem;
+    padding: 0.6rem 0.75rem;
+    border: 1px solid var(--line-strong);
+    background: color-mix(in srgb, var(--ink) 4%, transparent);
+    font-size: 0.88rem;
+  }
+  .ok a {
+    text-decoration: underline;
   }
 </style>
