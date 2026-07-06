@@ -11,7 +11,7 @@ from backend.api.routes import (
     auth, users, clients, materials, services, spools,
     settings as settings_routes, quotes, dashboard, inbox, health,
     calibration, capacity, trends, config, llm, library, insights, accounting,
-    people,
+    people, printer,
 )
 from backend.infra.watcher.runner import start_background_task as start_watcher
 
@@ -77,6 +77,8 @@ app.include_router(settings_routes.router, prefix="/settings", tags=["settings"]
 app.include_router(quotes.router, prefix="/quotes", tags=["quotes"])
 app.include_router(dashboard.router, prefix="/dashboard", tags=["dashboard"])
 app.include_router(inbox.router, prefix="/inbox", tags=["inbox"])
+app.include_router(printer.ingest_router, prefix="/ingest", tags=["ingest"])
+app.include_router(printer.router, prefix="/printer-jobs", tags=["printer-jobs"])
 app.include_router(calibration.router, prefix="/calibration", tags=["calibration"])
 app.include_router(capacity.router, prefix="/capacity", tags=["capacity"])
 app.include_router(trends.router, prefix="/trends", tags=["trends"])

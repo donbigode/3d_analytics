@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.api.deps import db_session, require_user
 from backend.api.schemas.quotes import (
     CompleteRequest,
+    ConsumptionAssignment,
     FailRequest,
     ProduceRequest,
     QuoteCreate,
@@ -691,16 +692,9 @@ async def t_approve(
     return await _quote_out(session, q)
 
 
-@router.post("/{quote_id}/transitions/produce", response_model=QuoteOut)
-async def t_produce(
-    quote_id: UUID,
-    payload: ProduceRequest,
-    _: User = Depends(require_user),
-    session: AsyncSession = Depends(db_session),
-):
-    q = await session.get(Quote, quote_id)
-    if not q:
-        raise HTTPException(404)
+async def apply_production(
+    session: AsyncSession, q: Quote, assignments: list[ConsumptionAssignment]
+) -> None:
     # Produce = "send to the printer queue": debit the selected spools and move
     # to em_producao (the FIFO in Capacidade, where Concluir/Falhar happen).
     # Commercial enters from aprovado; personal finalize-and-produces from draft.
@@ -717,7 +711,7 @@ async def t_produce(
     else:
         raise HTTPException(400, "unsupported quote kind for produce")
 
-    for assign in payload.consumption:
+    for assign in assignments:
         it = await session.get(QuoteItem, UUID(assign.quote_item_id))
         sp = await session.get(Spool, UUID(assign.spool_id))
         if not it or it.quote_id != q.id or not sp:
@@ -754,6 +748,19 @@ async def t_produce(
             )
         )
     q.status = QuoteStatus.EM_PRODUCAO
+
+
+@router.post("/{quote_id}/transitions/produce", response_model=QuoteOut)
+async def t_produce(
+    quote_id: UUID,
+    payload: ProduceRequest,
+    _: User = Depends(require_user),
+    session: AsyncSession = Depends(db_session),
+):
+    q = await session.get(Quote, quote_id)
+    if not q:
+        raise HTTPException(404)
+    await apply_production(session, q, payload.consumption)
     await session.commit()
     return await _quote_out(session, q)
 

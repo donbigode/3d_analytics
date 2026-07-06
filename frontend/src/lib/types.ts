@@ -199,6 +199,16 @@ export type InboxItem = {
   created_at: string | null;
 };
 
+export type PrinterJobItem = {
+  id: string;
+  machine: string;
+  filename: string | null;
+  status: string;
+  filament_used_mm: number;
+  time_s: number;
+  created_at: string | null;
+};
+
 export type DashboardOut = {
   cards: {
     receita: number | string;
