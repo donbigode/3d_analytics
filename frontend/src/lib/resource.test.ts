@@ -72,6 +72,55 @@ describe("resource", () => {
     expect(get(r).data).toEqual([1, 2, 3]);
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
+
+  it("descarta o resultado de um reload() superado por outro mais recente, mesmo resolvendo fora de ordem", async () => {
+    let soltaA: (v: number[]) => void = () => {};
+    let soltaB: (v: number[]) => void = () => {};
+    let chamadas = 0;
+    const fetcher = vi.fn(
+      () =>
+        new Promise<number[]>((res) => {
+          chamadas++;
+          if (chamadas === 1) soltaA = res;
+          else soltaB = res;
+        }),
+    );
+    // auto=true (padrão): dispara a chamada #1 (A) já na construção.
+    const r = resource(fetcher);
+    // chamada #2 (B), disparada logo em seguida — é a mais recente das duas.
+    const p2 = r.reload();
+
+    // resolve fora de ordem: a mais recente (B) responde primeiro.
+    soltaB([2]);
+    await p2;
+    expect(get(r).data).toEqual([2]);
+    expect(get(r).loading).toBe(false);
+
+    // A (mais antiga) responde depois — sua chegada tardia não pode
+    // sobrescrever o valor de B, que é a chamada mais recente.
+    soltaA([1]);
+    await tick();
+    expect(get(r).data).toEqual([2]);
+    expect(get(r).loading).toBe(false);
+  });
+
+  it("set() durante um reload() pendente sobrevive à resolução tardia do fetch antigo", async () => {
+    let solta: (v: number[]) => void = () => {};
+    const r = resource(() => new Promise<number[]>((res) => { solta = res; }), { auto: false });
+    const p = r.reload();
+    expect(get(r).loading).toBe(true);
+
+    r.set([9, 9]);
+    expect(get(r).data).toEqual([9, 9]);
+    expect(get(r).loading).toBe(false);
+
+    // o fetch invalidado por set() ainda resolve, mas não pode sobrescrever
+    // a atualização otimista nem deixar loading preso em true.
+    solta([1, 2]);
+    await p;
+    expect(get(r).data).toEqual([9, 9]);
+    expect(get(r).loading).toBe(false);
+  });
 });
 
 describe("action", () => {
@@ -110,5 +159,17 @@ describe("action", () => {
     const a = action(fn as (id: string, body: object) => Promise<null>);
     await a.run("abc", { x: 1 });
     expect(fn).toHaveBeenCalledWith("abc", { x: 1 });
+  });
+
+  it("undefined de run() é ambíguo por si só — .error diferencia sucesso sem retorno de falha", async () => {
+    const semRetorno = action(() => Promise.resolve(undefined));
+    const resOk = await semRetorno.run();
+    expect(resOk).toBeUndefined();
+    expect(get(semRetorno).error).toBe("");
+
+    const falha = action(() => Promise.reject(new ApiError(500, null)));
+    const resFalha = await falha.run();
+    expect(resFalha).toBeUndefined();
+    expect(get(falha).error).not.toBe("");
   });
 });

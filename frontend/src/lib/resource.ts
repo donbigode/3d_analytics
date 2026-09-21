@@ -26,19 +26,31 @@ export function resource<T>(
     data: opts.initial,
   });
 
+  // Token de sequência: cada reload() em curso só pode escrever no store se
+  // ainda for o mais recente quando terminar. Sem isso, dois reload()
+  // concorrentes (ex.: auto-load seguido de um reload() manual) resolvem
+  // fora de ordem e o que responder por último — não o mais recente — vence.
+  // set() também invalida o que estiver em voo, para que uma atualização
+  // otimista nunca seja sobrescrita por um fetch antigo ainda pendente.
+  let seq = 0;
+
   async function reload(): Promise<void> {
+    const mySeq = ++seq;
     update((s) => ({ ...s, loading: true, error: "" }));
     try {
       const data = await fetcher();
+      if (mySeq !== seq) return; // superado por um reload()/set() mais novo — não escreve nada
       update((s) => ({ ...s, loading: false, error: "", data }));
     } catch (err) {
       handleApiError(err);
+      if (mySeq !== seq) return;
       update((s) => ({ ...s, loading: false, error: errorMessage(err, opts.errorMessage) }));
     }
   }
 
   function set(v: T): void {
-    update((s) => ({ ...s, data: v }));
+    seq++; // invalida qualquer reload() em voo, para ele não sobrescrever este valor ao terminar
+    update((s) => ({ ...s, data: v, loading: false }));
   }
 
   if (opts.auto !== false) void reload();
@@ -58,6 +70,10 @@ export function action<A extends unknown[], R>(
 ): Action<A, R> {
   const { subscribe, set } = writable<ActionState>({ pending: false, error: "" });
 
+  /** `undefined` de volta significa "não teve sucesso" OU "teve sucesso e o
+   *  retorno em si é `undefined`" — os dois casos são indistinguíveis pelo
+   *  valor de retorno. Confira `.error` (via `get(action)` ou `$action`) para
+   *  diferenciar: erro não-vazio é falha; erro vazio é sucesso sem retorno. */
   async function run(...args: A): Promise<R | undefined> {
     set({ pending: true, error: "" });
     try {
