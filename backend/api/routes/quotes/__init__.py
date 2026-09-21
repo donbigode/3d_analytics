@@ -8,8 +8,6 @@ qualquer paramétrica `/{quote_id}` de `crud.py`.
 from fastapi import APIRouter
 
 from backend.api.routes.quotes import crud, items, pdf, people, photos, services, transitions
-from backend.api.routes.quotes._shared import _quote_out  # noqa: F401  (usado por testes)
-from backend.api.routes.quotes.transitions import apply_production  # noqa: F401  (usado por printer.py)
 
 router = APIRouter()
 router.include_router(photos.router, prefix="/quotes")      # literais primeiro
@@ -20,4 +18,4 @@ router.include_router(transitions.router, prefix="/quotes")
 router.include_router(people.router, prefix="/quotes")
 router.include_router(pdf.router, prefix="/quotes")
 
-__all__ = ["router", "apply_production", "_quote_out"]
+__all__ = ["router"]
