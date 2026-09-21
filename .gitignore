@@ -17,3 +17,7 @@ build/
 infra/.terraform/
 infra/terraform.tfstate*
 infra/terraform.tfvars
+
+# worktrees de execução (SDD)
+.worktrees/
+.superpowers/
