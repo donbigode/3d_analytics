@@ -63,3 +63,40 @@ async def test_backfill_e_idempotente(auth_client):
         r2 = await s.execute(sql)
         await s.commit()
         assert r2.rowcount == 0, "segunda execução deveria não tocar em nada"
+
+
+@pytest.mark.asyncio
+async def test_filtro_kind_separa_as_listas(auth_client):
+    com = await _quote(QuoteKind.COMMERCIAL, QuoteStatus.APROVADO)
+    pes = await _quote(QuoteKind.PERSONAL, QuoteStatus.PRODUZIDO)
+    await auth_client.post("/accounting/sync")
+
+    r = await auth_client.get("/accounting/sales?kind=commercial")
+    ids = {v["quote_id"] for v in r.json()}
+    assert str(com.id) in ids
+    assert str(pes.id) not in ids
+
+    r = await auth_client.get("/accounting/sales?kind=personal")
+    ids = {v["quote_id"] for v in r.json()}
+    assert str(pes.id) in ids
+    assert str(com.id) not in ids
+
+
+@pytest.mark.asyncio
+async def test_sem_kind_devolve_ambos(auth_client):
+    com = await _quote(QuoteKind.COMMERCIAL, QuoteStatus.APROVADO)
+    pes = await _quote(QuoteKind.PERSONAL, QuoteStatus.PRODUZIDO)
+    await auth_client.post("/accounting/sync")
+    ids = {v["quote_id"] for v in (await auth_client.get("/accounting/sales")).json()}
+    assert {str(com.id), str(pes.id)} <= ids
+
+
+@pytest.mark.asyncio
+async def test_sale_out_traz_quote_kind_e_produced_on(auth_client):
+    pes = await _quote(QuoteKind.PERSONAL, QuoteStatus.PRODUZIDO)
+    await auth_client.post("/accounting/sync")
+    venda = next(v for v in (await auth_client.get("/accounting/sales")).json()
+                 if v["quote_id"] == str(pes.id))
+    assert venda["quote_kind"] == "personal"
+    # Sem baixa de material, produced_on é nulo — o DRE cai no created_at.
+    assert "produced_on" in venda

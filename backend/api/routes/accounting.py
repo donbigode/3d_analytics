@@ -3,7 +3,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.api.deps import db_session, require_user
@@ -17,15 +17,19 @@ from backend.core.accounting.export_xlsx import build_dre_xlsx
 from backend.core.accounting.monthly import compute_dre_monthly
 from backend.core.accounting.profitability import compute_profitability
 from backend.core.accounting.sync import sync_sales
-from backend.infra.db.models import Client, Expense, Quote, Sale, User
+from backend.core.models import QuoteKind
+from backend.infra.db.models import (
+    Client, Expense, MaterialConsumption, Quote, QuoteItem, Sale, User,
+)
 
 router = APIRouter()
 
 
 def _sale_out(s: Sale, itens_label: str = "", client_name: str | None = None,
-              quote_seq: int = 0) -> SaleOut:
+              quote_seq: int = 0, produced_on: date | None = None) -> SaleOut:
     return SaleOut(
         id=str(s.id), quote_id=str(s.quote_id), quote_seq=quote_seq,
+        quote_kind=s.quote_kind, produced_on=produced_on,
         quote_status=s.quote_status,
         quote_total=s.quote_total, cpv_calc=s.cpv_calc,
         client_id=str(s.client_id) if s.client_id else None,
@@ -42,6 +46,23 @@ async def _client_name(session: AsyncSession, s: Sale) -> str | None:
     return c.name if c else None
 
 
+async def _produced_on_map(session: AsyncSession, quote_ids: list[UUID]) -> dict[UUID, date]:
+    """Menor consumed_at por orçamento — mesmo critério de atribuição de
+    período que _perda_operacional usa no DRE (backend/core/accounting/dre.py).
+    Uma query para todos os quote_ids, evitando N+1."""
+    if not quote_ids:
+        return {}
+    rows = (
+        await session.execute(
+            select(QuoteItem.quote_id, func.min(MaterialConsumption.consumed_at))
+            .join(MaterialConsumption, MaterialConsumption.quote_item_id == QuoteItem.id)
+            .where(QuoteItem.quote_id.in_(quote_ids))
+            .group_by(QuoteItem.quote_id)
+        )
+    ).all()
+    return {qid: (dt.date() if hasattr(dt, "date") else dt) for qid, dt in rows}
+
+
 def _expense_out(e: Expense) -> ExpenseOut:
     return ExpenseOut(id=str(e.id), category=e.category, description=e.description,
                       amount=e.amount, incurred_at=e.incurred_at, is_recurring=e.is_recurring)
@@ -56,11 +77,14 @@ async def run_sync(_: User = Depends(require_user), session: AsyncSession = Depe
 async def list_sales(
     _: User = Depends(require_user),
     session: AsyncSession = Depends(db_session),
+    kind: QuoteKind | None = Query(None),
     is_sold: bool | None = Query(None),
     is_stale: bool | None = Query(None),
 ):
     await sync_sales(session)  # lazy: materializa ao abrir a aba
     stmt = select(Sale).order_by(Sale.created_at.desc())
+    if kind is not None:
+        stmt = stmt.where(Sale.quote_kind == kind.value)
     if is_sold is not None:
         stmt = stmt.where(Sale.is_sold.is_(is_sold))
     if is_stale is not None:
@@ -74,10 +98,15 @@ async def list_sales(
             select(Quote.id, Quote.seq).where(Quote.id.in_([s.quote_id for s in rows]))
         )).all()
     )
+    produced_on_por_quote = await _produced_on_map(session, [s.quote_id for s in rows])
     return [
         _sale_out(
             s, await sale_items_label(session, s), await _client_name(session, s),
+            # Sale.quote_id é not-null/unique/CASCADE — toda venda tem
+            # orçamento vivo, então o .get() nunca cai no default 0.
+            # Mantido como defesa, não como caminho esperado.
             quote_seq=seq_por_quote.get(s.quote_id, 0),
+            produced_on=produced_on_por_quote.get(s.quote_id),
         )
         for s in rows
     ]
@@ -103,6 +132,9 @@ async def update_sale(
             sale.sold_at = datetime.now(timezone.utc).date()
     await session.commit(); await session.refresh(sale)
     quote_seq = await session.scalar(select(Quote.seq).where(Quote.id == sale.quote_id))
+    # Mesma defesa do list_sales: sale.quote_id sempre aponta pra um Quote
+    # vivo (not-null/unique/CASCADE, e update_sale já deu 404 antes se não
+    # achou a venda), então "or 0" nunca é exercitado de fato.
     return _sale_out(sale, quote_seq=quote_seq or 0)
 
 
