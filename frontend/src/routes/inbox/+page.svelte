@@ -434,11 +434,7 @@
   .page-head {
     margin-bottom: 2rem;
   }
-  .table-wrap {
-    border: 1px solid var(--line);
-    overflow-x: auto;
-    margin-top: 1rem;
-  }
+  /* .table-wrap agora vive em app.css (mesmos valores) */
   table {
     width: 100%;
     border-collapse: collapse;
@@ -469,10 +465,11 @@
   td.dim {
     color: var(--muted);
   }
+  /* Override local: padding/letter-spacing diferentes do padrão global
+     (mantém aparência já existente nesta página) */
   .empty {
     padding: 2rem 1rem;
     text-align: center;
-    color: var(--muted);
     font-family: var(--font-mono);
     font-size: 0.74rem;
     letter-spacing: 0.16em;
@@ -515,17 +512,13 @@
   .field.full {
     grid-column: 1 / -1;
   }
+  /* Override local: sem o flex/gap/margem-inferior padrão de app.css —
+     o espaçamento entre título e contador aqui vem só do espaço no texto
+     (mantém aparência já existente antes desta classe virar global) */
   .section-title {
-    font-family: var(--font-mono);
-    font-size: 0.72rem;
-    letter-spacing: 0.22em;
-    text-transform: uppercase;
-    color: var(--ink);
+    display: block;
+    gap: 0;
     margin: 0;
-  }
-  .section-title .count {
-    color: var(--muted);
-    font-weight: 400;
   }
   .dim {
     color: var(--muted);
