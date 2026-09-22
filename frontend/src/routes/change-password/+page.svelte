@@ -1,14 +1,24 @@
 <script lang="ts">
   import { goto } from "$app/navigation";
-  import { api, errorMessage } from "$lib/api";
-  import { handleApiError, requireAuth } from "$lib/guard";
+  import { api } from "$lib/api";
+  import { requireAuth } from "$lib/guard";
+  import { action } from "$lib/resource";
   import { onMount } from "svelte";
 
   let current = "";
   let next = "";
   let confirm = "";
-  let submitting = false;
   let error = "";
+
+  const changePasswordAction = action(
+    (currentPassword: string, newPassword: string) =>
+      api("/auth/change-password", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
+      }),
+    { errorMessage: "Falha ao trocar senha." },
+  );
 
   onMount(() => requireAuth());
 
@@ -18,20 +28,12 @@
       error = "As senhas não conferem.";
       return;
     }
-    submitting = true;
-    try {
-      await api("/auth/change-password", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ current_password: current, new_password: next }),
-      });
-      goto("/");
-    } catch (err) {
-      handleApiError(err);
-      error = errorMessage(err, "Falha ao trocar senha.");
-    } finally {
-      submitting = false;
+    await changePasswordAction.run(current, next);
+    if ($changePasswordAction.error) {
+      error = $changePasswordAction.error;
+      return;
     }
+    goto("/");
   }
 </script>
 
@@ -59,8 +61,8 @@
     </label>
     {#if error}<p class="alert">{error}</p>{/if}
     <div class="actions">
-      <button type="submit" disabled={submitting || !current || !next || !confirm}>
-        {submitting ? "Salvando…" : "Salvar e continuar"}
+      <button type="submit" disabled={$changePasswordAction.pending || !current || !next || !confirm}>
+        {$changePasswordAction.pending ? "Salvando…" : "Salvar e continuar"}
       </button>
     </div>
   </form>
