@@ -433,6 +433,9 @@
     min-height: 2.4em;
     line-height: 1.2;
   }
+  /* Override local: .hint aqui nunca teve cor própria (cinza-mudo é novo em
+     app.css); mantém herdada pra não mudar a aparência desta página */
+  .hint { color: inherit; }
   .inline-actions {
     display: flex;
     gap: 0.4rem;

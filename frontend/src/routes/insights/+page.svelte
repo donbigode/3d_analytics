@@ -619,6 +619,9 @@
   .pp-num { text-align: right; font-variant-numeric: tabular-nums; }
   .pp-empty { color: var(--muted); text-align: center; }
   .pp-hint { color: var(--muted); font-size: 0.85rem; margin-top: 0.5rem; }
+  /* Override local: a tabela de falhas nunca teve moldura/margem aqui;
+     mantém sem borda (overflow-x continua herdado, útil pra telas estreitas) */
+  .table-wrap { border: none; margin-top: 0; }
   .page-head {
     margin-bottom: 1.5rem;
   }
@@ -803,10 +806,11 @@
     display: inline-flex;
     gap: 0.4rem;
   }
+  /* Override local: padding/letter-spacing diferentes do padrão global
+     (mantém aparência já existente nesta página) */
   .empty {
     padding: 2rem 1rem;
     text-align: center;
-    color: var(--muted);
     font-family: var(--font-mono);
     font-size: 0.74rem;
     letter-spacing: 0.16em;
@@ -959,9 +963,9 @@
     font-size: 0.9rem;
     line-height: 1.4;
   }
+  /* Override local: tamanho/margem próprios (cor já vem de app.css) */
   .hint {
     font-size: 0.8rem;
-    color: var(--muted);
     margin: 0.5rem 0 0;
   }
 </style>

@@ -343,4 +343,7 @@
   .page-head { margin-bottom: 2rem; }
   .list-panel { margin-top: 2rem; }
   .actions { display: flex; justify-content: flex-end; }
+  /* Override local: .hint aqui nunca teve cor própria (cinza-mudo é novo em
+     app.css); mantém herdada pra não mudar a aparência desta página */
+  .hint { color: inherit; }
 </style>
