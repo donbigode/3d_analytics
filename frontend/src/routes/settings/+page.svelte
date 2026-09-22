@@ -1,36 +1,62 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { api, errorMessage } from "$lib/api";
-  import { handleApiError, requireAuth } from "$lib/guard";
+  import { api } from "$lib/api";
+  import { requireAuth } from "$lib/guard";
+  import { resource, action } from "$lib/resource";
   import { appSettings } from "$lib/stores/settings";
   import type { Person, Settings } from "$lib/types";
 
+  const settingsRes = resource(
+    async () => {
+      const s = await api<Settings>("/settings");
+      appSettings.set(s);
+      return s;
+    },
+    { errorMessage: "Falha ao carregar configurações.", auto: false },
+  );
+  // Cópia mutável local: os campos do formulário usam bind:value diretamente
+  // nela (edição livre antes de salvar), então não pode ser o próprio dado
+  // do resource() — reatribuir aqui só acontece quando o resource troca de
+  // referência de verdade (reload()/set() bem-sucedidos), nunca a cada
+  // digitação do usuário.
   let settings: Settings | null = null;
-  let loading = true;
-  let loadError = "";
+  $: if ($settingsRes.data) settings = $settingsRes.data;
 
-  let submitting = false;
-  let saveError = "";
   let saveOk = false;
+  const saveAction = action(
+    (body: Record<string, unknown>) =>
+      api<Settings>("/settings", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      }),
+    { errorMessage: "Falha ao salvar configurações." },
+  );
 
   let logoFile: FileList | null = null;
-  let logoError = "";
-  let logoSubmitting = false;
   let logoVersion = 0; // bust cache after upload
-
-  async function load() {
-    loading = true;
-    loadError = "";
-    try {
-      settings = await api<Settings>("/settings");
-      appSettings.set(settings);
-    } catch (err) {
-      handleApiError(err);
-      loadError = errorMessage(err, "Falha ao carregar configurações.");
-    } finally {
-      loading = false;
-    }
-  }
+  const uploadLogoAction = action(
+    async (file: File) => {
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await fetch("/api/settings/logo", {
+        method: "POST",
+        body: fd,
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return (await res.json()) as Settings;
+    },
+    { errorMessage: "Falha ao enviar o logo." },
+  );
+  const removeLogoAction = action(() => api<Settings>("/settings/logo", { method: "DELETE" }), {
+    errorMessage: "Falha ao remover o logo.",
+  });
+  // Upload e remoção dividem o mesmo alerta de logo — um bem-sucedido não
+  // pode deixar preso o erro do outro (cada função zera o irmão antes de
+  // rodar, igual ao logoError = "" único que existia antes daqui).
+  $: logoError = $uploadLogoAction.error || $removeLogoAction.error;
+  $: logoSubmitting = $uploadLogoAction.pending || $removeLogoAction.pending;
 
   $: autoDepRate = (() => {
     if (!settings) return "0,00";
@@ -50,141 +76,95 @@
 
   async function save() {
     if (!settings) return;
-    saveError = "";
     saveOk = false;
-    submitting = true;
-    try {
-      const updated = await api<Settings>("/settings", {
-        method: "PUT",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          energy_kwh_price: settings.energy_kwh_price,
-          printer_power_w: settings.printer_power_w,
-          printer_purchase_price: settings.printer_purchase_price,
-          printer_useful_life_hours: settings.printer_useful_life_hours,
-          printer_depreciation_per_hour: settings.printer_depreciation_per_hour,
-          printer_maintenance_per_hour: settings.printer_maintenance_per_hour,
-          printer_hours_per_day: settings.printer_hours_per_day,
-          revenue_tax_pct: settings.revenue_tax_pct,
-          currency: settings.currency,
-          business_name: settings.business_name,
-          business_tagline: settings.business_tagline,
-          brand_color_primary: settings.brand_color_primary,
-          stalled_quote_alert_days: settings.stalled_quote_alert_days,
-          low_spool_threshold_g: settings.low_spool_threshold_g,
-        }),
-      });
-      settings = updated;
-      appSettings.set(updated);
-      saveOk = true;
-    } catch (err) {
-      handleApiError(err);
-      saveError = errorMessage(err, "Falha ao salvar configurações.");
-    } finally {
-      submitting = false;
-    }
+    const updated = await saveAction.run({
+      energy_kwh_price: settings.energy_kwh_price,
+      printer_power_w: settings.printer_power_w,
+      printer_purchase_price: settings.printer_purchase_price,
+      printer_useful_life_hours: settings.printer_useful_life_hours,
+      printer_depreciation_per_hour: settings.printer_depreciation_per_hour,
+      printer_maintenance_per_hour: settings.printer_maintenance_per_hour,
+      printer_hours_per_day: settings.printer_hours_per_day,
+      revenue_tax_pct: settings.revenue_tax_pct,
+      currency: settings.currency,
+      business_name: settings.business_name,
+      business_tagline: settings.business_tagline,
+      brand_color_primary: settings.brand_color_primary,
+      stalled_quote_alert_days: settings.stalled_quote_alert_days,
+      low_spool_threshold_g: settings.low_spool_threshold_g,
+    });
+    if (!updated) return;
+    settingsRes.set(updated);
+    appSettings.set(updated);
+    saveOk = true;
   }
 
   async function uploadLogo() {
     if (!logoFile || logoFile.length === 0) return;
-    logoError = "";
-    logoSubmitting = true;
-    try {
-      const fd = new FormData();
-      fd.append("file", logoFile[0]);
-      const res = await fetch("/api/settings/logo", {
-        method: "POST",
-        body: fd,
-        credentials: "include",
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const updated = (await res.json()) as Settings;
-      settings = updated;
-      appSettings.set(updated);
-      logoFile = null;
-      logoVersion += 1;
-    } catch (err) {
-      handleApiError(err);
-      logoError = errorMessage(err, "Falha ao enviar o logo.");
-    } finally {
-      logoSubmitting = false;
-    }
+    removeLogoAction.reset();
+    const updated = await uploadLogoAction.run(logoFile[0]);
+    if (!updated) return;
+    settingsRes.set(updated);
+    appSettings.set(updated);
+    logoFile = null;
+    logoVersion += 1;
   }
 
   async function removeLogo() {
     if (!confirm("Remover o logo atual?")) return;
-    logoError = "";
-    logoSubmitting = true;
-    try {
-      const updated = await api<Settings>("/settings/logo", { method: "DELETE" });
-      settings = updated;
-      appSettings.set(updated);
-      logoVersion += 1;
-    } catch (err) {
-      handleApiError(err);
-      logoError = errorMessage(err, "Falha ao remover o logo.");
-    } finally {
-      logoSubmitting = false;
-    }
+    uploadLogoAction.reset();
+    const updated = await removeLogoAction.run();
+    if (!updated) return;
+    settingsRes.set(updated);
+    appSettings.set(updated);
+    logoVersion += 1;
   }
 
   // Pessoas (projetos pessoais)
-  let people: Person[] = [];
+  const peopleRes = resource(() => api<Person[]>("/people"), { initial: [], auto: false });
+  $: people = $peopleRes.data ?? [];
   let newPersonName = "";
-  let peopleError = "";
-
-  async function loadPeople() {
-    try {
-      people = await api<Person[]>("/people");
-    } catch (err) {
-      handleApiError(err);
-    }
-  }
+  const addPersonAction = action(
+    (name: string) =>
+      api<Person>("/people", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name }),
+      }),
+    { errorMessage: "Falha ao adicionar pessoa." },
+  );
+  const togglePersonActiveAction = action((p: Person) =>
+    api<Person>(`/people/${p.id}`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ active: !p.active }),
+    }),
+  );
+  const deletePersonAction = action((p: Person) => api(`/people/${p.id}`, { method: "DELETE" }));
 
   async function addPerson() {
     const name = newPersonName.trim();
     if (!name) return;
-    peopleError = "";
-    try {
-      await api<Person>("/people", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ name }),
-      });
-      newPersonName = "";
-      await loadPeople();
-    } catch (err) {
-      handleApiError(err);
-      peopleError = errorMessage(err, "Falha ao adicionar pessoa.");
-    }
+    const created = await addPersonAction.run(name);
+    if (!created) return;
+    newPersonName = "";
+    await peopleRes.reload();
   }
 
   async function togglePersonActive(p: Person) {
-    try {
-      await api<Person>(`/people/${p.id}`, {
-        method: "PUT",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ active: !p.active }),
-      });
-      await loadPeople();
-    } catch (err) {
-      handleApiError(err);
-    }
+    await togglePersonActiveAction.run(p);
+    if (!$togglePersonActiveAction.error) await peopleRes.reload();
   }
 
   async function deletePerson(p: Person) {
-    try {
-      await api(`/people/${p.id}`, { method: "DELETE" });
-      await loadPeople();
-    } catch (err) {
-      handleApiError(err);
-    }
+    await deletePersonAction.run(p);
+    if (!$deletePersonAction.error) await peopleRes.reload();
   }
 
   onMount(() => {
     if (requireAuth()) return;
-    load();
-    loadPeople();
+    settingsRes.reload();
+    peopleRes.reload();
   });
 </script>
 
@@ -194,10 +174,10 @@
   <p class="page-lede">Parâmetros globais usados nos cálculos de custo e na identidade visual dos orçamentos.</p>
 </header>
 
-{#if loading}
+{#if $settingsRes.loading}
   <p>Carregando…</p>
-{:else if loadError}
-  <div class="alert">{loadError}</div>
+{:else if $settingsRes.error}
+  <div class="alert">{$settingsRes.error}</div>
 {:else if settings}
   <section class="panel">
     <div class="panel-head">
@@ -344,7 +324,7 @@
       Quem aparece pra marcar nos projetos pessoais (Otávio, Ana…). Inativar
       mantém o histórico; excluir remove as atribuições.
     </p>
-    {#if peopleError}<div class="alert">{peopleError}</div>{/if}
+    {#if $addPersonAction.error}<div class="alert">{$addPersonAction.error}</div>{/if}
     <ul class="people-list">
       {#each people as p (p.id)}
         <li class:inactive={!p.active}>
@@ -368,10 +348,10 @@
   </section>
 
   <div class="bottom-actions">
-    {#if saveError}<div class="alert">{saveError}</div>{/if}
+    {#if $saveAction.error}<div class="alert">{$saveAction.error}</div>{/if}
     {#if saveOk}<div class="ok">Configurações salvas.</div>{/if}
-    <button type="button" on:click={save} disabled={submitting}>
-      {submitting ? "Salvando…" : "Salvar todas as alterações"}
+    <button type="button" on:click={save} disabled={$saveAction.pending}>
+      {$saveAction.pending ? "Salvando…" : "Salvar todas as alterações"}
     </button>
   </div>
 {/if}
