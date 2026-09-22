@@ -1,4 +1,4 @@
-from datetime import date, datetime, timezone
+from datetime import date
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -63,6 +63,10 @@ async def _produced_on_map(session: AsyncSession, quote_ids: list[UUID]) -> dict
     return {qid: (dt.date() if hasattr(dt, "date") else dt) for qid, dt in rows}
 
 
+async def _quote_seq(session: AsyncSession, quote_id: UUID) -> int:
+    return (await session.execute(select(Quote.seq).where(Quote.id == quote_id))).scalar() or 0
+
+
 def _expense_out(e: Expense) -> ExpenseOut:
     return ExpenseOut(id=str(e.id), category=e.category, description=e.description,
                       amount=e.amount, incurred_at=e.incurred_at, is_recurring=e.is_recurring)
@@ -123,19 +127,29 @@ async def update_sale(
     data = payload.model_dump(exclude_unset=True)
     for k, v in data.items():
         setattr(sale, k, v)
-    # Uma venda confirmada precisa de receita e data: preenche defaults se
-    # ficaram nulos (inclusive se o cliente mandou null explícito).
+
     if sale.is_sold:
+        # A receita tem palpite óbvio (o total do orçamento); a data não.
+        # Antes daqui, sold_at era preenchido com hoje em silêncio e a venda
+        # caía no mês corrente do DRE mesmo tendo ocorrido em outro.
         if sale.confirmed_revenue is None:
             sale.confirmed_revenue = sale.quote_total
         if sale.sold_at is None:
-            sale.sold_at = datetime.now(timezone.utc).date()
-    await session.commit(); await session.refresh(sale)
-    quote_seq = await session.scalar(select(Quote.seq).where(Quote.id == sale.quote_id))
-    # Mesma defesa do list_sales: sale.quote_id sempre aponta pra um Quote
-    # vivo (not-null/unique/CASCADE, e update_sale já deu 404 antes se não
-    # achou a venda), então "or 0" nunca é exercitado de fato.
-    return _sale_out(sale, quote_seq=quote_seq or 0)
+            raise HTTPException(422, "informe a data da venda")
+    else:
+        # Desmarcar limpa: receita confirmada sem venda não significa nada, e
+        # deixar a data para trás fazia remarcar ressuscitar o mês errado.
+        sale.sold_at = None
+        sale.confirmed_revenue = None
+
+    await session.commit()
+    await session.refresh(sale)
+    return _sale_out(
+        sale,
+        await sale_items_label(session, sale),
+        await _client_name(session, sale),
+        quote_seq=await _quote_seq(session, sale.quote_id),
+    )
 
 
 @router.get("/expenses", response_model=list[ExpenseOut])

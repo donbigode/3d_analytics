@@ -440,6 +440,7 @@ export type Sale = {
   quote_id: string;
   quote_seq: number;
   quote_kind: string;
+  produced_on: string | null;
   quote_status: string;
   quote_total: string;
   cpv_calc: string;
