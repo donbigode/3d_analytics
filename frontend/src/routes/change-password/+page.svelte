@@ -69,5 +69,4 @@
 <style>
   .page-head { margin-bottom: 1.5rem; }
   .page-head em { color: var(--brand); font-style: italic; }
-  .alert { color: var(--danger); }
 </style>

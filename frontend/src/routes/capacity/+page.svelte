@@ -342,13 +342,18 @@
     background: var(--brand);
     transition: width 0.3s ease;
   }
+  /* Override local: sem centralização e com padding/letter-spacing menores
+     que o padrão global (mantém aparência já existente nesta página) */
   .empty {
     padding: 1.5rem 1rem;
-    color: var(--muted);
+    text-align: left;
     font-family: var(--font-mono);
     font-size: 0.78rem;
     letter-spacing: 0.12em;
     text-transform: uppercase;
   }
   a.tiny { text-decoration: none; }
+  /* A tabela da fila FIFO nunca teve moldura/margem aqui; mantém sem
+     borda (overflow-x continua herdado, útil pra telas estreitas) */
+  .table-wrap { border: none; margin-top: 0; }
 </style>

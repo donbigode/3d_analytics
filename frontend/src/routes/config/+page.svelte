@@ -656,15 +656,18 @@
     align-items: center;
     gap: 0.5rem;
   }
+  /* Override local: sem centralização e com padding/letter-spacing menores
+     que o padrão global (mantém aparência já existente nesta página) */
   .empty {
     padding: 1.5rem 0;
-    color: var(--muted);
+    text-align: left;
     font-family: var(--font-mono);
     font-size: 0.78rem;
     letter-spacing: 0.12em;
     text-transform: uppercase;
   }
-  .hint { color: var(--muted); font-size: 0.85rem; margin-top: 0.5rem; }
+  /* Override local: tamanho/margem próprios (cor já vem de app.css) */
+  .hint { font-size: 0.85rem; margin-top: 0.5rem; }
   .run-ok { color: var(--ok); }
   .run-err { color: var(--danger); }
 </style>
