@@ -43,6 +43,9 @@ class ConsumptionOut(BaseModel):
     manufacturer: str | None
     grams_used: Decimal
     unit_cost_snapshot: Decimal
+    # grams_used * unit_cost_snapshot, sem arredondar por linha — o contábil
+    # (backend/core/accounting/cost.py) soma consumos sem arredondar e só
+    # arredonda o agregado. Quem exibe é responsável por formatar em centavos.
     custo_total: Decimal
     consumed_at: datetime
 

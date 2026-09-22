@@ -34,7 +34,11 @@ async def _quote_com_consumo(n_consumos: int = 1):
         s.add(it)
         await s.flush()
         base = datetime(2026, 9, 12, tzinfo=timezone.utc)
-        for i in range(n_consumos):
+        # Inserido em ordem CONTRÁRIA à cronológica de propósito: se a rota
+        # confiasse na ordem de inserção (ou em qualquer ordem incidental do
+        # plano de query) em vez de um ORDER BY explícito, o teste de
+        # ordenação abaixo pegaria isso.
+        for i in reversed(range(n_consumos)):
             s.add(MaterialConsumption(
                 quote_item_id=it.id, spool_id=sp.id, grams_used=Decimal("48.20"),
                 unit_cost_snapshot=Decimal("0.1000"),
@@ -93,9 +97,31 @@ async def test_custo_congelado_nao_muda_quando_a_bobina_encarece(auth_client):
 
 @pytest.mark.asyncio
 async def test_consumos_nao_reintroduzem_n_mais_1(auth_client):
+    """Um teto absoluto solto (ex.: "< 20") não prova nada: um N+1 ingênuo
+    para 7 itens fica bem abaixo disso e passaria mesmo assim. O que prova
+    ausência de N+1 é a contagem NÃO crescer com o número de itens — por
+    isso medimos a mesma rota com 1 item e de novo com 7, e exigimos que a
+    diferença fique presa a uma constante pequena."""
     from sqlalchemy import event
 
     q, it, sp = await _quote_com_consumo()
+
+    async def _contar_async(coro_factory):
+        contador = {"n": 0}
+
+        def antes(conn, cursor, statement, params, context, executemany):
+            contador["n"] += 1
+
+        event.listen(session_module.engine.sync_engine, "before_cursor_execute", antes)
+        try:
+            r = await coro_factory()
+            assert r.status_code == 200
+        finally:
+            event.remove(session_module.engine.sync_engine, "before_cursor_execute", antes)
+        return contador["n"]
+
+    base = await _contar_async(lambda: auth_client.get(f"/quotes/{q.id}"))
+
     async with session_module.SessionFactory() as s:
         for i in range(6):
             extra = QuoteItem(quote_id=q.id, name=f"peça {i}",
@@ -107,18 +133,9 @@ async def test_consumos_nao_reintroduzem_n_mais_1(auth_client):
                                       unit_cost_snapshot=Decimal("0.1")))
         await s.commit()
 
-    contador = {"n": 0}
+    com_sete_itens = await _contar_async(lambda: auth_client.get(f"/quotes/{q.id}"))
 
-    def antes(conn, cursor, statement, params, context, executemany):
-        contador["n"] += 1
-
-    event.listen(session_module.engine.sync_engine, "before_cursor_execute", antes)
-    try:
-        r = await auth_client.get(f"/quotes/{q.id}")
-        assert r.status_code == 200
-    finally:
-        event.remove(session_module.engine.sync_engine, "before_cursor_execute", antes)
-
-    assert contador["n"] < 20, (
-        f"{contador['n']} queries para 7 itens — consumos estão sendo buscados por item"
+    assert com_sete_itens <= base + 2, (
+        f"{base} queries com 1 item, {com_sete_itens} com 7 itens — consumos "
+        f"parecem estar sendo buscados por item (N+1)"
     )

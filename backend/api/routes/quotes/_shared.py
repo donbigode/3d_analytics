@@ -113,15 +113,23 @@ def _photo_out(p: QuotePhoto) -> QuotePhotoOut:
 
 def _spool_label(sp: Spool) -> str:
     """Mesmo formato (tipo · fabricante · cor) usado no seletor da tela de
-    produzir, para a pessoa reconhecer a bobina nos dois lugares. Os campos
-    que mudam com o tempo (gramas restantes, loja, data de compra) ficam de
-    fora aqui — o consumo é histórico, não um retrato da bobina hoje."""
+    produzir, para a pessoa reconhecer a bobina nos dois lugares.
+
+    ``remaining_grams`` fica de fora — muda com o tempo e o consumo é um
+    registro histórico. ``purchased_at`` e ``purchased_from``, ao contrário,
+    são fixos desde a criação da bobina (como no seletor de produzir) e
+    servem de desambiguador legível para quem comprou a bobina, quando duas
+    bobinas têm o mesmo tipo/fabricante/cor — um sufixo de UUID não serviria
+    porque não aparece em lugar nenhum da tela de produzir."""
     partes = [sp.material_type]
     if sp.manufacturer:
         partes.append(sp.manufacturer)
     if sp.color:
         partes.append(sp.color)
-    partes.append(str(sp.id)[:8])
+    if sp.purchased_from:
+        partes.append(sp.purchased_from)
+    if sp.purchased_at:
+        partes.append(f"{sp.purchased_at.month:02d}/{sp.purchased_at.year}")
     return " · ".join(partes)
 
 
@@ -153,7 +161,13 @@ async def _consumptions_map(
                 unit_cost_snapshot=cons.unit_cost_snapshot,
                 # unit_cost_snapshot é o custo por grama congelado no momento
                 # da baixa — não recalcular pelo preço atual da bobina.
-                custo_total=(cons.grams_used * cons.unit_cost_snapshot).quantize(Decimal("0.01")),
+                # Sem quantize aqui: backend/core/accounting/cost.py soma os
+                # consumos sem arredondar linha a linha e só arredonda o
+                # agregado (padrão _q2 usado em dre.py/facts.py/
+                # profitability.py). Arredondar por linha faria o total do
+                # painel divergir do CPV do DRE em peças com 2+ consumos.
+                # O arredondamento é responsabilidade de quem exibe.
+                custo_total=cons.grams_used * cons.unit_cost_snapshot,
                 consumed_at=cons.consumed_at,
             )
         )
