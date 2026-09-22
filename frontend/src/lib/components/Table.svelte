@@ -1,5 +1,6 @@
 <script lang="ts">
   import { sortRows, filterRows, nextDir, type SortDir } from "$lib/table-logic";
+  import { DASH } from "$lib/format";
 
   type Row = Record<string, unknown>;
   export let columns: {
@@ -34,8 +35,21 @@
 
   function display(col: (typeof columns)[number], row: Row): string {
     const v = (row as Record<string, unknown>)[col.key];
-    if (col.format) return col.format(v, row);
-    if (v === null || v === undefined || v === "") return "—";
+    if (col.format) {
+      // `filterRows` mantém a linha visível mesmo quando o haystack (que
+      // chama display()) lança — mas isso só honra a promessa se o
+      // caminho de desenho tratar o mesmo erro. Sem este try/catch, a
+      // linha que a busca preservou derruba a tabela inteira ao renderizar,
+      // trocando um defeito localizado (célula com travessão) por um em
+      // branco na tela toda.
+      try {
+        return col.format(v, row);
+      } catch (err) {
+        console.warn("Table: format() da coluna lançou; célula mostrada como DASH", col.key, err);
+        return DASH;
+      }
+    }
+    if (v === null || v === undefined || v === "") return DASH;
     return String(v);
   }
 
@@ -58,6 +72,13 @@
             class:right={c.align === "right"}
             class:center={c.align === "center"}
             style:width={c.width ?? "auto"}
+            aria-sort={c.sortable
+              ? sortKey === c.key
+                ? sortDir === "asc"
+                  ? "ascending"
+                  : "descending"
+                : "none"
+              : undefined}
           >
             {#if c.sortable}
               <button type="button" class="sort" on:click={() => toggleSort(c.key)}>
