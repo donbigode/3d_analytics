@@ -1,7 +1,9 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { api, errorMessage } from "$lib/api";
-  import { handleApiError, requireAuth } from "$lib/guard";
+  import { api } from "$lib/api";
+  import { requireAuth } from "$lib/guard";
+  import { resource, action } from "$lib/resource";
+  import { dateTime as fmtDate } from "$lib/format";
   import type { ExportConfig } from "$lib/types";
 
   type Providers = {
@@ -27,8 +29,6 @@
   };
 
   let providers: Providers | null = null;
-  let loading = true;
-  let pageError = "";
 
   // form drafts
   let anthropicInput = "";
@@ -42,9 +42,7 @@
   let preferred = "anthropic";
   let suggestionsEnabled = false;
   let digestAutoEnabled = true;
-  let saving = false;
   let saveOk = false;
-  let saveError = "";
 
   // Data Lake / export
   let exportCfg: ExportConfig | null = null;
@@ -58,8 +56,6 @@
   let dbxHostInput = "";
   let dbxVolumeInput = "";
   let dbxTokenInput = "";
-  let exportSaving = false;
-  let exportRunning = false;
   let exportRunMsg = "";
   let exportRunOk = false;
 
@@ -77,28 +73,64 @@
     dbxTokenInput = "";
   }
 
-  async function load() {
-    loading = true;
-    pageError = "";
-    try {
-      providers = await api<Providers>("/config/providers");
-      preferred = providers.preferred_llm_provider;
-      suggestionsEnabled = providers.llm_suggestions_enabled;
-      digestAutoEnabled = providers.digest_auto_enabled;
-      exportCfg = await api<ExportConfig>("/config/export");
-      syncExportDraft(exportCfg);
-    } catch (err) {
-      handleApiError(err);
-      pageError = errorMessage(err, "Falha ao carregar configurações.");
-    } finally {
-      loading = false;
-    }
+  type ConfigData = { providers: Providers; exportCfg: ExportConfig };
+  const dataRes = resource<ConfigData>(
+    async () => {
+      const providers = await api<Providers>("/config/providers");
+      const exportCfg = await api<ExportConfig>("/config/export");
+      return { providers, exportCfg };
+    },
+    { errorMessage: "Falha ao carregar configurações.", auto: false },
+  );
+  // Reflete a carga nas variáveis locais que os painéis leem — mesmo efeito
+  // colateral que load() fazia antes (inclusive o rascunho do export).
+  $: if ($dataRes.data) {
+    providers = $dataRes.data.providers;
+    exportCfg = $dataRes.data.exportCfg;
+    preferred = providers.preferred_llm_provider;
+    suggestionsEnabled = providers.llm_suggestions_enabled;
+    digestAutoEnabled = providers.digest_auto_enabled;
+    syncExportDraft(exportCfg);
   }
+  $: pageError = $dataRes.error;
+
+  const saveAction = action(
+    (updates: Record<string, unknown>) =>
+      api<Providers>("/config/providers", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(updates),
+      }),
+    { errorMessage: "Falha ao salvar." },
+  );
+  const saveExportAction = action(
+    (payload: Record<string, unknown>) =>
+      api<ExportConfig>("/config/export", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+      }),
+    { errorMessage: "Falha ao salvar o export." },
+  );
+  const runExportAction = action(
+    async () => {
+      const res = await api<{ ok: boolean; detail?: string; counts?: Record<string, number> }>(
+        "/config/export/run",
+        { method: "POST" },
+      );
+      const cfg = await api<ExportConfig>("/config/export");
+      return { res, cfg };
+    },
+    { errorMessage: "Falha ao rodar o export." },
+  );
+  // Os dois formulários de "Salvar" dividem o mesmo banner — um bem-sucedido
+  // não pode deixar preso o erro do outro (cada save() zera o irmão antes de
+  // rodar, igual ao saveError = "" único que existia antes daqui).
+  $: saveError = $saveAction.error || $saveExportAction.error;
 
   async function saveExport() {
-    exportSaving = true;
-    saveError = "";
     saveOk = false;
+    saveAction.reset();
     const payload: Record<string, unknown> = {
       enabled: exportEnabled,
       destination: exportDestination,
@@ -114,89 +146,59 @@
       payload.databricks_volume_path = dbxVolumeInput;
       if (dbxTokenInput) payload.databricks_token = dbxTokenInput;
     }
-    try {
-      exportCfg = await api<ExportConfig>("/config/export", {
-        method: "PUT",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      syncExportDraft(exportCfg);
-      saveOk = true;
-    } catch (err) {
-      handleApiError(err);
-      saveError = errorMessage(err, "Falha ao salvar o export.");
-    } finally {
-      exportSaving = false;
-    }
+    const updated = await saveExportAction.run(payload);
+    if (!updated) return;
+    exportCfg = updated;
+    syncExportDraft(updated);
+    saveOk = true;
   }
 
   async function runExportNow() {
-    exportRunning = true;
     exportRunMsg = "";
-    try {
-      const res = await api<{ ok: boolean; detail?: string; counts?: Record<string, number> }>(
-        "/config/export/run",
-        { method: "POST" },
-      );
-      exportRunOk = res.ok;
-      if (res.ok) {
-        const total = res.counts
-          ? Object.values(res.counts).reduce((a, b) => a + b, 0)
-          : 0;
-        exportRunMsg = `Export concluído — ${total} registros enviados.`;
-      } else {
-        exportRunMsg = res.detail ?? "Falha no export.";
-      }
-      exportCfg = await api<ExportConfig>("/config/export");
-      syncExportDraft(exportCfg);
-    } catch (err) {
-      handleApiError(err);
+    const out = await runExportAction.run();
+    if (!out) {
       exportRunOk = false;
-      exportRunMsg = errorMessage(err, "Falha ao rodar o export.");
-    } finally {
-      exportRunning = false;
+      exportRunMsg = $runExportAction.error;
+      return;
     }
+    exportRunOk = out.res.ok;
+    if (out.res.ok) {
+      const total = out.res.counts ? Object.values(out.res.counts).reduce((a, b) => a + b, 0) : 0;
+      exportRunMsg = `Export concluído — ${total} registros enviados.`;
+    } else {
+      exportRunMsg = out.res.detail ?? "Falha no export.";
+    }
+    exportCfg = out.cfg;
+    syncExportDraft(out.cfg);
   }
 
-  async function save(updates: Record<string, unknown>) {
-    saving = true;
-    saveError = "";
+  async function save(updates: Record<string, unknown>): Promise<boolean> {
     saveOk = false;
-    try {
-      providers = await api<Providers>("/config/providers", {
-        method: "PUT",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(updates),
-      });
-      preferred = providers.preferred_llm_provider;
-      suggestionsEnabled = providers.llm_suggestions_enabled;
-      digestAutoEnabled = providers.digest_auto_enabled;
-      saveOk = true;
-    } catch (err) {
-      handleApiError(err);
-      saveError = errorMessage(err, "Falha ao salvar.");
-    } finally {
-      saving = false;
-    }
+    saveExportAction.reset();
+    const updated = await saveAction.run(updates);
+    if (!updated) return false;
+    providers = updated;
+    preferred = updated.preferred_llm_provider;
+    suggestionsEnabled = updated.llm_suggestions_enabled;
+    digestAutoEnabled = updated.digest_auto_enabled;
+    saveOk = true;
+    return true;
   }
 
   async function saveAnthropic() {
-    await save({ anthropic_api_key: anthropicInput });
-    if (!saveError) anthropicInput = "";
+    if (await save({ anthropic_api_key: anthropicInput })) anthropicInput = "";
   }
   async function clearAnthropic() {
     await save({ anthropic_api_key: "" });
   }
   async function saveGemini() {
-    await save({ gemini_api_key: geminiInput });
-    if (!saveError) geminiInput = "";
+    if (await save({ gemini_api_key: geminiInput })) geminiInput = "";
   }
   async function clearGemini() {
     await save({ gemini_api_key: "" });
   }
   async function saveOpenai() {
-    await save({ openai_api_key: openaiInput });
-    if (!saveError) openaiInput = "";
+    if (await save({ openai_api_key: openaiInput })) openaiInput = "";
   }
   async function clearOpenai() {
     await save({ openai_api_key: "" });
@@ -206,8 +208,7 @@
     if (meliAppIdInput) payload.meli_app_id = meliAppIdInput;
     if (meliSecretInput) payload.meli_client_secret = meliSecretInput;
     if (Object.keys(payload).length === 0) return;
-    await save(payload);
-    if (!saveError) {
+    if (await save(payload)) {
       meliAppIdInput = "";
       meliSecretInput = "";
     }
@@ -220,8 +221,7 @@
     if (redditIdInput) payload.reddit_client_id = redditIdInput;
     if (redditSecretInput) payload.reddit_client_secret = redditSecretInput;
     if (Object.keys(payload).length === 0) return;
-    await save(payload);
-    if (!saveError) {
+    if (await save(payload)) {
       redditIdInput = "";
       redditSecretInput = "";
     }
@@ -230,8 +230,7 @@
     await save({ reddit_client_id: "", reddit_client_secret: "" });
   }
   async function saveYoutube() {
-    await save({ youtube_api_key: youtubeInput });
-    if (!saveError) youtubeInput = "";
+    if (await save({ youtube_api_key: youtubeInput })) youtubeInput = "";
   }
   async function clearYoutube() {
     await save({ youtube_api_key: "" });
@@ -250,7 +249,7 @@
 
   onMount(() => {
     if (requireAuth()) return;
-    load();
+    dataRes.reload();
   });
 </script>
 
@@ -268,7 +267,7 @@
 {#if saveOk}<div class="banner ok">Salvo.</div>{/if}
 {#if saveError}<div class="banner alert">{saveError}</div>{/if}
 
-{#if loading}
+{#if $dataRes.loading}
   <p class="empty">Carregando…</p>
 {:else if providers}
   <section class="panel">
@@ -290,11 +289,11 @@
       </label>
     </div>
     <div class="actions">
-      <button on:click={saveAnthropic} disabled={saving || !anthropicInput}>
-        {saving ? "Salvando…" : "Salvar Anthropic"}
+      <button on:click={saveAnthropic} disabled={$saveAction.pending || !anthropicInput}>
+        {$saveAction.pending ? "Salvando…" : "Salvar Anthropic"}
       </button>
       {#if providers.anthropic_configured}
-        <button class="ghost danger" on:click={clearAnthropic} disabled={saving}>Limpar</button>
+        <button class="ghost danger" on:click={clearAnthropic} disabled={$saveAction.pending}>Limpar</button>
       {/if}
     </div>
   </section>
@@ -318,11 +317,11 @@
       </label>
     </div>
     <div class="actions">
-      <button on:click={saveGemini} disabled={saving || !geminiInput}>
-        {saving ? "Salvando…" : "Salvar Gemini"}
+      <button on:click={saveGemini} disabled={$saveAction.pending || !geminiInput}>
+        {$saveAction.pending ? "Salvando…" : "Salvar Gemini"}
       </button>
       {#if providers.gemini_configured}
-        <button class="ghost danger" on:click={clearGemini} disabled={saving}>Limpar</button>
+        <button class="ghost danger" on:click={clearGemini} disabled={$saveAction.pending}>Limpar</button>
       {/if}
     </div>
   </section>
@@ -346,11 +345,11 @@
       </label>
     </div>
     <div class="actions">
-      <button on:click={saveOpenai} disabled={saving || !openaiInput}>
-        {saving ? "Salvando…" : "Salvar OpenAI"}
+      <button on:click={saveOpenai} disabled={$saveAction.pending || !openaiInput}>
+        {$saveAction.pending ? "Salvando…" : "Salvar OpenAI"}
       </button>
       {#if providers.openai_configured}
-        <button class="ghost danger" on:click={clearOpenai} disabled={saving}>Limpar</button>
+        <button class="ghost danger" on:click={clearOpenai} disabled={$saveAction.pending}>Limpar</button>
       {/if}
     </div>
   </section>
@@ -389,11 +388,11 @@
       </label>
     </div>
     <div class="actions">
-      <button on:click={saveMeli} disabled={saving || (!meliAppIdInput && !meliSecretInput)}>
-        {saving ? "Salvando…" : "Salvar Mercado Livre"}
+      <button on:click={saveMeli} disabled={$saveAction.pending || (!meliAppIdInput && !meliSecretInput)}>
+        {$saveAction.pending ? "Salvando…" : "Salvar Mercado Livre"}
       </button>
       {#if providers.meli_configured}
-        <button class="ghost danger" on:click={clearMeli} disabled={saving}>Limpar</button>
+        <button class="ghost danger" on:click={clearMeli} disabled={$saveAction.pending}>Limpar</button>
       {/if}
     </div>
   </section>
@@ -423,11 +422,11 @@
       </label>
     </div>
     <div class="actions">
-      <button on:click={saveYoutube} disabled={saving || !youtubeInput}>
-        {saving ? "Salvando…" : "Salvar YouTube"}
+      <button on:click={saveYoutube} disabled={$saveAction.pending || !youtubeInput}>
+        {$saveAction.pending ? "Salvando…" : "Salvar YouTube"}
       </button>
       {#if providers.youtube_configured}
-        <button class="ghost danger" on:click={clearYoutube} disabled={saving}>Limpar</button>
+        <button class="ghost danger" on:click={clearYoutube} disabled={$saveAction.pending}>Limpar</button>
       {/if}
     </div>
   </section>
@@ -466,11 +465,11 @@
       </label>
     </div>
     <div class="actions">
-      <button on:click={saveReddit} disabled={saving || (!redditIdInput && !redditSecretInput)}>
-        {saving ? "Salvando…" : "Salvar Reddit"}
+      <button on:click={saveReddit} disabled={$saveAction.pending || (!redditIdInput && !redditSecretInput)}>
+        {$saveAction.pending ? "Salvando…" : "Salvar Reddit"}
       </button>
       {#if providers.reddit_configured}
-        <button class="ghost danger" on:click={clearReddit} disabled={saving}>Limpar</button>
+        <button class="ghost danger" on:click={clearReddit} disabled={$saveAction.pending}>Limpar</button>
       {/if}
     </div>
   </section>
@@ -507,8 +506,8 @@
       </label>
     </div>
     <div class="actions">
-      <button on:click={savePrefs} disabled={saving}>
-        {saving ? "Salvando…" : "Salvar preferências"}
+      <button on:click={savePrefs} disabled={$saveAction.pending}>
+        {$saveAction.pending ? "Salvando…" : "Salvar preferências"}
       </button>
     </div>
     <p class="hint">
@@ -529,7 +528,7 @@
           <strong class:on={exportCfg.last_run_status === "ok"}>
             {exportCfg.last_run_status}
           </strong>
-          · {new Date(exportCfg.last_run_at).toLocaleString("pt-BR")}
+          · {fmtDate(exportCfg.last_run_at)}
         {:else}
           <strong>nunca</strong>
         {/if}
@@ -611,11 +610,11 @@
       </div>
 
       <div class="actions">
-        <button on:click={saveExport} disabled={exportSaving}>
-          {exportSaving ? "Salvando…" : "Salvar destino"}
+        <button on:click={saveExport} disabled={$saveExportAction.pending}>
+          {$saveExportAction.pending ? "Salvando…" : "Salvar destino"}
         </button>
-        <button class="ghost" on:click={runExportNow} disabled={exportRunning}>
-          {exportRunning ? "Exportando…" : "Exportar agora"}
+        <button class="ghost" on:click={runExportNow} disabled={$runExportAction.pending}>
+          {$runExportAction.pending ? "Exportando…" : "Exportar agora"}
         </button>
       </div>
       {#if exportRunMsg}
