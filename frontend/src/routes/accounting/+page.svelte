@@ -74,12 +74,14 @@
     { initial: [], errorMessage: "Falha ao gerar o DRE mensal.", auto: false },
   );
   $: monthlyRows = $monthly.data ?? [];
-  // A limpeza de fato é feita por reloadDre()/reloadMonthly() (cada um chama
-  // reset() no resource() irmão antes de recarregar o seu) — isso já garante
-  // que só um dos dois pode ter erro "fresco" por vez. A seleção por modo
-  // aqui é só uma escolha de exibição por cima disso: evita mostrar, por um
-  // instante, o erro do modo que você acabou de sair enquanto o do modo atual
-  // ainda não voltou (loading) — não é o mecanismo que apaga o erro velho.
+  // A limpeza de fato acontece em dois lugares: reloadDre()/reloadMonthly()
+  // zeram o erro do irmão sempre que de fato recarregam (ver comentário
+  // acima), e a guarda de setDreMode()/openTab() dispara um reload novo ao
+  // entrar num modo cuja última tentativa falhou (não só quando está vazio) —
+  // então um erro nunca fica só escondido, ele é refeito. A seleção por modo
+  // aqui embaixo é puramente de exibição, por cima disso: evita mostrar, por
+  // um instante, o erro do modo que você acabou de sair enquanto o do modo
+  // atual ainda está recarregando.
   $: dreError = dreMode === "mensal" ? $monthly.error : $dre.error;
 
   const prof = resource(() => api<Profitability>(`/accounting/profitability?from=${from}&to=${to}`), {
@@ -122,10 +124,12 @@
   }
   // Mesmo raciocínio para o DRE: dre e monthly são dois resource() (não um
   // resource()+action()), mas o problema é idêntico — um reload() bem-sucedido
-  // num modo não apaga o erro velho que ficou no outro. reset() cobre também o
-  // caso em que o modo com erro tem dados de uma carga anterior (monthlyRows
-  // não fica vazio só porque o reload mais recente falhou), que a guarda de
-  // "só recarrega se list vazia" do setDreMode/openTab não pega sozinha.
+  // num modo não apaga sozinho o erro velho que ficou no outro (são stores
+  // independentes). Igual a reloadSales()/reloadExpenses(), o reset() aqui só
+  // roda emparelhado com um reload() que de fato vai acontecer — nunca sozinho
+  // — então é honesto: o resultado exibido é sempre o desfecho real dessa
+  // chamada. (A guarda de setDreMode/openTab que decide SE chama reloadDre()/
+  // reloadMonthly() é outro problema, resolvido separadamente ali.)
   function reloadDre() {
     monthly.reset();
     return dre.reload();
@@ -169,33 +173,28 @@
     if (dreMode === "mensal") reloadMonthly();
     else reloadDre();
   }
-  // dre.reset()/monthly.reset() aqui, antes da guarda de "só recarrega se
-  // vazio" decidir: essa guarda (pré-existente) olha monthlyRows.length, e
-  // monthlyRows NÃO fica vazio só porque o reload mais recente falhou — um
-  // reload que falha preserva os dados antigos, só marca error. Sem isto, sair
-  // do modo "mensal" e voltar sem passar por reloadMonthly() (porque a lista
-  // já tinha dados de antes) reexibe um erro velho de uma tentativa que nunca
-  // mais rodou. Resetar os dois é sempre seguro: no ramo em que a guarda
-  // decide recarregar, reloadMonthly()/reloadDre() já fazem o próprio
-  // reset+reload de novo (redundante, inofensivo); no ramo em que a guarda
-  // decide NÃO recarregar (dados em cache), zerar o erro é exatamente o
-  // conserto — estamos escolhendo mostrar dados de uma carga que deu certo,
-  // não faz sentido um erro de outra tentativa continuar por cima.
+  // A guarda (pré-existente) só recarregava "se vazio" — mas monthlyRows não
+  // fica vazio quando um reload falha (falha preserva os dados antigos, só
+  // marca error). Isso deixava dois caminhos ruins: (a) reset() incondicional
+  // antes da guarda (tentado numa rodada anterior) apagava o erro sem refazer
+  // a busca — dado velho na tela, sem aviso e sem nova tentativa, silencioso
+  // e pior que o bug original; (b) sem reset() nenhum, o erro velho reaparecia
+  // ao voltar para o modo. A guarda certa é "vazio OU a tentativa anterior
+  // falhou": erro significa que o dado exibido não é confiável, e a resposta
+  // a dado não confiável é refazer a busca, não apagar o aviso. O próprio
+  // reload() já é honesto nos dois desfechos — limpa o erro no sucesso, repõe
+  // no fracasso — então isso resolve sem reset() nenhum neste caminho.
   function setDreMode(m: typeof dreMode) {
     dreMode = m;
-    dre.reset();
-    monthly.reset();
-    if (m === "mensal" && monthlyRows.length === 0) reloadMonthly();
-    else if (m === "periodo" && !$dre.data) reloadDre();
+    if (m === "mensal" && (monthlyRows.length === 0 || $monthly.error)) reloadMonthly();
+    else if (m === "periodo" && (!$dre.data || $dre.error)) reloadDre();
   }
 
   function openTab(t: typeof tab) {
     tab = t;
     if (t === "dre") {
-      dre.reset();
-      monthly.reset();
-      if (dreMode === "mensal" && monthlyRows.length === 0) reloadMonthly();
-      else if (dreMode === "periodo" && !$dre.data) reloadDre();
+      if (dreMode === "mensal" && (monthlyRows.length === 0 || $monthly.error)) reloadMonthly();
+      else if (dreMode === "periodo" && (!$dre.data || $dre.error)) reloadDre();
     }
     if (t === "lucratividade" && !$prof.data) prof.reload();
   }
