@@ -12,7 +12,7 @@ from backend.api.schemas.accounting import (
     ProfitabilityOut, SaleOut, SaleUpdate, SyncOut,
 )
 from backend.core.accounting.dre import compute_dre
-from backend.core.accounting.facts import compute_facts, sale_items_label
+from backend.core.accounting.facts import compute_facts, sale_items_label, sale_items_label_map
 from backend.core.accounting.export_xlsx import build_dre_xlsx
 from backend.core.accounting.monthly import compute_dre_monthly
 from backend.core.accounting.profitability import compute_profitability
@@ -94,18 +94,28 @@ async def list_sales(
     if is_stale is not None:
         stmt = stmt.where(Sale.is_stale.is_(is_stale))
     rows = (await session.execute(stmt)).scalars().all()
-    # Resolve o quote_seq de todas as linhas numa única query — evita repetir
-    # o N+1 já existente em sale_items_label/_client_name (defeito conhecido,
-    # tratado na Spec 2).
+    # Resolve quote_seq, nome de cliente e rótulo de itens de todas as linhas
+    # em queries em lote (uma cada) — antes eram um N+1 por linha via
+    # sale_items_label/_client_name.
+    quote_ids = [s.quote_id for s in rows]
+    client_ids = [s.client_id for s in rows if s.client_id]
     seq_por_quote = dict(
         (await session.execute(
-            select(Quote.id, Quote.seq).where(Quote.id.in_([s.quote_id for s in rows]))
+            select(Quote.id, Quote.seq).where(Quote.id.in_(quote_ids))
         )).all()
-    )
-    produced_on_por_quote = await _produced_on_map(session, [s.quote_id for s in rows])
+    ) if quote_ids else {}
+    nome_por_cliente = dict(
+        (await session.execute(
+            select(Client.id, Client.name).where(Client.id.in_(client_ids))
+        )).all()
+    ) if client_ids else {}
+    produced_on_por_quote = await _produced_on_map(session, quote_ids)
+    label_por_quote = await sale_items_label_map(session, quote_ids)
     return [
         _sale_out(
-            s, await sale_items_label(session, s), await _client_name(session, s),
+            s,
+            itens_label=label_por_quote.get(s.quote_id, ""),
+            client_name=nome_por_cliente.get(s.client_id),
             # Sale.quote_id é not-null/unique/CASCADE — toda venda tem
             # orçamento vivo, então o .get() nunca cai no default 0.
             # Mantido como defesa, não como caminho esperado.
@@ -144,11 +154,17 @@ async def update_sale(
 
     await session.commit()
     await session.refresh(sale)
+    # produced_on também deve vir preenchido aqui: quem chama o PATCH atualiza
+    # a linha da tabela de forma otimista com esta resposta, e um None
+    # apagaria a coluna mesmo quando a produção existe (mesma classe de bug
+    # já corrigida para itens_label/client_name).
+    produced_on = (await _produced_on_map(session, [sale.quote_id])).get(sale.quote_id)
     return _sale_out(
         sale,
         await sale_items_label(session, sale),
         await _client_name(session, sale),
         quote_seq=await _quote_seq(session, sale.quote_id),
+        produced_on=produced_on,
     )
 
 

@@ -5,6 +5,7 @@ quote_kind existir: elas nasceram com o server_default 'commercial' e
 nunca são re-sincronizadas, porque sync_sales ignora quem saiu dos
 status ativos.
 """
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 import pytest
@@ -12,7 +13,7 @@ import sqlalchemy as sa
 
 from backend.core.models import QuoteKind, QuoteStatus
 from backend.infra.db import session as session_module
-from backend.infra.db.models import Quote, Sale, User
+from backend.infra.db.models import MaterialConsumption, Quote, QuoteItem, Sale, Spool, User
 
 
 async def _quote(kind: QuoteKind, status: QuoteStatus) -> Quote:
@@ -100,3 +101,41 @@ async def test_sale_out_traz_quote_kind_e_produced_on(auth_client):
     assert venda["quote_kind"] == "personal"
     # Sem baixa de material, produced_on é nulo — o DRE cai no created_at.
     assert "produced_on" in venda
+    assert venda["produced_on"] is None
+
+
+@pytest.mark.asyncio
+async def test_produced_on_e_a_menor_data_de_baixa_de_material(auth_client):
+    """Com baixa de material, produced_on = min(consumed_at).date() — mesmo
+    critério que _perda_operacional usa no DRE (backend/core/accounting/dre.py).
+    Cobre tanto a listagem quanto o PATCH, que devem concordar."""
+    pes = await _quote(QuoteKind.PERSONAL, QuoteStatus.PRODUZIDO)
+    mais_cedo = datetime(2026, 6, 5, tzinfo=timezone.utc)
+    mais_tarde = mais_cedo + timedelta(days=2)
+    async with session_module.SessionFactory() as s:
+        item = QuoteItem(quote_id=pes.id, name="Vaso", gcode_meta={"filament_g": 10}, quantity=1)
+        spool = Spool(material_type="PLA", color="Verde", purchased_at=mais_cedo,
+                      purchased_price=Decimal("100"), initial_grams=Decimal("1000"),
+                      remaining_grams=Decimal("900"))
+        s.add_all([item, spool])
+        await s.flush()
+        s.add_all([
+            MaterialConsumption(quote_item_id=item.id, spool_id=spool.id,
+                               grams_used=Decimal("50"), unit_cost_snapshot=Decimal("0.10"),
+                               consumed_at=mais_tarde),
+            MaterialConsumption(quote_item_id=item.id, spool_id=spool.id,
+                               grams_used=Decimal("20"), unit_cost_snapshot=Decimal("0.10"),
+                               consumed_at=mais_cedo),
+        ])
+        await s.commit()
+
+    await auth_client.post("/accounting/sync")
+    venda = next(v for v in (await auth_client.get("/accounting/sales")).json()
+                 if v["quote_id"] == str(pes.id))
+    assert venda["produced_on"] == mais_cedo.date().isoformat()
+
+    # PATCH também precisa devolver produced_on — não pode voltar None e
+    # apagar a coluna numa atualização otimista de UI.
+    r = await auth_client.patch(f"/accounting/sales/{venda['id']}", json={"notes": "x"})
+    assert r.status_code == 200, r.text
+    assert r.json()["produced_on"] == mais_cedo.date().isoformat()
