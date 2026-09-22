@@ -79,16 +79,24 @@ export function filterRows(rows: Row[], text: string, haystack: (row: Row) => st
   if (!alvo) return rows;
   return rows.filter((r) => {
     // `haystack` é fornecido pelo chamador; uma linha com dado inesperado
-    // (campo ausente derrubando a formatação, `haystack` lançando exceção)
-    // não pode derrubar o filtro da tabela inteira. Preferimos excluir só a
-    // linha problemática — ela some da lista filtrada — a propagar o erro
-    // e quebrar a tabela toda. String(...) também absorve um retorno que,
-    // em runtime, não seja de fato string (o tipo promete, mas JS não garante).
+    // (campo ausente derrubando a formatação, `haystack` lançando exceção,
+    // ou um retorno que não vira string) não pode derrubar o filtro da
+    // tabela inteira — mas também não pode simplesmente SUMIR da lista.
+    // Estas telas (orçamentos, clientes, bobinas, contábil) são
+    // escrituração: uma linha que desaparece da busca é indistinguível de
+    // "não existe", e isso é invisível até o dinheiro não bater no fim do
+    // mês. Uma linha espúria aparecendo é visível e investigável na hora —
+    // por isso a linha inavaliável fica VISÍVEL, não excluída. O aviso no
+    // console torna isso barulhento em desenvolvimento, em vez de silencioso
+    // (inclusive para o caso de o próprio `haystack` ter um bug real, tipo
+    // acessar uma propriedade com nome errado — sem o aviso, esse bug vira
+    // exclusão silenciosa e fica invisível duas vezes).
     let valor: string;
     try {
       valor = String(haystack(r));
-    } catch {
-      return false;
+    } catch (err) {
+      console.warn("filterRows: linha não pôde ser avaliada para busca; mantida visível", err);
+      return true;
     }
     return normalize(valor).includes(alvo);
   });

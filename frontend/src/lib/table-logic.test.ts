@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { normalize, compareValues, sortRows, filterRows, nextDir, type Row } from "./table-logic";
 
 describe("normalize", () => {
@@ -98,7 +98,8 @@ describe("filterRows", () => {
     expect(filterRows(rows, "zzz", hay)).toHaveLength(0);
   });
 
-  it("uma linha cujo haystack lança exceção é excluída, sem derrubar o filtro das demais", () => {
+  it("linha cujo haystack lança exceção permanece visível, para não sumir da busca (e loga aviso)", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const rowsComQuebrada = [
       { id: 1, texto: "R$ 1.234,56 · Maria Silva" },
       { id: 2, texto: null }, // dado inesperado: hayQuebrada acessa .toUpperCase() e estoura
@@ -106,14 +107,25 @@ describe("filterRows", () => {
     ];
     const hayQuebrada = (r: Record<string, unknown>) => (r.texto as string).toUpperCase();
 
-    expect(filterRows(rowsComQuebrada, "1.234", hayQuebrada).map((r) => r.id)).toEqual([1, 3]);
+    // Busca por um termo que a linha 2, se avaliável, nem casaria — mesmo
+    // assim ela aparece, porque uma linha inavaliável não pode ser
+    // silenciosamente descartada da lista (sumir é pior que aparecer à toa).
+    expect(filterRows(rowsComQuebrada, "1.234", hayQuebrada).map((r) => r.id)).toEqual([1, 2, 3]);
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
   });
 
-  it("haystack que devolve valor não-string (fora do contrato de tipo) ainda é filtrável", () => {
-    const rowsNumerico = [{ id: 1, texto: 1234 }];
-    const hayNumerico = ((r: Record<string, unknown>) => r.texto) as (r: Row) => string;
+  it("linha cujo haystack devolve valor não coercível para string permanece visível (e loga aviso)", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const rowsComValorRuim = [
+      { id: 1, texto: "R$ 1.234,56 · Maria Silva" },
+      { id: 2, texto: { toString: () => { throw new Error("não vira string"); } } },
+    ];
+    const hay2 = ((r: Record<string, unknown>) => r.texto) as (r: Row) => string;
 
-    expect(filterRows(rowsNumerico, "1234", hayNumerico).map((r) => r.id)).toEqual([1]);
+    expect(filterRows(rowsComValorRuim, "zzz", hay2).map((r) => r.id)).toEqual([2]);
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
   });
 });
 
