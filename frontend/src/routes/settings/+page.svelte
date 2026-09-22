@@ -378,7 +378,6 @@
 
 <style>
   .panel { margin-bottom: 1.5rem; }
-  .panel + .panel { margin-top: 1.5rem; }
   .people-list { list-style: none; margin: 0.5rem 0; padding: 0; }
   .people-list li {
     display: flex;
@@ -448,6 +447,8 @@
     align-items: flex-end; margin-top: 1.5rem;
   }
   .ok { color: #047857; font-size: 0.9em; }
+  /* Override local: tom de vermelho e tamanho próprios, diferentes do
+     padrão global (mantém aparência já existente nesta página) */
   .alert { color: #b91c1c; font-size: 0.9em; }
   @media (max-width: 600px) {
     .logo-block { grid-template-columns: 1fr; }
