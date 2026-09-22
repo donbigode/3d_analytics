@@ -1,15 +1,28 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { api, errorMessage } from "$lib/api";
-  import { handleApiError, requireAuth } from "$lib/guard";
+  import { api } from "$lib/api";
+  import { requireAuth } from "$lib/guard";
+  import { resource, action } from "$lib/resource";
+  import { date as fmtDate } from "$lib/format";
   import Table from "$lib/components/Table.svelte";
   import Form from "$lib/components/Form.svelte";
   import type { Material } from "$lib/types";
   import { MATERIAL_TYPES } from "$lib/types";
 
-  let rows: Material[] = [];
-  let loading = true;
-  let listError = "";
+  const materialsRes = resource(() => api<Material[]>("/materials"), {
+    initial: [], errorMessage: "Falha ao carregar materiais.", auto: false,
+  });
+  $: rows = $materialsRes.data ?? [];
+  const removeAction = action((id: string) => api(`/materials/${id}`, { method: "DELETE" }), {
+    errorMessage: "Não foi possível remover o material.",
+  });
+  // Um "Atualizar" bem-sucedido não pode deixar preso o erro de uma remoção
+  // que falhou antes — os dois dividem o mesmo alerta do painel.
+  $: listError = $materialsRes.error || $removeAction.error;
+  function reloadMaterials() {
+    removeAction.reset();
+    return materialsRes.reload();
+  }
 
   // create form
   let material_type = "PLA";
@@ -21,128 +34,84 @@
   let failure_rate_pct = "0";
   let single_color_waste_pct = "2";
   let multi_color_waste_pct = "20";
-  let submitting = false;
-  let formError = "";
+  const createAction = action(
+    (body: Record<string, unknown>) =>
+      api<Material>("/materials", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      }),
+    { errorMessage: "Não foi possível criar o material." },
+  );
 
   // edit (creates new SCD2 version) modal
   let editing: Material | null = null;
-  let editError = "";
-  let editSubmitting = false;
+  const editAction = action(
+    (id: string, body: Record<string, unknown>) =>
+      api<Material>(`/materials/${id}`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      }),
+    { errorMessage: "Falha ao registrar nova versão." },
+  );
 
   // history modal
   let historyFor: Material | null = null;
   let history: Material[] = [];
-  let historyLoading = false;
-  let historyError = "";
-
-  async function load() {
-    loading = true;
-    listError = "";
-    try {
-      rows = await api<Material[]>("/materials");
-    } catch (err) {
-      handleApiError(err);
-      listError = errorMessage(err, "Falha ao carregar materiais.");
-    } finally {
-      loading = false;
-    }
-  }
+  const historyAction = action((id: string) => api<Material[]>(`/materials/${id}/history`), {
+    errorMessage: "Falha ao carregar histórico.",
+  });
 
   async function create() {
-    formError = "";
-    submitting = true;
-    try {
-      await api<Material>("/materials", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          material_type,
-          name: name || `${material_type}${manufacturer ? " " + manufacturer : ""}${color ? " " + color : ""}`,
-          manufacturer: manufacturer || null,
-          color: color || null,
-          density_g_cm3,
-          price_per_kg_ref,
-          failure_rate_pct: failure_rate_pct || "0",
-          single_color_waste_pct: single_color_waste_pct || "2",
-          multi_color_waste_pct: multi_color_waste_pct || "20",
-        }),
-      });
-      name = manufacturer = color = density_g_cm3 = price_per_kg_ref = "";
-      failure_rate_pct = "0";
-      single_color_waste_pct = "2";
-      multi_color_waste_pct = "20";
-      await load();
-    } catch (err) {
-      handleApiError(err);
-      formError = errorMessage(err, "Não foi possível criar o material.");
-    } finally {
-      submitting = false;
-    }
+    const created = await createAction.run({
+      material_type,
+      name: name || `${material_type}${manufacturer ? " " + manufacturer : ""}${color ? " " + color : ""}`,
+      manufacturer: manufacturer || null,
+      color: color || null,
+      density_g_cm3,
+      price_per_kg_ref,
+      failure_rate_pct: failure_rate_pct || "0",
+      single_color_waste_pct: single_color_waste_pct || "2",
+      multi_color_waste_pct: multi_color_waste_pct || "20",
+    });
+    if (!created) return;
+    name = manufacturer = color = density_g_cm3 = price_per_kg_ref = "";
+    failure_rate_pct = "0";
+    single_color_waste_pct = "2";
+    multi_color_waste_pct = "20";
+    await reloadMaterials();
   }
 
   async function saveEdit() {
     if (!editing) return;
-    editError = "";
-    editSubmitting = true;
-    try {
-      await api<Material>(`/materials/${editing.id}`, {
-        method: "PUT",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          name: editing.name,
-          manufacturer: editing.manufacturer || null,
-          color: editing.color || null,
-          density_g_cm3: editing.density_g_cm3,
-          price_per_kg_ref: editing.price_per_kg_ref,
-          failure_rate_pct: editing.failure_rate_pct,
-          single_color_waste_pct: editing.single_color_waste_pct,
-          multi_color_waste_pct: editing.multi_color_waste_pct,
-        }),
-      });
-      editing = null;
-      await load();
-    } catch (err) {
-      handleApiError(err);
-      editError = errorMessage(err, "Falha ao registrar nova versão.");
-    } finally {
-      editSubmitting = false;
-    }
+    const updated = await editAction.run(editing.id, {
+      name: editing.name,
+      manufacturer: editing.manufacturer || null,
+      color: editing.color || null,
+      density_g_cm3: editing.density_g_cm3,
+      price_per_kg_ref: editing.price_per_kg_ref,
+      failure_rate_pct: editing.failure_rate_pct,
+      single_color_waste_pct: editing.single_color_waste_pct,
+      multi_color_waste_pct: editing.multi_color_waste_pct,
+    });
+    if (!updated) return;
+    editing = null;
+    await reloadMaterials();
   }
 
   async function remove(m: Material) {
     const label = `${m.material_type}${m.manufacturer ? " · " + m.manufacturer : ""}${m.color ? " · " + m.color : ""}`;
     if (!confirm(`Remover ${label}? Só funciona se nunca tiver sido usado em orçamentos.`)) return;
-    try {
-      await api(`/materials/${m.id}`, { method: "DELETE" });
-      await load();
-    } catch (err) {
-      handleApiError(err);
-      listError = errorMessage(err, "Não foi possível remover o material.");
-    }
+    await removeAction.run(m.id);
+    if (!$removeAction.error) await materialsRes.reload();
   }
 
   async function openHistory(m: Material) {
     historyFor = m;
-    historyLoading = true;
-    historyError = "";
     history = [];
-    try {
-      history = await api<Material[]>(`/materials/${m.id}/history`);
-    } catch (err) {
-      handleApiError(err);
-      historyError = errorMessage(err, "Falha ao carregar histórico.");
-    } finally {
-      historyLoading = false;
-    }
-  }
-
-  function fmtDate(s: string | null): string {
-    if (!s) return "—";
-    try {
-      return new Date(s).toLocaleDateString("pt-BR");
-    } catch {
-      return s;
-    }
+    const res = await historyAction.run(m.id);
+    if (res) history = res;
   }
 
   function fmtMaterial(m: Material): string {
@@ -154,7 +123,7 @@
 
   onMount(() => {
     if (requireAuth()) return;
-    load();
+    reloadMaterials();
   });
 </script>
 
@@ -174,8 +143,8 @@
   eyebrow="Novo material"
   title="Cadastrar produto"
   submitLabel="Criar versão inicial"
-  {submitting}
-  error={formError}
+  submitting={$createAction.pending}
+  error={$createAction.error}
   on:submit={create}
 >
   <label class="field">
@@ -225,8 +194,8 @@
 <section class="panel list-panel">
   <div class="panel-head">
     <h2 class="section-title">Versões atuais <span class="count">· {rows.length}</span></h2>
-    <button class="tiny ghost" on:click={load} disabled={loading}>
-      {loading ? "Carregando…" : "Atualizar"}
+    <button class="tiny ghost" on:click={reloadMaterials} disabled={$materialsRes.loading}>
+      {$materialsRes.loading ? "Carregando…" : "Atualizar"}
     </button>
   </div>
   {#if listError}<div class="alert">{listError}</div>{/if}
@@ -259,7 +228,7 @@
       <p class="page-lede">
         Salvar criará uma nova versão SCD2. A vigente é encerrada agora.
       </p>
-      {#if editError}<div class="alert">{editError}</div>{/if}
+      {#if $editAction.error}<div class="alert">{$editAction.error}</div>{/if}
       <form on:submit|preventDefault={saveEdit} class="form-grid">
         <label class="field">
           Nome
@@ -295,8 +264,8 @@
         </label>
         <div class="actions">
           <button type="button" class="ghost" on:click={() => (editing = null)}>Cancelar</button>
-          <button type="submit" disabled={editSubmitting}>
-            {editSubmitting ? "Salvando…" : "Criar nova versão"}
+          <button type="submit" disabled={$editAction.pending}>
+            {$editAction.pending ? "Salvando…" : "Criar nova versão"}
           </button>
         </div>
       </form>
@@ -308,8 +277,8 @@
   <div class="modal-backdrop" on:click|self={() => (historyFor = null)}>
     <div class="modal">
       <h2>Histórico · <span class="mono">{fmtMaterial(historyFor)}</span></h2>
-      {#if historyError}<div class="alert">{historyError}</div>{/if}
-      {#if historyLoading}
+      {#if $historyAction.error}<div class="alert">{$historyAction.error}</div>{/if}
+      {#if $historyAction.pending}
         <p class="empty">Carregando…</p>
       {:else}
         <Table
