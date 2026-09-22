@@ -1,20 +1,35 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { api, errorMessage } from "$lib/api";
-  import { handleApiError, requireAuth } from "$lib/guard";
+  import { api } from "$lib/api";
+  import { requireAuth } from "$lib/guard";
+  import { resource, action } from "$lib/resource";
   import { money as fmtMoney, dateTime as fmtDate } from "$lib/format";
   import type { Client, Person, Quote, QuoteKind, QuoteStatus } from "$lib/types";
-
-  let rows: Quote[] = [];
-  let clients: Client[] = [];
-  let people: Person[] = [];
-  let loading = true;
-  let listError = "";
 
   // filters
   let fStatus: QuoteStatus | "" = "";
   let fKind: QuoteKind | "" = "";
   let fClient = "";
+
+  $: quotesUrl = (() => {
+    const qs = new URLSearchParams();
+    if (fStatus) qs.set("status", fStatus);
+    if (fKind) qs.set("kind", fKind);
+    if (fClient) qs.set("client_id", fClient);
+    return `/quotes${qs.toString() ? `?${qs}` : ""}`;
+  })();
+  const rows = resource(() => api<Quote[]>(quotesUrl), {
+    initial: [], errorMessage: "Falha ao carregar orçamentos.", auto: false,
+  });
+  const clients = resource(() => api<Client[]>("/clients"), { initial: [], auto: false });
+  const people = resource(() => api<Person[]>("/people"), { initial: [], auto: false });
+  const togglePersonAction = action((quoteId: string, personIds: string[]) =>
+    api<Quote>(`/quotes/${quoteId}/people`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ person_ids: personIds }),
+    }),
+  );
 
   const STATUS_OPTIONS: { value: QuoteStatus; label: string }[] = [
     { value: "draft", label: "Rascunho" },
@@ -45,7 +60,7 @@
 
   function clientName(id: string | null): string {
     if (!id) return "—";
-    return clients.find((c) => c.id === id)?.name ?? "—";
+    return ($clients.data ?? []).find((c) => c.id === id)?.name ?? "—";
   }
 
   function itemNames(q: Quote): string[] {
@@ -60,68 +75,26 @@
     return `${names.slice(0, 3).join(" · ")} +${names.length - 3}`;
   }
 
-  async function load() {
-    loading = true;
-    listError = "";
-    try {
-      const qs = new URLSearchParams();
-      if (fStatus) qs.set("status", fStatus);
-      if (fKind) qs.set("kind", fKind);
-      if (fClient) qs.set("client_id", fClient);
-      const path = `/quotes${qs.toString() ? `?${qs}` : ""}`;
-      rows = await api<Quote[]>(path);
-    } catch (err) {
-      handleApiError(err);
-      listError = errorMessage(err, "Falha ao carregar orçamentos.");
-    } finally {
-      loading = false;
-    }
-  }
-
-  async function loadClients() {
-    try {
-      clients = await api<Client[]>("/clients");
-    } catch (err) {
-      handleApiError(err);
-    }
-  }
-
-  async function loadPeople() {
-    try {
-      people = await api<Person[]>("/people");
-    } catch (err) {
-      handleApiError(err);
-    }
-  }
-
   async function togglePerson(q: Quote, personId: string) {
     const current = new Set(q.person_ids ?? []);
     if (current.has(personId)) current.delete(personId);
     else current.add(personId);
-    try {
-      const updated = await api<Quote>(`/quotes/${q.id}/people`, {
-        method: "PUT",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ person_ids: [...current] }),
-      });
-      rows = rows.map((r) => (r.id === q.id ? updated : r));
-    } catch (err) {
-      handleApiError(err);
-    }
+    const updated = await togglePersonAction.run(q.id, [...current]);
+    if (updated) rows.set(($rows.data ?? []).map((r) => (r.id === q.id ? updated : r)));
   }
 
   function resetFilters() {
     fStatus = "";
     fKind = "";
     fClient = "";
-    load();
+    rows.reload();
   }
 
   onMount(() => {
     if (requireAuth()) return;
-    loadClients();
-    loadPeople();
-    load();
+    clients.reload();
+    people.reload();
+    rows.reload();
   });
 </script>
 
@@ -145,7 +118,7 @@
   <div class="form-grid filter-grid">
     <label class="field">
       Status
-      <select bind:value={fStatus} on:change={load}>
+      <select bind:value={fStatus} on:change={() => rows.reload()}>
         <option value="">todos</option>
         {#each STATUS_OPTIONS as o}
           <option value={o.value}>{o.label}</option>
@@ -154,7 +127,7 @@
     </label>
     <label class="field">
       Tipo
-      <select bind:value={fKind} on:change={load}>
+      <select bind:value={fKind} on:change={() => rows.reload()}>
         <option value="">todos</option>
         <option value="commercial">Comercial</option>
         <option value="personal">Pessoal</option>
@@ -162,9 +135,9 @@
     </label>
     <label class="field">
       Cliente
-      <select bind:value={fClient} on:change={load}>
+      <select bind:value={fClient} on:change={() => rows.reload()}>
         <option value="">todos</option>
-        {#each clients as c}
+        {#each $clients.data ?? [] as c}
           <option value={c.id}>{c.name}</option>
         {/each}
       </select>
@@ -177,12 +150,12 @@
 
 <section class="panel list-panel">
   <div class="panel-head">
-    <h2 class="section-title">Orçamentos <span class="count">· {rows.length}</span></h2>
-    <button class="tiny ghost" on:click={load} disabled={loading}>
-      {loading ? "Carregando…" : "Atualizar"}
+    <h2 class="section-title">Orçamentos <span class="count">· {($rows.data ?? []).length}</span></h2>
+    <button class="tiny ghost" on:click={() => rows.reload()} disabled={$rows.loading}>
+      {$rows.loading ? "Carregando…" : "Atualizar"}
     </button>
   </div>
-  {#if listError}<div class="alert">{listError}</div>{/if}
+  {#if $rows.error}<div class="alert">{$rows.error}</div>{/if}
 
   <div class="table-wrap">
     <table>
@@ -199,7 +172,7 @@
         </tr>
       </thead>
       <tbody>
-        {#each rows as q (q.id)}
+        {#each $rows.data ?? [] as q (q.id)}
           <tr>
             <td class="mono">{q.id.slice(0, 8)}</td>
             <td class="items-cell" title={itemNames(q).join(", ")}>{itemsSummary(q)}</td>
@@ -207,9 +180,9 @@
               <span class="tag {q.kind === 'commercial' ? 'brand' : 'muted'}">
                 {q.kind === "commercial" ? "comercial" : "pessoal"}
               </span>
-              {#if q.kind === "personal" && people.length > 0}
+              {#if q.kind === "personal" && ($people.data ?? []).length > 0}
                 <div class="people-chips">
-                  {#each people.filter((p) => p.active || (q.person_ids ?? []).includes(p.id)) as p (p.id)}
+                  {#each ($people.data ?? []).filter((p) => p.active || (q.person_ids ?? []).includes(p.id)) as p (p.id)}
                     <button
                       type="button"
                       class="chip"
@@ -233,7 +206,7 @@
             </td>
           </tr>
         {/each}
-        {#if rows.length === 0}
+        {#if ($rows.data ?? []).length === 0}
           <tr>
             <td colspan="8"><div class="empty">Nenhum orçamento encontrado</div></td>
           </tr>

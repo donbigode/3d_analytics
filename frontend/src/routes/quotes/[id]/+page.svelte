@@ -2,8 +2,9 @@
   import { onMount } from "svelte";
   import { page } from "$app/stores";
   import { goto } from "$app/navigation";
-  import { api, errorMessage } from "$lib/api";
-  import { handleApiError, requireAuth } from "$lib/guard";
+  import { api } from "$lib/api";
+  import { requireAuth } from "$lib/guard";
+  import { resource, action } from "$lib/resource";
   import { money as fmtMoney, num as fmtNum, dur as fmtDur, dateTime as fmtDate } from "$lib/format";
   import type {
     Client,
@@ -21,21 +22,9 @@
 
   $: id = $page.params.id;
 
-  let quote: Quote | null = null;
-  let loading = true;
-  let pageError = "";
-
-  let clients: Client[] = [];
-  let services: Service[] = [];
-  let spools: Spool[] = [];
-  let materials: Material[] = [];
-  let people: Person[] = [];
-
   // resolve pending material modal
   let resolveItem: QuoteItem | null = null;
   let resolveCode = "";
-  let resolveError = "";
-  let resolving = false;
   let showQuickCreateMaterial = false;
   let qcName = "";
 
@@ -45,8 +34,6 @@
   let qcDensity = "1.24";
   let qcPrice = "100";
   let qcFailure = "5";
-  let qcSubmitting = false;
-  let qcError = "";
 
   // add item form
   let itemFile: FileList | null = null;
@@ -55,280 +42,89 @@
   let itemModelUrl = "";
   let itemModelAuthor = "";
   let itemModelLicense = "";
-  let addingItem = false;
-  let itemError = "";
+  let itemValidationError = "";
 
   // add service form
   let svcId = "";
   let svcQty = 1;
   let svcRate: string = "";
-  let addingSvc = false;
-  let svcError = "";
 
   // edit meta (markup/min/client/notes/produced services)
   let editMarkup = 0;
   let editMin = 0;
   let editClient: string = "";
   let editNotes = "";
-  let savingMeta = false;
-  let metaError = "";
 
   // ---- IA panel state ----
-  let llmBusy: "markup" | "variance" | "pricing" | "variants" | null = null;
-  let llmError = "";
   let markupSuggestion: MarkupSuggestionOut | null = null;
   let varianceResult: VarianceOut | null = null;
   let pricingResult: PricingOut | null = null;
   let variantsResult: VariantsOut | null = null;
   let variantsForItem = "";
 
-  async function askMarkup() {
-    if (!quote) return;
-    llmBusy = "markup"; llmError = "";
-    try {
-      markupSuggestion = await api<MarkupSuggestionOut>(`/llm/markup/${quote.id}`, { method: "POST" });
-    } catch (err) {
-      handleApiError(err);
-      llmError = errorMessage(err, "Falha ao consultar IA.");
-    } finally { llmBusy = null; }
-  }
-  async function applyMarkup() {
-    if (!quote || !markupSuggestion) return;
-    const v = Number(markupSuggestion.suggested_markup_pct);
-    if (!Number.isFinite(v)) return;
-    editMarkup = v;
-    await saveMeta();
-  }
-
-  async function askVariance() {
-    if (!quote) return;
-    llmBusy = "variance"; llmError = "";
-    try {
-      varianceResult = await api<VarianceOut>(`/llm/variance/${quote.id}`, { method: "POST" });
-    } catch (err) {
-      handleApiError(err);
-      llmError = errorMessage(err, "Falha ao consultar IA.");
-    } finally { llmBusy = null; }
-  }
-
-  async function askPricing() {
-    if (!quote) return;
-    llmBusy = "pricing"; llmError = "";
-    try {
-      pricingResult = await api<PricingOut>(`/llm/pricing/${quote.id}`, { method: "POST" });
-    } catch (err) {
-      handleApiError(err);
-      llmError = errorMessage(err, "Falha ao consultar IA.");
-    } finally { llmBusy = null; }
-  }
-
-  async function askVariants(itemId: string) {
-    if (!quote) return;
-    variantsForItem = itemId;
-    llmBusy = "variants"; llmError = "";
-    try {
-      variantsResult = await api<VariantsOut>(`/llm/variants/items/${itemId}`, { method: "POST" });
-    } catch (err) {
-      handleApiError(err);
-      llmError = errorMessage(err, "Falha ao consultar IA.");
-    } finally { llmBusy = null; }
-  }
-
   // transition state
   let transitioning = "";
-  let txError = "";
 
   // produce modal
   let showProduceModal = false;
   let produceAssignments: Record<string, string> = {}; // quote_item_id -> spool_id
   let produceMeters: Record<string, string> = {}; // quote_item_id -> filament_m (override)
   let produceGrams: Record<string, string> = {}; // quote_item_id -> gramas (override direto)
-  let producing = false;
-  let produceError = "";
-
-  function statusLabel(s: string): string {
-    return (
-      {
-        draft: "Rascunho",
-        orcado: "Orçado",
-        aprovado: "Aprovado",
-        em_producao: "Em produção",
-        produzido: "Produzido",
-        entregue: "Entregue",
-        falhou: "Falhou",
-        cancelado: "Cancelado",
-      } as Record<string, string>
-    )[s] ?? s;
-  }
-  function statusClass(s: string): string {
-    if (s === "entregue" || s === "produzido") return "ok";
-    if (s === "cancelado" || s === "falhou") return "warn";
-    if (s === "aprovado" || s === "em_producao") return "brand";
-    return "muted";
-  }
-
-  function clientName(cid: string | null): string {
-    if (!cid) return "—";
-    return clients.find((c) => c.id === cid)?.name ?? "—";
-  }
-
-  function serviceName(sid: string): string {
-    return services.find((s) => s.id === sid)?.name ?? sid.slice(0, 8);
-  }
-
-  async function load() {
-    loading = true;
-    pageError = "";
-    try {
-      quote = await api<Quote>(`/quotes/${id}`);
-      editMarkup = Number(quote.markup_pct ?? 0);
-      editMin = Number(quote.min_charge ?? 0);
-      editClient = quote.client_id ?? "";
-      editNotes = quote.notes ?? "";
-    } catch (err) {
-      handleApiError(err);
-      pageError = errorMessage(err, "Falha ao carregar orçamento.");
-    } finally {
-      loading = false;
-    }
-  }
 
   let photoVersion = 0; // cache-bust após upload/delete
   let photoBusy = false;
 
-  async function uploadPhoto(file: File, quoteItemId: string | null) {
-    photoBusy = true;
-    try {
-      const fd = new FormData();
-      fd.append("file", file);
-      if (quoteItemId) fd.append("quote_item_id", quoteItemId);
-      const res = await fetch(`/api/quotes/${id}/photos`, { method: "POST", body: fd });
-      if (!res.ok) throw new Error(await res.text());
-      photoVersion += 1;
-      await load();
-    } catch (err) {
-      handleApiError(err);
-      pageError = errorMessage(err, "Falha ao enviar a foto.");
-    } finally {
-      photoBusy = false;
-    }
-  }
+  // ---- cargas ----
+  const quoteRes = resource(() => api<Quote>(`/quotes/${id}`), {
+    errorMessage: "Falha ao carregar orçamento.",
+    auto: false,
+  });
 
-  async function deletePhoto(photoId: string) {
-    photoBusy = true;
-    try {
-      await api(`/quotes/${id}/photos/${photoId}`, { method: "DELETE" });
-      photoVersion += 1;
-      await load();
-    } catch (err) {
-      handleApiError(err);
-      pageError = errorMessage(err, "Falha ao remover a foto.");
-    } finally {
-      photoBusy = false;
-    }
-  }
-
-  async function loadRefs() {
-    try {
-      [clients, services, spools, materials, people] = await Promise.all([
+  // resource() tipa `.data` como `T | undefined` mesmo com `initial` — o
+  // genérico não sabe que um `initial` foi passado. REFS_INITIAL serve de
+  // fallback nas leituras (`$refs.data ?? REFS_INITIAL`) pra não espalhar
+  // `?? []` em cada campo.
+  const REFS_INITIAL = {
+    clients: [] as Client[],
+    services: [] as Service[],
+    spools: [] as Spool[],
+    materials: [] as Material[],
+    people: [] as Person[],
+  };
+  const refs = resource(
+    async () => {
+      const [clients, services, spools, materials, people] = await Promise.all([
         api<Client[]>("/clients"),
         api<Service[]>("/services"),
         api<Spool[]>("/spools"),
         api<Material[]>("/materials"),
         api<Person[]>("/people"),
       ]);
-    } catch (err) {
-      handleApiError(err);
+      return { clients, services, spools, materials, people };
+    },
+    { initial: REFS_INITIAL, auto: false },
+  );
+
+  // `load()` original recarregava o orçamento E reiniciava os campos do
+  // formulário de metadados (markup/mínimo/cliente/notas) a partir do que
+  // veio do servidor. Isso acontecia na carga inicial e também depois de
+  // upload/remoção de foto (o único jeito de saber o novo array de fotos era
+  // recarregar tudo) — mas nunca depois de saveMeta/patchItem/etc, que já
+  // aplicam o retorno da própria mutação. Mantém esse mesmo gatilho aqui.
+  async function loadQuote() {
+    await quoteRes.reload();
+    const q = $quoteRes.data;
+    if (q) {
+      editMarkup = Number(q.markup_pct ?? 0);
+      editMin = Number(q.min_charge ?? 0);
+      editClient = q.client_id ?? "";
+      editNotes = q.notes ?? "";
     }
   }
 
-  async function togglePerson(personId: string, checked: boolean) {
-    if (!quote) return;
-    const current = new Set(quote.person_ids ?? []);
-    if (checked) current.add(personId);
-    else current.delete(personId);
-    try {
-      quote = await api<Quote>(`/quotes/${id}/people`, {
-        method: "PUT",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ person_ids: [...current] }),
-      });
-    } catch (err) {
-      handleApiError(err);
-      metaError = errorMessage(err, "Falha ao salvar atribuição.");
-    }
-  }
-
-  $: filteredServices = quote
-    ? services.filter(
-        (s) =>
-          s.is_active &&
-          (quote!.kind === "commercial" ? true : s.kind !== "labor"),
-      )
-    : [];
-
-  $: isDraft = quote?.status === "draft";
-  $: canCancel =
-    quote && quote.status !== "entregue" && quote.status !== "cancelado";
-
-  async function toggleRetailMode(next: boolean) {
-    if (!quote) return;
-    try {
-      quote = await api<Quote>(`/quotes/${id}`, {
-        method: "PUT",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ retail_mode: next }),
-      });
-    } catch (err) {
-      handleApiError(err);
-      metaError = errorMessage(err, "Falha ao alternar modo varejo.");
-    }
-  }
-
-  async function saveMeta() {
-    if (!quote) return;
-    metaError = "";
-    savingMeta = true;
-    try {
-      const body: Record<string, unknown> = {
-        notes: editNotes || null,
-      };
-      if (quote.kind === "commercial") {
-        body.client_id = editClient || null;
-        body.markup_pct = editMarkup;
-        body.min_charge = editMin;
-      }
-      quote = await api<Quote>(`/quotes/${id}`, {
-        method: "PUT",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(body),
-      });
-    } catch (err) {
-      handleApiError(err);
-      metaError = errorMessage(err, "Falha ao salvar.");
-    } finally {
-      savingMeta = false;
-    }
-  }
-
-  async function addItem() {
-    if (!quote) return;
-    if (!itemName.trim()) {
-      itemError = "Informe um nome para a peça.";
-      return;
-    }
-    itemError = "";
-    addingItem = true;
-    try {
-      const fd = new FormData();
-      if (itemFile && itemFile.length > 0) {
-        fd.append("file", itemFile[0]);
-      }
-      fd.append("name", itemName.trim());
-      fd.append("quantity", String(itemQty));
-      if (itemModelUrl) fd.append("model_source_url", itemModelUrl);
-      if (itemModelAuthor) fd.append("model_source_author", itemModelAuthor);
-      if (itemModelLicense) fd.append("model_source_license", itemModelLicense);
+  // ---- mutações de item ----
+  const addItemAction = action(
+    async (fd: FormData) => {
       const res = await fetch(`/api/quotes/${id}/items`, {
         method: "POST",
         body: fd,
@@ -343,7 +139,86 @@
         } catch {}
         throw new Error(msg);
       }
-      quote = (await res.json()) as Quote;
+      return (await res.json()) as Quote;
+    },
+    { errorMessage: "Falha ao adicionar peça." },
+  );
+
+  const patchItemAction = action(
+    (itemId: string, fields: Record<string, unknown>) =>
+      api<Quote>(`/quotes/${id}/items/${itemId}`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(fields),
+      }),
+    { errorMessage: "Falha ao salvar alteração." },
+  );
+
+  const reparseAction = action(
+    (itemId: string) => api<Quote>(`/quotes/${id}/items/${itemId}/reparse`, { method: "POST" }),
+    { errorMessage: "Falha ao reanalisar o gcode." },
+  );
+
+  const removeItemAction = action(
+    (itemId: string) => api<Quote>(`/quotes/${id}/items/${itemId}`, { method: "DELETE" }),
+    { errorMessage: "Falha ao remover peça." },
+  );
+
+  const quickCreateMaterialAction = action(
+    (body: Record<string, unknown>) =>
+      api<Material>("/materials", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      }),
+    { errorMessage: "Não foi possível criar o material." },
+  );
+
+  const confirmResolveAction = action(
+    (itemId: string, materialCode: string) =>
+      api<Quote>(`/quotes/${id}/items/${itemId}`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ material_code: materialCode }),
+      }),
+    { errorMessage: "Falha ao resolver material." },
+  );
+
+  // Peças (addItem/patchItem/reparseItem/removeItem) dividem o mesmo alerta
+  // (itemError). No código original isso era uma única variável — qualquer
+  // uma das quatro funções a sobrescrevia. addItem e patchItem já zeravam
+  // no início; reparseItem e removeItem não zeravam, então um erro de uma
+  // delas sobrevivia na tela mesmo depois de outra operação ter sucesso.
+  // clearItemErrors() replica o "sobrescreve sempre" do original nas quatro,
+  // chamado no início de cada uma — a própria operação que começa agora é
+  // que vai decidir o que aparece a seguir (erro novo ou nada).
+  function clearItemErrors() {
+    itemValidationError = "";
+    addItemAction.reset();
+    patchItemAction.reset();
+    reparseAction.reset();
+    removeItemAction.reset();
+  }
+
+  async function addItem() {
+    if (!quote) return;
+    clearItemErrors();
+    if (!itemName.trim()) {
+      itemValidationError = "Informe um nome para a peça.";
+      return;
+    }
+    const fd = new FormData();
+    if (itemFile && itemFile.length > 0) {
+      fd.append("file", itemFile[0]);
+    }
+    fd.append("name", itemName.trim());
+    fd.append("quantity", String(itemQty));
+    if (itemModelUrl) fd.append("model_source_url", itemModelUrl);
+    if (itemModelAuthor) fd.append("model_source_author", itemModelAuthor);
+    if (itemModelLicense) fd.append("model_source_license", itemModelLicense);
+    const updated = await addItemAction.run(fd);
+    if (updated) {
+      quoteRes.set(updated);
       itemFile = null;
       itemName = "";
       itemQty = 1;
@@ -352,42 +227,27 @@
       itemModelLicense = "";
       const input = document.getElementById("itemFile") as HTMLInputElement | null;
       if (input) input.value = "";
-    } catch (err) {
-      handleApiError(err);
-      itemError = errorMessage(err, "Falha ao adicionar peça.");
-    } finally {
-      addingItem = false;
     }
   }
 
   function openResolve(it: QuoteItem) {
     resolveItem = it;
     resolveCode = it.pending_material_code || it.gcode_meta?.material || "";
-    resolveError = "";
+    confirmResolveAction.reset();
     showQuickCreateMaterial = false;
     qcName = resolveCode || "";
     qcDensity = "1.24";
     qcPrice = "100";
     qcFailure = "5";
-    qcError = "";
+    quickCreateMaterialAction.reset();
   }
 
   async function confirmResolve() {
     if (!resolveItem || !resolveCode) return;
-    resolveError = "";
-    resolving = true;
-    try {
-      quote = await api<Quote>(`/quotes/${id}/items/${resolveItem.id}`, {
-        method: "PUT",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ material_code: resolveCode }),
-      });
+    const updated = await confirmResolveAction.run(resolveItem.id, resolveCode);
+    if (updated) {
+      quoteRes.set(updated);
       resolveItem = null;
-    } catch (err) {
-      handleApiError(err);
-      resolveError = errorMessage(err, "Falha ao resolver material.");
-    } finally {
-      resolving = false;
     }
   }
 
@@ -397,25 +257,12 @@
    * filamento, material or quantity refreshes the cost immediately.
    * The optional ``field`` argument drives a per-cell saving spinner.
    */
-  async function patchItem(
-    itemId: string,
-    fields: Record<string, unknown>,
-    field?: string,
-  ) {
+  async function patchItem(itemId: string, fields: Record<string, unknown>, field?: string) {
+    clearItemErrors();
     if (field) savingField = { ...savingField, [itemId]: field };
-    itemError = "";
-    try {
-      quote = await api<Quote>(`/quotes/${id}/items/${itemId}`, {
-        method: "PUT",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(fields),
-      });
-    } catch (err) {
-      handleApiError(err);
-      itemError = errorMessage(err, "Falha ao salvar alteração.");
-    } finally {
-      if (field) savingField = { ...savingField, [itemId]: undefined };
-    }
+    const updated = await patchItemAction.run(itemId, fields);
+    if (updated) quoteRes.set(updated);
+    if (field) savingField = { ...savingField, [itemId]: undefined };
   }
 
   function patchTime(itemId: string, minutesStr: string) {
@@ -447,111 +294,218 @@
 
   let reparsingId: string | null = null;
   async function reparseItem(itemId: string) {
+    clearItemErrors();
     reparsingId = itemId;
-    try {
-      quote = await api<Quote>(`/quotes/${id}/items/${itemId}/reparse`, {
-        method: "POST",
-      });
-    } catch (err) {
-      handleApiError(err);
-      itemError = errorMessage(err, "Falha ao reanalisar o gcode.");
-    } finally {
-      reparsingId = null;
-    }
+    const updated = await reparseAction.run(itemId);
+    if (updated) quoteRes.set(updated);
+    reparsingId = null;
   }
 
   async function quickCreateMaterial() {
     if (!qcName) return;
-    qcError = "";
-    qcSubmitting = true;
-    try {
-      const mv = await api<Material>("/materials", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          material_type: qcName,
-          name: qcName,
-          density_g_cm3: qcDensity,
-          price_per_kg_ref: qcPrice,
-          failure_rate_pct: qcFailure,
-        }),
-      });
+    const mv = await quickCreateMaterialAction.run({
+      material_type: qcName,
+      name: qcName,
+      density_g_cm3: qcDensity,
+      price_per_kg_ref: qcPrice,
+      failure_rate_pct: qcFailure,
+    });
+    if (mv) {
       // refresh local materials list and set resolveCode to the new one
-      materials = [...materials, mv];
+      refs.set({ ...($refs.data ?? REFS_INITIAL), materials: [...materials, mv] });
       resolveCode = mv.material_type;
       showQuickCreateMaterial = false;
-    } catch (err) {
-      handleApiError(err);
-      qcError = errorMessage(err, "Não foi possível criar o material.");
-    } finally {
-      qcSubmitting = false;
     }
   }
 
   async function removeItem(itemId: string) {
     if (!confirm("Remover esta peça?")) return;
-    try {
-      quote = await api<Quote>(`/quotes/${id}/items/${itemId}`, {
-        method: "DELETE",
-      });
-    } catch (err) {
-      handleApiError(err);
-      itemError = errorMessage(err, "Falha ao remover peça.");
-    }
+    clearItemErrors();
+    const updated = await removeItemAction.run(itemId);
+    if (updated) quoteRes.set(updated);
+  }
+
+  // ---- mutações de serviço ----
+  const addServiceAction = action(
+    (body: Record<string, unknown>) =>
+      api<Quote>(`/quotes/${id}/services`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      }),
+    { errorMessage: "Falha ao adicionar serviço." },
+  );
+  const removeServiceAction = action(
+    (qsId: string) => api<Quote>(`/quotes/${id}/services/${qsId}`, { method: "DELETE" }),
+    { errorMessage: "Falha ao remover serviço." },
+  );
+  // Mesmo raciocínio de clearItemErrors(): addService já zerava svcError no
+  // original, removeService não — corrigido aqui pros dois sempre se
+  // sobrescreverem no início de qualquer nova tentativa.
+  function clearSvcErrors() {
+    addServiceAction.reset();
+    removeServiceAction.reset();
   }
 
   async function addService() {
     if (!quote || !svcId) return;
-    svcError = "";
-    addingSvc = true;
-    try {
-      const body: Record<string, unknown> = {
-        service_id: svcId,
-        quantity: svcQty,
-      };
-      if (svcRate !== "") body.rate = Number(svcRate);
-      quote = await api<Quote>(`/quotes/${id}/services`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(body),
-      });
+    clearSvcErrors();
+    const body: Record<string, unknown> = {
+      service_id: svcId,
+      quantity: svcQty,
+    };
+    if (svcRate !== "") body.rate = Number(svcRate);
+    const updated = await addServiceAction.run(body);
+    if (updated) {
+      quoteRes.set(updated);
       svcId = "";
       svcQty = 1;
       svcRate = "";
-    } catch (err) {
-      handleApiError(err);
-      svcError = errorMessage(err, "Falha ao adicionar serviço.");
-    } finally {
-      addingSvc = false;
     }
   }
 
   async function removeService(qsId: string) {
     if (!confirm("Remover este serviço?")) return;
-    try {
-      quote = await api<Quote>(`/quotes/${id}/services/${qsId}`, {
-        method: "DELETE",
-      });
-    } catch (err) {
-      handleApiError(err);
-      svcError = errorMessage(err, "Falha ao remover serviço.");
-    }
+    clearSvcErrors();
+    const updated = await removeServiceAction.run(qsId);
+    if (updated) quoteRes.set(updated);
   }
+
+  // ---- fotos ----
+  const uploadPhotoAction = action(
+    async (file: File, quoteItemId: string | null) => {
+      const fd = new FormData();
+      fd.append("file", file);
+      if (quoteItemId) fd.append("quote_item_id", quoteItemId);
+      const res = await fetch(`/api/quotes/${id}/photos`, { method: "POST", body: fd });
+      if (!res.ok) throw new Error(await res.text());
+    },
+    { errorMessage: "Falha ao enviar a foto." },
+  );
+  const deletePhotoAction = action(
+    (photoId: string) => api(`/quotes/${id}/photos/${photoId}`, { method: "DELETE" }),
+    { errorMessage: "Falha ao remover a foto." },
+  );
+  // pageError combina o erro da carga do orçamento com o de upload/remoção
+  // de foto (assim como no original, era uma única variável reescrita por
+  // qualquer uma das três). clearPageErrors() replica isso — chamado no
+  // início de upload/delete, sempre seguido de uma tentativa real (a própria
+  // mutação, e loadQuote() no sucesso), nunca deixando o aviso sumir sem uma
+  // operação de verdade acontecer em seguida.
+  function clearPageErrors() {
+    quoteRes.reset();
+    uploadPhotoAction.reset();
+    deletePhotoAction.reset();
+  }
+
+  async function uploadPhoto(file: File, quoteItemId: string | null) {
+    photoBusy = true;
+    clearPageErrors();
+    await uploadPhotoAction.run(file, quoteItemId);
+    if (!$uploadPhotoAction.error) {
+      photoVersion += 1;
+      await loadQuote();
+    }
+    photoBusy = false;
+  }
+
+  async function deletePhoto(photoId: string) {
+    photoBusy = true;
+    clearPageErrors();
+    await deletePhotoAction.run(photoId);
+    if (!$deletePhotoAction.error) {
+      photoVersion += 1;
+      await loadQuote();
+    }
+    photoBusy = false;
+  }
+
+  // ---- metadados / pessoas ----
+  const saveMetaAction = action(
+    (body: Record<string, unknown>) =>
+      api<Quote>(`/quotes/${id}`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      }),
+    { errorMessage: "Falha ao salvar." },
+  );
+  const toggleRetailModeAction = action(
+    (next: boolean) =>
+      api<Quote>(`/quotes/${id}`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ retail_mode: next }),
+      }),
+    { errorMessage: "Falha ao alternar modo varejo." },
+  );
+  const togglePersonAction = action(
+    (personIds: string[]) =>
+      api<Quote>(`/quotes/${id}/people`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ person_ids: personIds }),
+      }),
+    { errorMessage: "Falha ao salvar atribuição." },
+  );
+  // Igual aos outros grupos: saveMeta já zerava metaError, toggleRetailMode e
+  // togglePerson não — corrigido pros três se sobrescreverem sempre.
+  function clearMetaErrors() {
+    saveMetaAction.reset();
+    toggleRetailModeAction.reset();
+    togglePersonAction.reset();
+  }
+
+  async function togglePerson(personId: string, checked: boolean) {
+    if (!quote) return;
+    clearMetaErrors();
+    const current = new Set(quote.person_ids ?? []);
+    if (checked) current.add(personId);
+    else current.delete(personId);
+    const updated = await togglePersonAction.run([...current]);
+    if (updated) quoteRes.set(updated);
+  }
+
+  async function toggleRetailMode(next: boolean) {
+    if (!quote) return;
+    clearMetaErrors();
+    const updated = await toggleRetailModeAction.run(next);
+    if (updated) quoteRes.set(updated);
+  }
+
+  async function saveMeta() {
+    if (!quote) return;
+    clearMetaErrors();
+    const body: Record<string, unknown> = {
+      notes: editNotes || null,
+    };
+    if (quote.kind === "commercial") {
+      body.client_id = editClient || null;
+      body.markup_pct = editMarkup;
+      body.min_charge = editMin;
+    }
+    const updated = await saveMetaAction.run(body);
+    if (updated) quoteRes.set(updated);
+  }
+
+  // ---- transições / produção ----
+  // errorMessage do transitionAction precisa variar por transição (ex.:
+  // "Falha ao executar approve.") — como action() lê opts.errorMessage no
+  // momento do erro (não só na criação), mutar essa mesma referência antes
+  // de cada run() preserva a mensagem específica do original.
+  const transitionOpts = { errorMessage: "Falha ao executar a transição." };
+  const transitionAction = action(
+    (t: string) => api<Quote>(`/quotes/${id}/transitions/${t}`, { method: "POST" }),
+    transitionOpts,
+  );
 
   async function transition(t: "finalize" | "approve" | "deliver" | "cancel" | "reopen") {
     if (!quote) return;
-    txError = "";
+    transitionOpts.errorMessage = `Falha ao executar ${t}.`;
     transitioning = t;
-    try {
-      quote = await api<Quote>(`/quotes/${id}/transitions/${t}`, {
-        method: "POST",
-      });
-    } catch (err) {
-      handleApiError(err);
-      txError = errorMessage(err, `Falha ao executar ${t}.`);
-    } finally {
-      transitioning = "";
-    }
+    const updated = await transitionAction.run(t);
+    if (updated) quoteRes.set(updated);
+    transitioning = "";
   }
 
   function openProduce() {
@@ -580,7 +534,7 @@
       const fg = Number(it.gcode_meta?.filament_g ?? 0);
       produceGrams[it.id] = fg > 0 ? String(fg) : "";
     }
-    produceError = "";
+    confirmProduceAction.reset();
     showProduceModal = true;
   }
 
@@ -630,40 +584,48 @@
     return parts.join(" · ");
   }
 
-  async function confirmProduce() {
-    if (!quote) return;
-    produceError = "";
-    producing = true;
-    try {
-      const consumption = quote.items.map((it) => {
-        const a: {
-          quote_item_id: string;
-          spool_id: string;
-          grams?: string;
-          filament_m?: number;
-        } = { quote_item_id: it.id, spool_id: produceAssignments[it.id] };
-        const g = parseFloat(produceGrams[it.id] ?? "");
-        const m = parseFloat(produceMeters[it.id] ?? "");
-        if (Number.isFinite(g) && g > 0) a.grams = String(g);
-        else if (Number.isFinite(m) && m > 0) a.filament_m = m;
-        return a;
-      });
+  const confirmProduceAction = action(
+    (
+      consumption: {
+        quote_item_id: string;
+        spool_id: string;
+        grams?: string;
+        filament_m?: number;
+      }[],
+    ) => {
       if (consumption.some((c) => !c.spool_id)) {
+        // errorMessage extrai o detalhe do ApiError (ex.: "item sem filamento…");
+        // pra Error simples (validação local) devolve a própria mensagem.
         throw new Error("Selecione um spool para cada peça.");
       }
-      quote = await api<Quote>(`/quotes/${id}/transitions/produce`, {
+      return api<Quote>(`/quotes/${id}/transitions/produce`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ consumption }),
       });
+    },
+    { errorMessage: "Falha ao produzir." },
+  );
+
+  async function confirmProduce() {
+    if (!quote) return;
+    const consumption = quote.items.map((it) => {
+      const a: {
+        quote_item_id: string;
+        spool_id: string;
+        grams?: string;
+        filament_m?: number;
+      } = { quote_item_id: it.id, spool_id: produceAssignments[it.id] };
+      const g = parseFloat(produceGrams[it.id] ?? "");
+      const m = parseFloat(produceMeters[it.id] ?? "");
+      if (Number.isFinite(g) && g > 0) a.grams = String(g);
+      else if (Number.isFinite(m) && m > 0) a.filament_m = m;
+      return a;
+    });
+    const updated = await confirmProduceAction.run(consumption);
+    if (updated) {
+      quoteRes.set(updated);
       showProduceModal = false;
-    } catch (err) {
-      handleApiError(err);
-      // errorMessage extrai o detalhe do ApiError (ex.: "item sem filamento…");
-      // pra Error simples (validação local) devolve a própria mensagem.
-      produceError = errorMessage(err, "Falha ao produzir.");
-    } finally {
-      producing = false;
     }
   }
 
@@ -671,10 +633,164 @@
     window.open(`/api/quotes/${id}/pdf`, "_blank");
   }
 
+  // ---- IA ----
+  const askMarkupAction = action(
+    (quoteId: string) => api<MarkupSuggestionOut>(`/llm/markup/${quoteId}`, { method: "POST" }),
+    { errorMessage: "Falha ao consultar IA." },
+  );
+  const askVarianceAction = action(
+    (quoteId: string) => api<VarianceOut>(`/llm/variance/${quoteId}`, { method: "POST" }),
+    { errorMessage: "Falha ao consultar IA." },
+  );
+  const askPricingAction = action(
+    (quoteId: string) => api<PricingOut>(`/llm/pricing/${quoteId}`, { method: "POST" }),
+    { errorMessage: "Falha ao consultar IA." },
+  );
+  const askVariantsAction = action(
+    (itemId: string) => api<VariantsOut>(`/llm/variants/items/${itemId}`, { method: "POST" }),
+    { errorMessage: "Falha ao consultar IA." },
+  );
+  // As quatro dividem o painel de IA (llmError) — o original já zerava a
+  // única variável no início de cada uma; aqui replica zerando as quatro.
+  function clearLlmErrors() {
+    askMarkupAction.reset();
+    askVarianceAction.reset();
+    askPricingAction.reset();
+    askVariantsAction.reset();
+  }
+
+  async function askMarkup() {
+    if (!quote) return;
+    clearLlmErrors();
+    const res = await askMarkupAction.run(quote.id);
+    if (res) markupSuggestion = res;
+  }
+  async function applyMarkup() {
+    if (!quote || !markupSuggestion) return;
+    const v = Number(markupSuggestion.suggested_markup_pct);
+    if (!Number.isFinite(v)) return;
+    editMarkup = v;
+    await saveMeta();
+  }
+
+  async function askVariance() {
+    if (!quote) return;
+    clearLlmErrors();
+    const res = await askVarianceAction.run(quote.id);
+    if (res) varianceResult = res;
+  }
+
+  async function askPricing() {
+    if (!quote) return;
+    clearLlmErrors();
+    const res = await askPricingAction.run(quote.id);
+    if (res) pricingResult = res;
+  }
+
+  async function askVariants(itemId: string) {
+    if (!quote) return;
+    variantsForItem = itemId;
+    clearLlmErrors();
+    const res = await askVariantsAction.run(itemId);
+    if (res) variantsResult = res;
+  }
+
+  // ---- vínculos derivados dos resource()/action() acima ----
+  $: loading = $quoteRes.loading;
+  $: pageError = $quoteRes.error || $uploadPhotoAction.error || $deletePhotoAction.error;
+  $: quote = $quoteRes.data ?? null;
+
+  $: refsData = $refs.data ?? REFS_INITIAL;
+  $: clients = refsData.clients;
+  $: services = refsData.services;
+  $: spools = refsData.spools;
+  $: materials = refsData.materials;
+  $: people = refsData.people;
+
+  $: itemError =
+    itemValidationError ||
+    $addItemAction.error ||
+    $patchItemAction.error ||
+    $reparseAction.error ||
+    $removeItemAction.error;
+  $: addingItem = $addItemAction.pending;
+  $: resolveError = $confirmResolveAction.error;
+  $: resolving = $confirmResolveAction.pending;
+  $: qcError = $quickCreateMaterialAction.error;
+  $: qcSubmitting = $quickCreateMaterialAction.pending;
+
+  $: svcError = $addServiceAction.error || $removeServiceAction.error;
+  $: addingSvc = $addServiceAction.pending;
+
+  $: metaError = $saveMetaAction.error || $toggleRetailModeAction.error || $togglePersonAction.error;
+  $: savingMeta = $saveMetaAction.pending;
+
+  $: txError = $transitionAction.error;
+  $: producing = $confirmProduceAction.pending;
+  $: produceError = $confirmProduceAction.error;
+
+  $: llmError =
+    $askMarkupAction.error ||
+    $askVarianceAction.error ||
+    $askPricingAction.error ||
+    $askVariantsAction.error;
+  let llmBusy: "markup" | "variance" | "pricing" | "variants" | null;
+  $: llmBusy = $askMarkupAction.pending
+    ? "markup"
+    : $askVarianceAction.pending
+      ? "variance"
+      : $askPricingAction.pending
+        ? "pricing"
+        : $askVariantsAction.pending
+          ? "variants"
+          : null;
+
+  function statusLabel(s: string): string {
+    return (
+      {
+        draft: "Rascunho",
+        orcado: "Orçado",
+        aprovado: "Aprovado",
+        em_producao: "Em produção",
+        produzido: "Produzido",
+        entregue: "Entregue",
+        falhou: "Falhou",
+        cancelado: "Cancelado",
+      } as Record<string, string>
+    )[s] ?? s;
+  }
+  function statusClass(s: string): string {
+    if (s === "entregue" || s === "produzido") return "ok";
+    if (s === "cancelado" || s === "falhou") return "warn";
+    if (s === "aprovado" || s === "em_producao") return "brand";
+    return "muted";
+  }
+
+  function clientName(cid: string | null): string {
+    if (!cid) return "—";
+    return clients.find((c) => c.id === cid)?.name ?? "—";
+  }
+
+  function serviceName(sid: string): string {
+    return services.find((s) => s.id === sid)?.name ?? sid.slice(0, 8);
+  }
+
+  $: filteredServices = quote
+    ? services.filter(
+        (s) =>
+          s.is_active &&
+          (quote!.kind === "commercial" ? true : s.kind !== "labor"),
+      )
+    : [];
+
+  $: isDraft = quote?.status === "draft";
+  $: canCancel =
+    quote && quote.status !== "entregue" && quote.status !== "cancelado";
+
   onMount(() => {
     if (requireAuth()) return;
-    loadRefs();
-    load();
+    refs.reload();
+    loadQuote();
   });
 </script>
 
