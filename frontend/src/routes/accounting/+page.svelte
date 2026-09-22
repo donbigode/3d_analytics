@@ -74,13 +74,12 @@
     { initial: [], errorMessage: "Falha ao gerar o DRE mensal.", auto: false },
   );
   $: monthlyRows = $monthly.data ?? [];
-  // Erro exibido nos controles do DRE: dre e monthly são dois resource()
-  // independentes (não um resource+action como vendas/despesas), então não há
-  // um reset() de action() aplicável aqui — em vez de OR (que deixa o erro do
-  // modo que você acabou de sair grudado na tela ao trocar de aba), mostra só
-  // o erro do modo atualmente visível. Reproduz o original (uma única flag,
-  // sempre zerada no início do load que de fato rodou) sem acoplar os dois
-  // resources entre si.
+  // A limpeza de fato é feita por reloadDre()/reloadMonthly() (cada um chama
+  // reset() no resource() irmão antes de recarregar o seu) — isso já garante
+  // que só um dos dois pode ter erro "fresco" por vez. A seleção por modo
+  // aqui é só uma escolha de exibição por cima disso: evita mostrar, por um
+  // instante, o erro do modo que você acabou de sair enquanto o do modo atual
+  // ainda não voltou (loading) — não é o mecanismo que apaga o erro velho.
   $: dreError = dreMode === "mensal" ? $monthly.error : $dre.error;
 
   const prof = resource(() => api<Profitability>(`/accounting/profitability?from=${from}&to=${to}`), {
@@ -121,6 +120,20 @@
     removeExpenseAction.reset();
     return expenses.reload();
   }
+  // Mesmo raciocínio para o DRE: dre e monthly são dois resource() (não um
+  // resource()+action()), mas o problema é idêntico — um reload() bem-sucedido
+  // num modo não apaga o erro velho que ficou no outro. reset() cobre também o
+  // caso em que o modo com erro tem dados de uma carga anterior (monthlyRows
+  // não fica vazio só porque o reload mais recente falhou), que a guarda de
+  // "só recarrega se list vazia" do setDreMode/openTab não pega sozinha.
+  function reloadDre() {
+    monthly.reset();
+    return dre.reload();
+  }
+  function reloadMonthly() {
+    dre.reset();
+    return monthly.reload();
+  }
 
   async function patchSale(s: Sale, body: Partial<Sale>) {
     const updated = await saveSale.run(s.id, body);
@@ -153,20 +166,36 @@
   }
 
   function generateDre() {
-    if (dreMode === "mensal") monthly.reload();
-    else dre.reload();
+    if (dreMode === "mensal") reloadMonthly();
+    else reloadDre();
   }
+  // dre.reset()/monthly.reset() aqui, antes da guarda de "só recarrega se
+  // vazio" decidir: essa guarda (pré-existente) olha monthlyRows.length, e
+  // monthlyRows NÃO fica vazio só porque o reload mais recente falhou — um
+  // reload que falha preserva os dados antigos, só marca error. Sem isto, sair
+  // do modo "mensal" e voltar sem passar por reloadMonthly() (porque a lista
+  // já tinha dados de antes) reexibe um erro velho de uma tentativa que nunca
+  // mais rodou. Resetar os dois é sempre seguro: no ramo em que a guarda
+  // decide recarregar, reloadMonthly()/reloadDre() já fazem o próprio
+  // reset+reload de novo (redundante, inofensivo); no ramo em que a guarda
+  // decide NÃO recarregar (dados em cache), zerar o erro é exatamente o
+  // conserto — estamos escolhendo mostrar dados de uma carga que deu certo,
+  // não faz sentido um erro de outra tentativa continuar por cima.
   function setDreMode(m: typeof dreMode) {
     dreMode = m;
-    if (m === "mensal" && monthlyRows.length === 0) monthly.reload();
-    else if (m === "periodo" && !$dre.data) dre.reload();
+    dre.reset();
+    monthly.reset();
+    if (m === "mensal" && monthlyRows.length === 0) reloadMonthly();
+    else if (m === "periodo" && !$dre.data) reloadDre();
   }
 
   function openTab(t: typeof tab) {
     tab = t;
     if (t === "dre") {
-      if (dreMode === "mensal" && monthlyRows.length === 0) monthly.reload();
-      else if (dreMode === "periodo" && !$dre.data) dre.reload();
+      dre.reset();
+      monthly.reset();
+      if (dreMode === "mensal" && monthlyRows.length === 0) reloadMonthly();
+      else if (dreMode === "periodo" && !$dre.data) reloadDre();
     }
     if (t === "lucratividade" && !$prof.data) prof.reload();
   }
@@ -203,7 +232,7 @@
     if (requireAuth()) return;
     reloadSales();
     reloadExpenses();
-    dre.reload();
+    reloadDre();
   });
 </script>
 

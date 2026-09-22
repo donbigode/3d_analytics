@@ -57,6 +57,33 @@ describe("resource", () => {
     expect(get(r).data).toEqual([1]);
   });
 
+  it("reset() limpa o erro sem mexer em loading nem em data", async () => {
+    const r = resource(() => Promise.reject(new ApiError(500, null)), { auto: false, initial: [9] });
+    await r.reload();
+    expect(get(r).error).not.toBe("");
+
+    r.reset();
+    expect(get(r).error).toBe("");
+    expect(get(r).loading).toBe(false);
+    expect(get(r).data).toEqual([9]); // um reload() falho não sobrescreve os dados antigos
+
+    // reset() não invalida um reload() em voo: se ele vier a falhar depois,
+    // o erro real dessa requisição real ainda pode aparecer.
+    let rejeita: (e: unknown) => void = () => {};
+    const r2 = resource(
+      () => new Promise<number[]>((_res, rej) => { rejeita = rej; }),
+      { auto: false },
+    );
+    const p = r2.reload();
+    expect(get(r2).loading).toBe(true);
+    r2.reset();
+    expect(get(r2).loading).toBe(true); // continua em voo de fato
+    rejeita(new ApiError(500, null));
+    await p;
+    expect(get(r2).error).not.toBe("");
+    expect(get(r2).loading).toBe(false);
+  });
+
   it("redireciona para /login em 401", async () => {
     gotoCalls.length = 0;
     const r = resource(() => Promise.reject(new ApiError(401, null)), { auto: false });
@@ -182,6 +209,24 @@ describe("action", () => {
 
     a.reset();
     expect(get(a).error).toBe("");
+    expect(get(a).pending).toBe(false);
+  });
+
+  it("reset() não mexe em pending — não pode reabilitar um submit com a requisição ainda em voo", async () => {
+    let solta: (v: string) => void = () => {};
+    const a = action(() => new Promise<string>((res) => { solta = res; }));
+    const p = a.run();
+    expect(get(a).pending).toBe(true);
+
+    // reset() chamado no meio de um run() em voo (ex.: usuário clica
+    // "Atualizar" antes do POST resolver) só pode limpar o error — pending
+    // continua true, porque a requisição continua de fato em voo.
+    a.reset();
+    expect(get(a).pending).toBe(true);
+    expect(get(a).error).toBe("");
+
+    solta("ok");
+    await p;
     expect(get(a).pending).toBe(false);
   });
 });

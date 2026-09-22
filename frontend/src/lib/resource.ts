@@ -14,6 +14,7 @@ export type ResourceState<T> = { loading: boolean; error: string; data: T | unde
 export type Resource<T> = Readable<ResourceState<T>> & {
   reload: () => Promise<void>;
   set: (v: T) => void;
+  reset: () => void;
 };
 
 export function resource<T>(
@@ -53,9 +54,25 @@ export function resource<T>(
     update((s) => ({ ...s, data: v, loading: false }));
   }
 
+  /** Zera só o `error`. Não mexe em `loading`: assim como o `pending` de
+   *  action() (ver o comentário lá), `loading` é um fato sobre o mundo — ou
+   *  há um reload() de fato em voo, ou não há — e o chamador não tem
+   *  autoridade para declarar isso falso. Não bota `seq++` de propósito: se
+   *  houver mesmo um reload() em voo quando reset() é chamado e ele vier a
+   *  falhar depois, é legítimo que o erro real dessa requisição real apareça
+   *  — reset() descarta o que já teria sido exibido até agora, não cancela a
+   *  requisição. Existe para o mesmo motivo do reset() de action(): páginas
+   *  que combinam o erro de dois resource() independentes (ex.: DRE por
+   *  período e DRE mensal) num único alerta, e cujo caminho de recarga de
+   *  um precisa limpar o erro velho do outro — resource() não sabe fazer
+   *  isso sozinho, nem deveria (os dois seguem independentes). */
+  function reset(): void {
+    update((s) => ({ ...s, error: "" }));
+  }
+
   if (opts.auto !== false) void reload();
 
-  return { subscribe, reload, set };
+  return { subscribe, reload, set, reset };
 }
 
 export type ActionState = { pending: boolean; error: string };
@@ -69,7 +86,7 @@ export function action<A extends unknown[], R>(
   fn: (...args: A) => Promise<R>,
   opts: { errorMessage?: string } = {},
 ): Action<A, R> {
-  const { subscribe, set } = writable<ActionState>({ pending: false, error: "" });
+  const { subscribe, set, update } = writable<ActionState>({ pending: false, error: "" });
 
   /** `undefined` de volta significa "não teve sucesso" OU "teve sucesso e o
    *  retorno em si é `undefined`" — os dois casos são indistinguíveis pelo
@@ -88,16 +105,24 @@ export function action<A extends unknown[], R>(
     }
   }
 
-  /** Volta ao estado inicial (`pending: false, error: ""`). Existe para páginas
-   *  que combinam o erro de uma action() com o de um resource() irmão num único
-   *  alerta (ex.: `$sales.error || $saveSale.error`): sem isso, um erro de
-   *  mutação sobrevive indefinidamente na tela mesmo depois de um reload()
+  /** Zera só o `error`. Existe para páginas que combinam o erro de uma
+   *  action() com o de um resource() irmão num único alerta (ex.:
+   *  `$sales.error || $saveSale.error`): sem isso, um erro de mutação
+   *  sobrevive indefinidamente na tela mesmo depois de um reload()
    *  bem-sucedido, porque resource() e action() são stores independentes — um
-   *  não sabe zerar o erro do outro. Zera `pending` junto com `error` porque os
-   *  dois descrevem a mesma tentativa: não faz sentido um reset() dizer "esqueça
-   *  esse erro" e deixar `pending` de uma tentativa que já não importa mais. */
+   *  não sabe zerar o erro do outro.
+   *
+   *  Não mexe em `pending`. `pending` é um fato sobre o mundo — existe ou não
+   *  existe uma requisição em voo — e o chamador não tem autoridade para
+   *  declarar isso falso. A primeira versão deste reset() zerava os dois
+   *  juntos, e isso abriu uma janela real: reset() chamado enquanto um
+   *  run() ainda está em voo (ex.: o usuário clica "Atualizar" antes do POST
+   *  do formulário resolver) reabilitava um submit que existia justamente
+   *  para impedir envio duplicado, com a requisição original ainda pendente.
+   *  `error` é só uma mensagem exibida — o chamador pode legitimamente
+   *  dispensá-la; `pending` não é dele para mentir. */
   function reset(): void {
-    set({ pending: false, error: "" });
+    update((s) => ({ ...s, error: "" }));
   }
 
   return { subscribe, run, reset };
