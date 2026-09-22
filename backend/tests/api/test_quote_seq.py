@@ -69,3 +69,20 @@ async def test_criar_via_api_devolve_seq(auth_client):
     assert r.status_code == 201, r.text
     assert isinstance(r.json()["seq"], int)
     assert r.json()["seq"] > 0
+
+
+@pytest.mark.asyncio
+async def test_listagem_de_quotes_traz_seq(auth_client):
+    await auth_client.post("/quotes", json={"kind": "commercial"})
+    r = await auth_client.get("/quotes")
+    assert r.status_code == 200
+    assert all(isinstance(q["seq"], int) for q in r.json())
+
+
+@pytest.mark.asyncio
+async def test_sale_out_traz_quote_seq(auth_client):
+    q = await _novo_quote(status=QuoteStatus.APROVADO)
+    r = await auth_client.get("/accounting/sales")
+    assert r.status_code == 200, r.text
+    venda = next(v for v in r.json() if v["quote_id"] == str(q.id))
+    assert venda["quote_seq"] == q.seq

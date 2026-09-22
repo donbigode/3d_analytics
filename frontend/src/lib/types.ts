@@ -144,6 +144,7 @@ export type QuoteServiceLine = {
 
 export type Quote = {
   id: string;
+  seq: number;
   kind: QuoteKind;
   client_id: string | null;
   status: QuoteStatus;
@@ -437,6 +438,7 @@ export type RankingRow = {
 export type Sale = {
   id: string;
   quote_id: string;
+  quote_seq: number;
   quote_kind: string;
   quote_status: string;
   quote_total: string;

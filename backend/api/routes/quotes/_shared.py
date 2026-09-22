@@ -190,6 +190,7 @@ async def _quote_out(session: AsyncSession, q: Quote) -> QuoteOut:
 
     return QuoteOut(
         id=str(q.id),
+        seq=q.seq,
         kind=q.kind,
         client_id=str(q.client_id) if q.client_id else None,
         status=q.status,

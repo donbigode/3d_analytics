@@ -80,6 +80,7 @@ class QuoteServiceOut(BaseModel):
 
 class QuoteOut(BaseModel):
     id: str
+    seq: int
     kind: QuoteKind
     client_id: str | None
     status: QuoteStatus

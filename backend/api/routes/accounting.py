@@ -17,14 +17,16 @@ from backend.core.accounting.export_xlsx import build_dre_xlsx
 from backend.core.accounting.monthly import compute_dre_monthly
 from backend.core.accounting.profitability import compute_profitability
 from backend.core.accounting.sync import sync_sales
-from backend.infra.db.models import Client, Expense, Sale, User
+from backend.infra.db.models import Client, Expense, Quote, Sale, User
 
 router = APIRouter()
 
 
-def _sale_out(s: Sale, itens_label: str = "", client_name: str | None = None) -> SaleOut:
+def _sale_out(s: Sale, itens_label: str = "", client_name: str | None = None,
+              quote_seq: int = 0) -> SaleOut:
     return SaleOut(
-        id=str(s.id), quote_id=str(s.quote_id), quote_status=s.quote_status,
+        id=str(s.id), quote_id=str(s.quote_id), quote_seq=quote_seq,
+        quote_status=s.quote_status,
         quote_total=s.quote_total, cpv_calc=s.cpv_calc,
         client_id=str(s.client_id) if s.client_id else None,
         is_stale=s.is_stale, is_sold=s.is_sold, confirmed_revenue=s.confirmed_revenue,
@@ -64,8 +66,19 @@ async def list_sales(
     if is_stale is not None:
         stmt = stmt.where(Sale.is_stale.is_(is_stale))
     rows = (await session.execute(stmt)).scalars().all()
+    # Resolve o quote_seq de todas as linhas numa única query — evita repetir
+    # o N+1 já existente em sale_items_label/_client_name (defeito conhecido,
+    # tratado na Spec 2).
+    seq_por_quote = dict(
+        (await session.execute(
+            select(Quote.id, Quote.seq).where(Quote.id.in_([s.quote_id for s in rows]))
+        )).all()
+    )
     return [
-        _sale_out(s, await sale_items_label(session, s), await _client_name(session, s))
+        _sale_out(
+            s, await sale_items_label(session, s), await _client_name(session, s),
+            quote_seq=seq_por_quote.get(s.quote_id, 0),
+        )
         for s in rows
     ]
 
@@ -89,7 +102,8 @@ async def update_sale(
         if sale.sold_at is None:
             sale.sold_at = datetime.now(timezone.utc).date()
     await session.commit(); await session.refresh(sale)
-    return _sale_out(sale)
+    quote_seq = await session.scalar(select(Quote.seq).where(Quote.id == sale.quote_id))
+    return _sale_out(sale, quote_seq=quote_seq or 0)
 
 
 @router.get("/expenses", response_model=list[ExpenseOut])
