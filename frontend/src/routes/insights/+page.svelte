@@ -1,7 +1,9 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { api, errorMessage } from "$lib/api";
-  import { handleApiError, requireAuth } from "$lib/guard";
+  import { api } from "$lib/api";
+  import { requireAuth } from "$lib/guard";
+  import { resource, action } from "$lib/resource";
+  import { num as fmtNumber, money as fmtMoney } from "$lib/format";
   import type {
     CalibrationInsight,
     CalibrationInsightApplyResult,
@@ -32,119 +34,80 @@
     top_clients: { name: string; count: number }[];
   };
 
-  let rows: CalibrationInsight[] = [];
-  let overview: Overview | null = null;
-  let overviewError = "";
-  let personal: PersonalProjects | null = null;
-  let failureRates: FailureRateRow[] = [];
-  let suggestions: ProductionSuggestionsOut | null = null;
-  let generatingSuggestions = false;
-  let suggestionsError = "";
-  let loading = true;
-  let listError = "";
-  let actingId: string | null = null;
-  let banner = "";
+  const overviewRes = resource(() => api<Overview>("/insights/overview?days=90"), {
+    errorMessage: "Falha ao carregar painel de insights.",
+    auto: false,
+  });
+  $: overview = $overviewRes.data ?? null;
 
-  async function loadOverview() {
-    try {
-      overview = await api<Overview>("/insights/overview?days=90");
-    } catch (err) {
-      handleApiError(err);
-      overviewError = errorMessage(err, "Falha ao carregar painel de insights.");
-    }
-    try {
-      const fr = await api<{ by_material: FailureRateRow[] }>("/insights/failure-rates");
-      failureRates = fr.by_material;
-    } catch (err) {
-      handleApiError(err);
-    }
-    await loadSuggestions();
-    try {
-      personal = await api<PersonalProjects>("/insights/personal-projects");
-    } catch (err) {
-      handleApiError(err);
-    }
-  }
+  const failureRatesRes = resource(
+    async () => (await api<{ by_material: FailureRateRow[] }>("/insights/failure-rates")).by_material,
+    { initial: [], auto: false },
+  );
+  $: failureRates = $failureRatesRes.data ?? [];
 
-  async function loadSuggestions() {
-    try {
-      suggestions = await api<ProductionSuggestionsOut>("/insights/production-suggestions");
-    } catch (err) {
-      handleApiError(err);
-    }
-  }
+  const personalRes = resource(() => api<PersonalProjects>("/insights/personal-projects"), {
+    auto: false,
+  });
+  $: personal = $personalRes.data ?? null;
+
+  const suggestionsRes = resource(() => api<ProductionSuggestionsOut>("/insights/production-suggestions"), {
+    auto: false,
+  });
+  $: suggestions = $suggestionsRes.data ?? null;
+  const generateSuggestionsAction = action(
+    () => api("/insights/production-suggestions/generate", { method: "POST" }),
+    { errorMessage: "Falha ao gerar sugestões." },
+  );
 
   async function generateSuggestions() {
-    generatingSuggestions = true;
-    suggestionsError = "";
-    try {
-      await api("/insights/production-suggestions/generate", { method: "POST" });
-      await loadSuggestions();
-    } catch (err) {
-      handleApiError(err);
-      suggestionsError = errorMessage(err, "Falha ao gerar sugestões.");
-    } finally {
-      generatingSuggestions = false;
-    }
+    const res = await generateSuggestionsAction.run();
+    if (res === undefined && $generateSuggestionsAction.error) return;
+    await suggestionsRes.reload();
   }
 
-  async function load() {
-    loading = true;
-    listError = "";
-    try {
-      rows = await api<CalibrationInsight[]>("/calibration/insights");
-    } catch (err) {
-      handleApiError(err);
-      listError = errorMessage(err, "Falha ao carregar sugestões.");
-    } finally {
-      loading = false;
-    }
+  const calibrationRes = resource(() => api<CalibrationInsight[]>("/calibration/insights"), {
+    initial: [],
+    errorMessage: "Falha ao carregar sugestões.",
+    auto: false,
+  });
+  $: rows = $calibrationRes.data ?? [];
+
+  const applyAction = action(
+    (id: string) => api<CalibrationInsightApplyResult>(`/calibration/insights/${id}/apply`, { method: "POST" }),
+    { errorMessage: "Falha ao aplicar sugestão." },
+  );
+  const dismissAction = action((id: string) => api(`/calibration/insights/${id}/dismiss`, { method: "POST" }), {
+    errorMessage: "Falha ao descartar sugestão.",
+  });
+  // Painel de calibração: erro de carga e das duas mutações (aplicar,
+  // descartar) dividem um único alerta — um reload() bem-sucedido precisa
+  // limpar o erro velho da outra mutação.
+  $: listError = $calibrationRes.error || $applyAction.error || $dismissAction.error;
+  function reloadCalibration() {
+    applyAction.reset();
+    dismissAction.reset();
+    return calibrationRes.reload();
   }
+
+  let actingId: string | null = null;
+  let banner = "";
 
   async function apply(id: string, scopeRef: string) {
     actingId = id;
     banner = "";
-    try {
-      const res = await api<CalibrationInsightApplyResult>(
-        `/calibration/insights/${id}/apply`,
-        { method: "POST" }
-      );
-      banner = `Sugestão aplicada em ${res.material_code}: ${res.field} → ${fmtNumber(res.new_value)}.`;
-      await load();
-    } catch (err) {
-      handleApiError(err);
-      listError = errorMessage(err, "Falha ao aplicar sugestão.");
-    } finally {
-      actingId = null;
-    }
+    const res = await applyAction.run(id);
+    actingId = null;
+    if (!res) return;
+    banner = `Sugestão aplicada em ${res.material_code}: ${res.field} → ${fmtNumber(res.new_value)}.`;
+    await reloadCalibration();
   }
 
   async function dismiss(id: string) {
     actingId = id;
-    banner = "";
-    try {
-      await api(`/calibration/insights/${id}/dismiss`, { method: "POST" });
-      await load();
-    } catch (err) {
-      handleApiError(err);
-      listError = errorMessage(err, "Falha ao descartar sugestão.");
-    } finally {
-      actingId = null;
-    }
-  }
-
-  function fmtNumber(v: number | string, opts?: { suffix?: string }): string {
-    const n = typeof v === "string" ? parseFloat(v) : v;
-    const formatted = n.toLocaleString("pt-BR", {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    });
-    return opts?.suffix ? `${formatted}${opts.suffix}` : formatted;
-  }
-
-  function fmtMoney(v: number | string): string {
-    const n = typeof v === "string" ? parseFloat(v) : v;
-    return n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+    await dismissAction.run(id);
+    actingId = null;
+    if (!$dismissAction.error) await reloadCalibration();
   }
 
   function fmtDelta(v: number | string): string {
@@ -211,8 +174,11 @@
 
   onMount(() => {
     if (requireAuth()) return;
-    load();
-    loadOverview();
+    reloadCalibration();
+    overviewRes.reload();
+    failureRatesRes.reload();
+    suggestionsRes.reload();
+    personalRes.reload();
   });
 </script>
 
@@ -226,8 +192,8 @@
   </p>
 </header>
 
-{#if overviewError}
-  <div class="banner alert">{overviewError}</div>
+{#if $overviewRes.error}
+  <div class="banner alert">{$overviewRes.error}</div>
 {/if}
 
 {#if personal && (personal.people.length > 0 || personal.unassigned_count > 0)}
@@ -250,7 +216,7 @@
           <tr>
             <td>{p.name}</td>
             <td class="pp-num">{p.count}</td>
-            <td class="pp-num">{Number(p.grams).toLocaleString("pt-BR", { maximumFractionDigits: 0 })}</td>
+            <td class="pp-num">{fmtNumber(p.grams, 0)}</td>
             <td class="pp-num">{fmtMoney(p.cpv)}</td>
           </tr>
         {/each}
@@ -344,11 +310,11 @@
 
     <div class="suggest-head">
       <h3 class="form-title">Sugestões da IA</h3>
-      <button class="tiny" on:click={generateSuggestions} disabled={generatingSuggestions}>
-        {generatingSuggestions ? "Gerando…" : suggestions?.generated_at ? "Regerar" : "Gerar sugestões"}
+      <button class="tiny" on:click={generateSuggestions} disabled={$generateSuggestionsAction.pending}>
+        {$generateSuggestionsAction.pending ? "Gerando…" : suggestions?.generated_at ? "Regerar" : "Gerar sugestões"}
       </button>
     </div>
-    {#if suggestionsError}<div class="banner alert">{suggestionsError}</div>{/if}
+    {#if $generateSuggestionsAction.error}<div class="banner alert">{$generateSuggestionsAction.error}</div>{/if}
     {#if suggestions && suggestions.stale && suggestions.generated_at}
       <p class="hint">Há novas falhas desde a última geração — clique em Regerar.</p>
     {/if}
@@ -534,13 +500,13 @@
         {rows.length} {rows.length === 1 ? "ajuste sugerido" : "ajustes sugeridos"}
       </h2>
     </div>
-    <button class="tiny ghost" on:click={load} disabled={loading}>
-      {loading ? "Recalculando…" : "Recalcular"}
+    <button class="tiny ghost" on:click={reloadCalibration} disabled={$calibrationRes.loading}>
+      {$calibrationRes.loading ? "Recalculando…" : "Recalcular"}
     </button>
   </div>
 </section>
 
-{#if loading && rows.length === 0}
+{#if $calibrationRes.loading && rows.length === 0}
   <section class="panel"><p class="empty">Carregando insights…</p></section>
 {:else if rows.length === 0}
   <section class="panel empty-state">
