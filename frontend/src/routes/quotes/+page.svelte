@@ -238,9 +238,10 @@
     flex-direction: column;
     gap: 0.25rem;
   }
+  /* Override local: sem a margem superior padrão — aqui a tabela fica
+     colada no panel-head, sem gap extra (mantém aparência já existente) */
   .table-wrap {
-    border: 1px solid var(--line);
-    overflow-x: auto;
+    margin-top: 0;
   }
   .items-cell {
     max-width: 22rem;
@@ -252,20 +253,7 @@
     gap: 0.25rem;
     margin-top: 0.3rem;
   }
-  .chip {
-    font-size: 0.72rem;
-    padding: 0.05rem 0.45rem;
-    border: 1px solid var(--line-strong);
-    border-radius: 999px;
-    background: var(--paper);
-    color: var(--muted);
-    cursor: pointer;
-  }
-  .chip.on {
-    background: var(--brand);
-    border-color: var(--brand);
-    color: #fff;
-  }
+  /* .chip e .chip.on agora vivem em app.css (mesmos valores) */
   table {
     width: 100%;
     border-collapse: collapse;
@@ -302,10 +290,11 @@
   td.dim {
     color: var(--muted);
   }
+  /* Override local: padding/letter-spacing diferentes do padrão global
+     (mantém aparência já existente nesta página) */
   .empty {
     padding: 2rem 1rem;
     text-align: center;
-    color: var(--muted);
     font-family: var(--font-mono);
     font-size: 0.74rem;
     letter-spacing: 0.16em;

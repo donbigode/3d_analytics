@@ -1642,17 +1642,7 @@
       grid-template-columns: 1fr;
     }
   }
-  .panel + .panel {
-    margin-top: 1.5rem;
-  }
-  .side-col .panel + .panel {
-    margin-top: 1.5rem;
-  }
-  .table-wrap {
-    border: 1px solid var(--line);
-    overflow-x: auto;
-    margin-top: 1rem;
-  }
+  /* .panel + .panel e .table-wrap agora vivem em app.css (mesmos valores) */
   table {
     width: 100%;
     border-collapse: collapse;
@@ -1680,10 +1670,11 @@
     font-family: var(--font-mono);
     font-size: 0.86rem;
   }
+  /* Override local: padding menor que o padrão global (mantém aparência
+     já existente nesta página) */
   .empty {
     padding: 1.5rem 1rem;
     text-align: center;
-    color: var(--muted);
     font-family: var(--font-mono);
     font-size: 0.74rem;
     letter-spacing: 0.16em;
@@ -1746,13 +1737,18 @@
     font-size: 0.78rem;
     margin-top: 0.1rem;
   }
+  /* .badge.pending e .badge.weight nunca herdaram fonte mono nem borda do
+     .badge base (que não existia antes desta classe virar global) — cada
+     regra cancela essas duas propriedades pra manter a aparência de antes */
   .badge.pending {
     display: inline-block;
     margin-left: 0.4rem;
     padding: 0.05rem 0.4rem;
+    border: none;
     border-radius: 999px;
     background: #fef3c7;
     color: #92400e;
+    font-family: var(--font-sans);
     font-size: 0.7em;
     text-transform: uppercase;
     letter-spacing: 0.04em;
@@ -1772,9 +1768,11 @@
   .badge.weight {
     display: inline-block;
     padding: 0.05rem 0.4rem;
+    border: none;
     border-radius: 999px;
     background: #e0f2fe;
     color: #075985;
+    font-family: var(--font-sans);
     font-size: 0.66rem;
     text-transform: uppercase;
     letter-spacing: 0.04em;
@@ -1782,7 +1780,8 @@
     white-space: nowrap;
   }
   .hint.warn { color: #92400e; font-size: 0.85em; margin: 0.25rem 0 0; }
-  .hint { color: #6b7280; font-size: 0.85em; }
+  /* Override local: tamanho próprio (cor já vem de app.css, mesmo tom de #6b7280) */
+  .hint { font-size: 0.85em; }
   button.link {
     background: none;
     border: none;
@@ -1952,18 +1951,15 @@
     text-decoration: none;
     display: inline-block;
   }
+  /* Override local: sem o flex/gap/margem padrão de app.css — o espaçamento
+     entre título e contador aqui vem só do espaço no texto (mantém
+     aparência já existente antes desta classe virar global) */
   .section-title {
-    font-family: var(--font-mono);
-    font-size: 0.72rem;
-    letter-spacing: 0.22em;
-    text-transform: uppercase;
-    color: var(--ink);
+    display: block;
+    gap: 0;
     margin: 0;
   }
-  .section-title .count {
-    color: var(--muted);
-    font-weight: 400;
-  }  .num {
+  .num {
     width: 5.5rem;
     text-align: right;
   }
