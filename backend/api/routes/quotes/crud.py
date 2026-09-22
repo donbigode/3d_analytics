@@ -2,6 +2,7 @@
 
 Movido sem alteração de lógica a partir do antigo `backend/api/routes/quotes.py`.
 """
+from pathlib import Path
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -12,8 +13,10 @@ from backend.api.deps import db_session, require_user
 from backend.api.schemas.quotes import QuoteCreate, QuoteOut, QuoteUpdate
 from backend.api.routes.quotes._shared import _quote_out
 from backend.core.models import QuoteKind, QuoteStatus
-from backend.infra.db.models import Quote, QuoteItem, QuotePerson, QuoteService, User
+from backend.infra.db.models import Quote, QuoteItem, QuotePerson, QuotePhoto, QuoteService, User
 from backend.infra.storage.gcodes import copy_gcode
+from backend.infra.storage.quote_photos import copy_photo_file
+from backend.settings import get_settings
 
 router = APIRouter()
 
@@ -111,10 +114,9 @@ async def clone_quote(
 
     O clone é um orçamento que ainda não aconteceu: status draft, sem
     timestamps de ciclo, sem consumo de material, sem evento de produção
-    e sem linha no contábil. Copia configuração comercial, peças, serviços
-    e o arquivo de gcode de cada item (para a pasta do novo orçamento,
-    nunca compartilhando com a do original) — as fotos ficam para a
-    próxima task.
+    e sem linha no contábil. Copia configuração comercial, peças, serviços,
+    o arquivo de gcode de cada item e as fotos (capa e por item) — sempre
+    para arquivo próprio, nunca compartilhando com o do original.
     """
     orig = await session.get(Quote, quote_id)
     if not orig:
@@ -131,47 +133,90 @@ async def clone_quote(
         notes=_notas_do_clone(orig),
     )
     session.add(novo)
-    await session.flush()   # precisa do id para os itens (e, nas próximas tasks, as pastas de arquivo)
+    await session.flush()   # precisa do id para os itens e a pasta de gcode
 
-    itens_orig = (
-        await session.execute(select(QuoteItem).where(QuoteItem.quote_id == orig.id))
-    ).scalars().all()
-    mapa_itens: dict[UUID, UUID] = {}
-    for it in itens_orig:
-        copia = QuoteItem(
-            quote_id=novo.id,
-            name=it.name,
-            filename=copy_gcode(it.filename, novo.id),
-            gcode_meta=dict(it.gcode_meta or {}),
-            material_version_id=it.material_version_id,
-            quantity=it.quantity,
-            depreciation_rate_override=it.depreciation_rate_override,
-            failure_rate_override=it.failure_rate_override,
-            is_multi_color=it.is_multi_color,
-            model_source_url=it.model_source_url,
-            model_source_author=it.model_source_author,
-            model_source_license=it.model_source_license,
-            asset_id=it.asset_id,
-        )
-        session.add(copia)
-        await session.flush()
-        mapa_itens[it.id] = copia.id   # Task 3 usa este mapa para remapear as fotos
+    escritos: list[str] = []   # caminhos relativos gravados por copy_gcode/copy_photo_file
+    try:
+        itens_orig = (
+            await session.execute(select(QuoteItem).where(QuoteItem.quote_id == orig.id))
+        ).scalars().all()
+        mapa_itens: dict[UUID, UUID] = {}
+        for it in itens_orig:
+            novo_filename = copy_gcode(it.filename, novo.id)
+            if novo_filename is not None:
+                escritos.append(novo_filename)
+            copia = QuoteItem(
+                quote_id=novo.id,
+                name=it.name,
+                filename=novo_filename,
+                gcode_meta=dict(it.gcode_meta or {}),
+                material_version_id=it.material_version_id,
+                quantity=it.quantity,
+                depreciation_rate_override=it.depreciation_rate_override,
+                failure_rate_override=it.failure_rate_override,
+                is_multi_color=it.is_multi_color,
+                model_source_url=it.model_source_url,
+                model_source_author=it.model_source_author,
+                model_source_license=it.model_source_license,
+                asset_id=it.asset_id,
+            )
+            session.add(copia)
+            await session.flush()
+            mapa_itens[it.id] = copia.id
 
-    servicos = (
-        await session.execute(select(QuoteService).where(QuoteService.quote_id == orig.id))
-    ).scalars().all()
-    for qs in servicos:
-        session.add(QuoteService(quote_id=novo.id, service_id=qs.service_id,
-                                 quantity=qs.quantity, rate=qs.rate))
+        servicos = (
+            await session.execute(select(QuoteService).where(QuoteService.quote_id == orig.id))
+        ).scalars().all()
+        for qs in servicos:
+            session.add(QuoteService(quote_id=novo.id, service_id=qs.service_id,
+                                     quantity=qs.quantity, rate=qs.rate))
 
-    pessoas = (
-        await session.execute(select(QuotePerson).where(QuotePerson.quote_id == orig.id))
-    ).scalars().all()
-    for qp in pessoas:
-        session.add(QuotePerson(quote_id=novo.id, person_id=qp.person_id))
+        pessoas = (
+            await session.execute(select(QuotePerson).where(QuotePerson.quote_id == orig.id))
+        ).scalars().all()
+        for qp in pessoas:
+            session.add(QuotePerson(quote_id=novo.id, person_id=qp.person_id))
 
-    await session.commit()
+        fotos = (
+            await session.execute(select(QuotePhoto).where(QuotePhoto.quote_id == orig.id))
+        ).scalars().all()
+        for foto in fotos:
+            copia_arquivo = copy_photo_file(foto.storage_path)
+            if copia_arquivo is None:
+                continue   # arquivo sumiu do disco: não replica um registro quebrado
+            escritos.append(copia_arquivo.storage_path)
+            session.add(QuotePhoto(
+                quote_id=novo.id,
+                quote_item_id=mapa_itens.get(foto.quote_item_id) if foto.quote_item_id else None,
+                storage_path=copia_arquivo.storage_path,
+                content_type=copia_arquivo.content_type,
+                size_bytes=copia_arquivo.size_bytes,
+                width=copia_arquivo.width,
+                height=copia_arquivo.height,
+                sort_order=foto.sort_order,
+            ))
+
+        await session.commit()
+    except Exception:
+        await session.rollback()
+        _remover_arquivos(escritos)
+        raise
     return await _quote_out(session, novo)
+
+
+def _remover_arquivos(caminhos_relativos: list[str]) -> None:
+    """Limpeza de melhor esforço quando o commit do clone falha.
+
+    Genérico de propósito: limpa tanto gcode quanto foto, então
+    `delete_photo()` do módulo de fotos seria o nome errado para isso.
+    Arquivo órfão é o modo de falha aceito (Spec 3 §3.6); registro
+    apontando para arquivo inexistente, não.
+    """
+    base = Path(get_settings().storage_dir)
+    for rel in caminhos_relativos:
+        alvo = base / rel
+        if alvo.is_file():
+            alvo.unlink(missing_ok=True)
 
 
 def _notas_do_clone(orig: Quote) -> str:

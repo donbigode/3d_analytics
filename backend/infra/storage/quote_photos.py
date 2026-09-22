@@ -49,6 +49,26 @@ def save_photo(content: bytes, filename: str) -> SavedPhoto:
     )
 
 
+def copy_photo_file(src_rel: str | None) -> SavedPhoto | None:
+    """Copia uma foto já armazenada para um arquivo novo.
+
+    Usado pelo clone. Compartilhar o storage_path faria delete_photo() no
+    original apagar a imagem do clone — quote_photos é diretório plano,
+    sem pasta por orçamento.
+
+    Devolve None quando a origem não existe em disco (mesma regra do
+    clone de gcode): o clone segue sem essa foto em vez de falhar.
+    """
+    if not src_rel:
+        return None
+    settings = get_settings()
+    src = Path(settings.storage_dir) / src_rel
+    if not src.is_file():
+        return None
+    # Reusa save_photo para manter o mesmo reencode e os mesmos metadados.
+    return save_photo(src.read_bytes(), src.name)
+
+
 def delete_photo(storage_path: str | None) -> None:
     if not storage_path:
         return
