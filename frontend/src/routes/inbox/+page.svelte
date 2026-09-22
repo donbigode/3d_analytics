@@ -1,8 +1,10 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { goto } from "$app/navigation";
-  import { api, errorMessage } from "$lib/api";
-  import { handleApiError, requireAuth } from "$lib/guard";
+  import { api } from "$lib/api";
+  import { requireAuth } from "$lib/guard";
+  import { resource, action } from "$lib/resource";
+  import { dateTime as fmtDate, num as fmtNum, dur as fmtDur } from "$lib/format";
   import type {
     AutoNameOut,
     Client,
@@ -13,54 +15,88 @@
     Spool,
   } from "$lib/types";
 
-  let rows: InboxItem[] = [];
-  let clients: Client[] = [];
-  let loading = true;
-  let listError = "";
+  const rows = resource(() => api<InboxItem[]>("/inbox"), {
+    initial: [], errorMessage: "Falha ao carregar inbox.", auto: false,
+  });
+  const discardAction = action((id: string) => api(`/inbox/${id}`, { method: "DELETE" }), {
+    errorMessage: "Falha ao descartar.",
+  });
+  // Um "Atualizar" bem-sucedido não pode deixar preso o erro de um descarte
+  // que falhou antes — os dois dividem o mesmo alerta do painel.
+  $: listError = $rows.error || $discardAction.error;
+  function reloadRows() {
+    discardAction.reset();
+    return rows.reload();
+  }
+
+  const clients = resource(() => api<Client[]>("/clients"), { initial: [], auto: false });
 
   // Impressora: jobs capturados do Moonraker (via agente local), atachados a
   // um orçamento que o usuário criou. Atachar só vincula + grava as gramas
   // reais; a baixa de estoque acontece depois, no "Produzir" do orçamento.
-  let pjRows: PrinterJobItem[] = [];
-  let pjError = "";
-  let spools: Spool[] = [];
-  let quotes: Quote[] = [];
+  const pjRows = resource(() => api<PrinterJobItem[]>("/printer-jobs"), {
+    initial: [], errorMessage: "Falha ao carregar impressos.", auto: false,
+  });
+  const discardPjAction = action((id: string) => api(`/printer-jobs/${id}`, { method: "DELETE" }), {
+    errorMessage: "Falha ao descartar.",
+  });
+  // Mesmo raciocínio: attach bem-sucedido também não pode deixar preso o
+  // erro de um descarte anterior que falhou (mesmo alerta do painel).
+  $: pjError = $pjRows.error || $discardPjAction.error;
+  function reloadPjRows() {
+    discardPjAction.reset();
+    return pjRows.reload();
+  }
+
+  const spools = resource(() => api<Spool[]>("/spools"), { initial: [], auto: false });
+  const quotes = resource(() => api<Quote[]>("/quotes"), { initial: [], auto: false });
 
   let attaching: PrinterJobItem | null = null;
   let aQuote = "";
   let aSpool = "";
-  let aSubmitting = false;
-  let aError = "";
   let aDone = "";
+  const attachAction = action(
+    (id: string, quoteId: string, spoolId: string) =>
+      api(`/printer-jobs/${id}/link`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ quote_id: quoteId, spool_id: spoolId }),
+      }),
+    { errorMessage: "Falha ao atachar." },
+  );
 
   let promoting: InboxItem | null = null;
   let pKind: QuoteKind = "commercial";
   let pClient = "";
   let pName = "";
-  let pSubmitting = false;
-  let pError = "";
+  const promoteAction = action(
+    (id: string, body: Record<string, unknown>) =>
+      api<{ id: string }>(`/inbox/${id}/promote`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      }),
+    { errorMessage: "Falha ao promover." },
+  );
 
   let namingId: string | null = null;
-  let nameError = "";
+  const suggestNameAction = action(
+    (id: string) => api<AutoNameOut>(`/llm/auto-name/${id}`, { method: "POST" }),
+    { errorMessage: "Falha ao gerar nome." },
+  );
 
   async function suggestName(r: InboxItem) {
     namingId = r.id;
-    nameError = "";
-    try {
-      const out = await api<AutoNameOut>(`/llm/auto-name/${r.id}`, { method: "POST" });
-      pName = out.name;
-      if (!promoting) {
-        // open the promote modal pre-filled with the suggestion
-        promoting = r;
-        pKind = "commercial";
-        pClient = "";
-        pError = "";
-      }
-    } catch (err) {
-      handleApiError(err);
-      nameError = errorMessage(err, "Falha ao gerar nome.");
-    } finally {
-      namingId = null;
+    const out = await suggestNameAction.run(r.id);
+    namingId = null;
+    if (!out) return;
+    pName = out.name;
+    if (!promoting) {
+      // open the promote modal pre-filled with the suggestion
+      promoting = r;
+      pKind = "commercial";
+      pClient = "";
+      promoteAction.reset();
     }
   }
 
@@ -68,152 +104,55 @@
     return p.split("/").pop() ?? p;
   }
 
-  function fmtDate(s: string | null): string {
-    if (!s) return "—";
-    try {
-      return new Date(s).toLocaleString("pt-BR");
-    } catch {
-      return s;
-    }
-  }
-
-  function fmtNum(v: number | null | undefined, dec = 2): string {
-    if (v === null || v === undefined) return "—";
-    return Number(v).toLocaleString("pt-BR", { maximumFractionDigits: dec });
-  }
-
-  function fmtDur(s: number | null | undefined): string {
-    if (!s) return "—";
-    const h = Math.floor(s / 3600);
-    const m = Math.floor((s % 3600) / 60);
-    return h > 0 ? `${h}h ${m}min` : `${m}min`;
-  }
-
-  async function load() {
-    loading = true;
-    listError = "";
-    try {
-      rows = await api<InboxItem[]>("/inbox");
-    } catch (err) {
-      handleApiError(err);
-      listError = errorMessage(err, "Falha ao carregar inbox.");
-    } finally {
-      loading = false;
-    }
-  }
-
-  async function loadClients() {
-    try {
-      clients = await api<Client[]>("/clients");
-    } catch (err) {
-      handleApiError(err);
-    }
-  }
-
   function openPromote(r: InboxItem) {
     promoting = r;
     pKind = "commercial";
     pClient = "";
     pName = basename(r.original_path).replace(/\.(b?gcode)$/i, "");
-    pError = "";
+    promoteAction.reset();
   }
 
   async function confirmPromote() {
     if (!promoting) return;
-    pError = "";
-    pSubmitting = true;
-    try {
-      const body: Record<string, unknown> = {
-        kind: pKind,
-        client_id: pKind === "commercial" ? pClient || null : null,
-        name: pName || null,
-      };
-      const res = await api<{ id: string }>(`/inbox/${promoting.id}/promote`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      promoting = null;
-      goto(`/quotes/${res.id}`);
-    } catch (err) {
-      handleApiError(err);
-      pError = errorMessage(err, "Falha ao promover.");
-    } finally {
-      pSubmitting = false;
-    }
+    const body: Record<string, unknown> = {
+      kind: pKind,
+      client_id: pKind === "commercial" ? pClient || null : null,
+      name: pName || null,
+    };
+    const res = await promoteAction.run(promoting.id, body);
+    if (!res) return;
+    promoting = null;
+    goto(`/quotes/${res.id}`);
   }
 
   async function discard(r: InboxItem) {
     if (!confirm(`Descartar "${basename(r.original_path)}"?`)) return;
-    try {
-      await api(`/inbox/${r.id}`, { method: "DELETE" });
-      await load();
-    } catch (err) {
-      handleApiError(err);
-      listError = errorMessage(err, "Falha ao descartar.");
-    }
-  }
-
-  async function loadPrinterJobs() {
-    pjError = "";
-    try {
-      pjRows = await api<PrinterJobItem[]>("/printer-jobs");
-    } catch (err) {
-      handleApiError(err);
-      pjError = errorMessage(err, "Falha ao carregar impressos.");
-    }
-  }
-
-  async function loadAttachRefs() {
-    try {
-      [spools, quotes] = await Promise.all([
-        api<Spool[]>("/spools"),
-        api<Quote[]>("/quotes"),
-      ]);
-    } catch (err) {
-      handleApiError(err);
-    }
+    await discardAction.run(r.id);
+    if (!$discardAction.error) await rows.reload();
   }
 
   function openAttach(r: PrinterJobItem) {
     attaching = r;
     aQuote = "";
     aSpool = "";
-    aError = "";
     aDone = "";
+    attachAction.reset();
   }
 
   async function confirmAttach() {
     if (!attaching || !aQuote || !aSpool) return;
-    aError = "";
-    aSubmitting = true;
-    try {
-      await api(`/printer-jobs/${attaching.id}/link`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ quote_id: aQuote, spool_id: aSpool }),
-      });
-      attaching = null;
-      // Orienta o próximo passo manual: produzir o orçamento (baixa o estoque).
-      aDone = aQuote;
-      await loadPrinterJobs();
-    } catch (err) {
-      handleApiError(err);
-      aError = errorMessage(err, "Falha ao atachar.");
-    } finally {
-      aSubmitting = false;
-    }
+    await attachAction.run(attaching.id, aQuote, aSpool);
+    if ($attachAction.error) return;
+    attaching = null;
+    // Orienta o próximo passo manual: produzir o orçamento (baixa o estoque).
+    aDone = aQuote;
+    await reloadPjRows();
   }
 
   async function discardPrinterJob(r: PrinterJobItem) {
     if (!confirm(`Descartar impresso "${r.filename ?? r.machine}"?`)) return;
-    try {
-      await api(`/printer-jobs/${r.id}`, { method: "DELETE" });
-      await loadPrinterJobs();
-    } catch (err) {
-      handleApiError(err);
-      pjError = errorMessage(err, "Falha ao descartar.");
-    }
+    await discardPjAction.run(r.id);
+    if (!$discardPjAction.error) await pjRows.reload();
   }
 
   function mmToM(mm: number | null | undefined): number | null {
@@ -223,10 +162,11 @@
 
   onMount(() => {
     if (requireAuth()) return;
-    loadClients();
-    load();
-    loadPrinterJobs();
-    loadAttachRefs();
+    clients.reload();
+    rows.reload();
+    pjRows.reload();
+    spools.reload();
+    quotes.reload();
   });
 </script>
 
@@ -241,9 +181,9 @@
 
 <section class="panel list-panel">
   <div class="panel-head">
-    <h2 class="section-title">Pendentes <span class="count">· {rows.length}</span></h2>
-    <button class="tiny ghost" on:click={load} disabled={loading}>
-      {loading ? "Carregando…" : "Atualizar"}
+    <h2 class="section-title">Pendentes <span class="count">· {($rows.data ?? []).length}</span></h2>
+    <button class="tiny ghost" on:click={reloadRows} disabled={$rows.loading}>
+      {$rows.loading ? "Carregando…" : "Atualizar"}
     </button>
   </div>
   {#if listError}<div class="alert">{listError}</div>{/if}
@@ -261,7 +201,7 @@
         </tr>
       </thead>
       <tbody>
-        {#each rows as r (r.id)}
+        {#each $rows.data ?? [] as r (r.id)}
           <tr>
             <td class="mono">{basename(r.original_path)}</td>
             <td class="mono">{r.parsed_meta?.material ?? "—"}</td>
@@ -277,7 +217,7 @@
             </td>
           </tr>
         {/each}
-        {#if rows.length === 0}
+        {#if ($rows.data ?? []).length === 0}
           <tr>
             <td colspan="6"><div class="empty">Nenhum arquivo aguardando</div></td>
           </tr>
@@ -289,8 +229,8 @@
 
 <section class="panel list-panel">
   <div class="panel-head">
-    <h2 class="section-title">Impressora <span class="count">· {pjRows.length}</span></h2>
-    <button class="tiny ghost" on:click={loadPrinterJobs}>Atualizar</button>
+    <h2 class="section-title">Impressora <span class="count">· {($pjRows.data ?? []).length}</span></h2>
+    <button class="tiny ghost" on:click={reloadPjRows}>Atualizar</button>
   </div>
   <p class="pj-lede">
     Impressos capturados da impressora. <strong>Atachar</strong> vincula a um
@@ -319,7 +259,7 @@
         </tr>
       </thead>
       <tbody>
-        {#each pjRows as r (r.id)}
+        {#each $pjRows.data ?? [] as r (r.id)}
           <tr>
             <td class="mono">{r.filename ?? "—"}</td>
             <td class="mono">{r.machine}</td>
@@ -332,7 +272,7 @@
             </td>
           </tr>
         {/each}
-        {#if pjRows.length === 0}
+        {#if ($pjRows.data ?? []).length === 0}
           <tr>
             <td colspan="6"><div class="empty">Nenhum impresso aguardando</div></td>
           </tr>
@@ -347,13 +287,13 @@
     <div class="modal">
       <h2>Atachar impresso</h2>
       <p class="dim mono">{attaching.filename ?? attaching.machine}</p>
-      {#if aError}<div class="alert">{aError}</div>{/if}
+      {#if $attachAction.error}<div class="alert">{$attachAction.error}</div>{/if}
       <form on:submit|preventDefault={confirmAttach} class="form-grid">
         <label class="field full">
           Orçamento
           <select bind:value={aQuote}>
             <option value="">— escolha —</option>
-            {#each quotes as q}
+            {#each $quotes.data ?? [] as q}
               <option value={q.id}>{q.id.slice(0, 8)} · {q.kind} · {q.status}</option>
             {/each}
           </select>
@@ -362,7 +302,7 @@
           Filamento usado (spool)
           <select bind:value={aSpool}>
             <option value="">— escolha —</option>
-            {#each spools as sp}
+            {#each $spools.data ?? [] as sp}
               <option value={sp.id}>
                 {sp.material_type}{sp.color ? ` ${sp.color}` : ""} · {fmtNum(Number(sp.remaining_grams), 0)}g
               </option>
@@ -370,11 +310,11 @@
           </select>
         </label>
         <div class="actions">
-          <button type="button" class="ghost" on:click={() => (attaching = null)} disabled={aSubmitting}>
+          <button type="button" class="ghost" on:click={() => (attaching = null)} disabled={$attachAction.pending}>
             Cancelar
           </button>
-          <button type="submit" disabled={aSubmitting || !aQuote || !aSpool}>
-            {aSubmitting ? "Atachando…" : "Atachar"}
+          <button type="submit" disabled={$attachAction.pending || !aQuote || !aSpool}>
+            {$attachAction.pending ? "Atachando…" : "Atachar"}
           </button>
         </div>
       </form>
@@ -387,7 +327,7 @@
     <div class="modal">
       <h2>Promover arquivo</h2>
       <p class="dim mono">{basename(promoting.original_path)}</p>
-      {#if pError}<div class="alert">{pError}</div>{/if}
+      {#if $promoteAction.error}<div class="alert">{$promoteAction.error}</div>{/if}
       <form on:submit|preventDefault={confirmPromote} class="form-grid">
         <label class="field full">
           Tipo
@@ -407,7 +347,7 @@
             Cliente
             <select bind:value={pClient}>
               <option value="">— sem cliente —</option>
-              {#each clients as c}
+              {#each $clients.data ?? [] as c}
                 <option value={c.id}>{c.name}</option>
               {/each}
             </select>
@@ -418,11 +358,11 @@
           <input bind:value={pName} placeholder="Nome interno do item" />
         </label>
         <div class="actions">
-          <button type="button" class="ghost" on:click={() => (promoting = null)} disabled={pSubmitting}>
+          <button type="button" class="ghost" on:click={() => (promoting = null)} disabled={$promoteAction.pending}>
             Cancelar
           </button>
-          <button type="submit" disabled={pSubmitting}>
-            {pSubmitting ? "Promovendo…" : "Promover"}
+          <button type="submit" disabled={$promoteAction.pending}>
+            {$promoteAction.pending ? "Promovendo…" : "Promover"}
           </button>
         </div>
       </form>
