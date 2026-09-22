@@ -1,9 +1,14 @@
 """Transições de status de orçamento (finalize, aprovar, produzir, ...).
 
-Movido sem alteração de lógica a partir do antigo `backend/api/routes/quotes.py`.
-Nota: a Task 8 (próxima do mesmo lote) converte estas 8 transições numa tabela
-declarativa. Este módulo, por enquanto, é apenas a mudança mecânica.
+As 7 transições "simples" (tudo exceto `produce`) são declaradas na tabela
+`TRANSITIONS` e aplicadas por um handler genérico (`_apply_transition`), de
+forma que o fluxo de status inteiro caiba numa tela. `produce` fica de fora
+de propósito (spec §6): tem payload próprio (`ProduceRequest`), regra de
+origem por tipo de orçamento e o efeito colateral pesado de debitar spools —
+ver `apply_production` abaixo da tabela.
 """
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -38,7 +43,173 @@ from backend.infra.db.models import (
 router = APIRouter()
 
 
-# ---------- Transitions ----------
+# ---------- Tabela declarativa ----------
+
+@dataclass(frozen=True)
+class T:
+    """Uma transição de status declarada.
+
+    `from_`         estados de origem aceitos
+    `to`            estado destino
+    `stamp`         atributo de timestamp carimbado com _now(), se houver
+    `kinds`         tipos de orçamento que aceitam a transição (None = todos)
+    `kind_message`  mensagem literal (HTTP 400) quando `kinds` barra o tipo;
+                    sem isso cai no genérico "transição não se aplica"
+    `message`       mensagem literal (HTTP 409) quando o status não bate —
+                    string fixa, ou uma função (quote) -> str para os casos
+                    em que o texto depende do status atual; sem isso cai no
+                    genérico "quote must be {estados} to {nome}"
+    `guard`         validação extra; recebe (session, quote) e levanta HTTPException
+    `on_apply`      efeito colateral; recebe (session, quote, payload)
+    """
+    from_: frozenset[QuoteStatus]
+    to: QuoteStatus
+    stamp: str | None = None
+    kinds: frozenset[QuoteKind] | None = None
+    kind_message: str | None = None
+    message: "str | Callable[[Quote], str] | None" = None
+    guard: Callable[..., Awaitable[None]] | None = None
+    on_apply: Callable[..., Awaitable[None]] | None = None
+
+
+async def _clear_finalized_at(session: AsyncSession, q: Quote, payload) -> None:
+    """reopen: limpa o carimbo de finalização pra próxima finalize carimbar
+    de novo (o ledger da task #99 mantém o histórico de auditoria)."""
+    q.finalized_at = None
+
+
+async def _record_success(session: AsyncSession, q: Quote, payload: CompleteRequest) -> None:
+    ctx, _grams = await _cycle_context_and_grams(session, q)
+    session.add(
+        ProductionEvent(
+            quote_id=q.id,
+            kind=q.kind,
+            outcome=ProductionOutcome.SUCCESS,
+            attempts=max(1, payload.attempts),
+            context=ctx,
+            grams_wasted=None,
+        )
+    )
+
+
+async def _record_failure(session: AsyncSession, q: Quote, payload: FailRequest) -> None:
+    desc = (payload.failure_description or "").strip()
+    if not desc:
+        raise HTTPException(400, "failure_description is required")
+    ctx, grams = await _cycle_context_and_grams(session, q)
+    session.add(
+        ProductionEvent(
+            quote_id=q.id,
+            kind=q.kind,
+            outcome=ProductionOutcome.FAILURE,
+            attempts=max(1, payload.attempts),
+            failure_description=desc,
+            context=ctx,
+            grams_wasted=grams,
+        )
+    )
+
+
+# Espelha ao pé da letra a condição real do antigo t_cancel:
+#   if q.status in (QuoteStatus.ENTREGUE, QuoteStatus.CANCELADO): 409
+# _CANCELAVEIS é o complemento — todo o resto pode ser cancelado.
+_CANCELAVEIS = frozenset(QuoteStatus) - {QuoteStatus.ENTREGUE, QuoteStatus.CANCELADO}
+
+
+TRANSITIONS: dict[str, T] = {
+    "finalize": T(
+        from_=frozenset({QuoteStatus.DRAFT}),
+        to=QuoteStatus.ORCADO,
+        stamp="finalized_at",
+        # Orçamentos pessoais pulam o pipeline comercial e vão direto pra
+        # produção — mas produzir debita o estoque escolhido pelo usuário,
+        # então eles finalizam via `produce` (que também carimba
+        # finalized_at), não por aqui.
+        kinds=frozenset({QuoteKind.COMMERCIAL}),
+        kind_message=(
+            "personal quotes are produced directly via the produce transition "
+            "(select the spool for each item)"
+        ),
+        message="quote is not in draft",
+        guard=_assert_materials_resolved,
+    ),
+    "reopen": T(
+        # Manda um orçamento comercial finalizado de volta pro draft. Caso de
+        # uso: cliente pediu peça extra depois do orçamento finalizado —
+        # reabrimos o mesmo em vez de criar um irmão, pra manter histórico e
+        # analytics juntos. Só a partir de 'orcado': depois de
+        # aprovado/produzido/entregue, reabrir invalidaria eventos posteriores.
+        from_=frozenset({QuoteStatus.ORCADO}),
+        to=QuoteStatus.DRAFT,
+        kinds=frozenset({QuoteKind.COMMERCIAL}),
+        kind_message="only commercial quotes can be reopened",
+        message=lambda q: (
+            "quote can only be reopened from 'orcado' — current status: " + q.status
+        ),
+        on_apply=_clear_finalized_at,
+    ),
+    "approve": T(
+        from_=frozenset({QuoteStatus.ORCADO}),
+        to=QuoteStatus.APROVADO,
+        stamp="approved_at",
+        kinds=frozenset({QuoteKind.COMMERCIAL}),
+        kind_message="only commercial quotes can be approved",
+        message="quote is not in orcado",
+    ),
+    "complete": T(
+        from_=frozenset({QuoteStatus.EM_PRODUCAO}),
+        to=QuoteStatus.PRODUZIDO,
+        stamp="produced_at",
+        on_apply=_record_success,
+        # mensagem: o genérico "quote must be em_producao to complete" já
+        # bate com o texto original — sem override.
+    ),
+    "fail": T(
+        from_=frozenset({QuoteStatus.EM_PRODUCAO}),
+        to=QuoteStatus.FALHOU,
+        on_apply=_record_failure,
+        # idem: genérico "quote must be em_producao to fail" já bate.
+    ),
+    "deliver": T(
+        from_=frozenset({QuoteStatus.PRODUZIDO}),
+        to=QuoteStatus.ENTREGUE,
+        stamp="delivered_at",
+        kinds=frozenset({QuoteKind.COMMERCIAL}),
+        kind_message="only commercial quotes can be delivered",
+        message="quote must be produzido before deliver",
+    ),
+    "cancel": T(
+        from_=_CANCELAVEIS,
+        to=QuoteStatus.CANCELADO,
+        stamp="cancelled_at",
+        message="quote already finalized",
+    ),
+}
+
+
+async def _apply_transition(session: AsyncSession, q: Quote, name: str, payload=None) -> None:
+    t = TRANSITIONS[name]
+    if t.kinds is not None and q.kind not in t.kinds:
+        if t.kind_message is not None:
+            raise HTTPException(400, t.kind_message)
+        raise HTTPException(409, f"transição '{name}' não se aplica a orçamento {q.kind}")
+    if q.status not in t.from_:
+        if callable(t.message):
+            raise HTTPException(409, t.message(q))
+        if t.message is not None:
+            raise HTTPException(409, t.message)
+        esperados = ", ".join(sorted(s.value for s in t.from_))
+        raise HTTPException(409, f"quote must be {esperados} to {name}")
+    if t.guard:
+        await t.guard(session, q)
+    if t.on_apply:
+        await t.on_apply(session, q, payload)
+    q.status = t.to
+    if t.stamp:
+        setattr(q, t.stamp, _now())
+
+
+# ---------- Endpoints ----------
 
 @router.post("/{quote_id}/transitions/finalize", response_model=QuoteOut)
 async def t_finalize(
@@ -49,20 +220,7 @@ async def t_finalize(
     q = await session.get(Quote, quote_id)
     if not q:
         raise HTTPException(404)
-    # Personal projects skip the commercial pipeline and go straight to
-    # production — but production debits the stock the user selects, so they
-    # finalize through `produce` (which also stamps finalized_at), not here.
-    if q.kind == QuoteKind.PERSONAL:
-        raise HTTPException(
-            400,
-            "personal quotes are produced directly via the produce transition "
-            "(select the spool for each item)",
-        )
-    if q.status != QuoteStatus.DRAFT:
-        raise HTTPException(409, "quote is not in draft")
-    await _assert_materials_resolved(session, q)
-    q.finalized_at = _now()
-    q.status = QuoteStatus.ORCADO
+    await _apply_transition(session, q, "finalize")
     await session.commit()
     return await _quote_out(session, q)
 
@@ -73,27 +231,10 @@ async def t_reopen(
     _: User = Depends(require_user),
     session: AsyncSession = Depends(db_session),
 ):
-    """Send a finalized commercial quote back to draft.
-
-    Use case: the client asked for an extra piece after the quote was
-    finalized. Rather than create a sibling, we reopen the same one so
-    discussion history and analytics stay together. Allowed only from
-    ``orcado`` — once a quote is approved/produced/delivered, reopening
-    would invalidate downstream events, so we refuse those.
-    """
     q = await session.get(Quote, quote_id)
     if not q:
         raise HTTPException(404)
-    if q.kind != QuoteKind.COMMERCIAL:
-        raise HTTPException(400, "only commercial quotes can be reopened")
-    if q.status != QuoteStatus.ORCADO:
-        raise HTTPException(
-            409, "quote can only be reopened from 'orcado' — current status: " + q.status
-        )
-    q.status = QuoteStatus.DRAFT
-    # Clear the finalize timestamp so the next finalize stamps fresh; the
-    # ledger (task #99) will keep the audit history.
-    q.finalized_at = None
+    await _apply_transition(session, q, "reopen")
     await session.commit()
     return await _quote_out(session, q)
 
@@ -107,12 +248,7 @@ async def t_approve(
     q = await session.get(Quote, quote_id)
     if not q:
         raise HTTPException(404)
-    if q.kind != QuoteKind.COMMERCIAL:
-        raise HTTPException(400, "only commercial quotes can be approved")
-    if q.status != QuoteStatus.ORCADO:
-        raise HTTPException(409, "quote is not in orcado")
-    q.status = QuoteStatus.APROVADO
-    q.approved_at = _now()
+    await _apply_transition(session, q, "approve")
     await session.commit()
     return await _quote_out(session, q)
 
@@ -124,6 +260,8 @@ async def apply_production(
     # to em_producao (the FIFO in Capacidade, where Concluir/Falhar happen).
     # Commercial enters from aprovado; personal finalize-and-produces from draft.
     # Either kind can re-produce from falhou (a fresh cycle that debits again).
+    # Fica fora de TRANSITIONS de propósito: payload próprio (assignments),
+    # regra de origem por tipo e efeito colateral de debitar estoque.
     if q.kind == QuoteKind.COMMERCIAL:
         if q.status not in (QuoteStatus.APROVADO, QuoteStatus.FALHOU):
             raise HTTPException(409, "quote must be aprovado (ou falhou) before produce")
@@ -200,21 +338,7 @@ async def t_complete(
     q = await session.get(Quote, quote_id)
     if not q:
         raise HTTPException(404)
-    if q.status != QuoteStatus.EM_PRODUCAO:
-        raise HTTPException(409, "quote must be em_producao to complete")
-    ctx, _grams = await _cycle_context_and_grams(session, q)
-    session.add(
-        ProductionEvent(
-            quote_id=q.id,
-            kind=q.kind,
-            outcome=ProductionOutcome.SUCCESS,
-            attempts=max(1, payload.attempts),
-            context=ctx,
-            grams_wasted=None,
-        )
-    )
-    q.status = QuoteStatus.PRODUZIDO
-    q.produced_at = _now()
+    await _apply_transition(session, q, "complete", payload)
     await session.commit()
     return await _quote_out(session, q)
 
@@ -229,24 +353,7 @@ async def t_fail(
     q = await session.get(Quote, quote_id)
     if not q:
         raise HTTPException(404)
-    if q.status != QuoteStatus.EM_PRODUCAO:
-        raise HTTPException(409, "quote must be em_producao to fail")
-    desc = (payload.failure_description or "").strip()
-    if not desc:
-        raise HTTPException(400, "failure_description is required")
-    ctx, grams = await _cycle_context_and_grams(session, q)
-    session.add(
-        ProductionEvent(
-            quote_id=q.id,
-            kind=q.kind,
-            outcome=ProductionOutcome.FAILURE,
-            attempts=max(1, payload.attempts),
-            failure_description=desc,
-            context=ctx,
-            grams_wasted=grams,
-        )
-    )
-    q.status = QuoteStatus.FALHOU
+    await _apply_transition(session, q, "fail", payload)
     await session.commit()
     return await _quote_out(session, q)
 
@@ -260,12 +367,7 @@ async def t_deliver(
     q = await session.get(Quote, quote_id)
     if not q:
         raise HTTPException(404)
-    if q.kind != QuoteKind.COMMERCIAL:
-        raise HTTPException(400, "only commercial quotes can be delivered")
-    if q.status != QuoteStatus.PRODUZIDO:
-        raise HTTPException(409, "quote must be produzido before deliver")
-    q.status = QuoteStatus.ENTREGUE
-    q.delivered_at = _now()
+    await _apply_transition(session, q, "deliver")
     await session.commit()
     return await _quote_out(session, q)
 
@@ -279,9 +381,6 @@ async def t_cancel(
     q = await session.get(Quote, quote_id)
     if not q:
         raise HTTPException(404)
-    if q.status in (QuoteStatus.ENTREGUE, QuoteStatus.CANCELADO):
-        raise HTTPException(409, "quote already finalized")
-    q.status = QuoteStatus.CANCELADO
-    q.cancelled_at = _now()
+    await _apply_transition(session, q, "cancel")
     await session.commit()
     return await _quote_out(session, q)
