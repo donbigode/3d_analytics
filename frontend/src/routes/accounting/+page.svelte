@@ -677,51 +677,7 @@
     background: var(--paper);
     margin-bottom: 1.5rem;
   }
-  .subtab {
-    flex: 1 1 0;
-    min-width: 130px;
-    background: transparent;
-    color: var(--muted);
-    border: 0;
-    border-right: 1px solid var(--line);
-    padding: 0.75rem 1rem;
-    font-family: var(--font-display);
-    font-size: 0.95rem;
-    letter-spacing: 0.02em;
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    justify-content: flex-start;
-    transition: background 120ms ease, color 120ms ease;
-  }
-  .subtab:last-child {
-    border-right: 0;
-  }
-  .subtab:hover {
-    background: rgba(26, 26, 29, 0.04);
-    color: var(--ink);
-  }
-  .subtab.active {
-    background: var(--ink);
-    color: var(--paper);
-  }
-  .subtab.active:hover {
-    background: var(--ink);
-  }
-  .subtab .idx {
-    font-family: var(--font-mono);
-    font-size: 0.62rem;
-    letter-spacing: 0.18em;
-    opacity: 0.55;
-  }
-  .subtab .badge {
-    margin-left: auto;
-    font-size: 0.64rem;
-    letter-spacing: 0.1em;
-    padding: 0.1rem 0.4rem;
-    border: 1px solid currentColor;
-    opacity: 0.8;
-  }
+  /* .subtab e estados/filhos (.idx, .badge) agora vivem em app.css */
 
   /* ---------- vendas ---------- */
   .head-tools {
@@ -729,20 +685,7 @@
     align-items: center;
     gap: 1rem;
   }
-  .toggle {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.4rem;
-    font-size: 0.66rem;
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
-    color: var(--muted);
-    cursor: pointer;
-  }
-  .toggle input {
-    width: auto;
-    margin: 0;
-  }
+  /* .toggle agora vive em app.css */
   .sale-actions {
     display: flex;
     align-items: center;
@@ -773,10 +716,10 @@
     font-size: 0.82rem;
     text-align: right;
   }
+  /* Override local: tamanho/margem menores que o padrão global (cor já vem de app.css) */
   .hint {
     margin: 1rem 0 0;
     font-size: 0.68rem;
-    color: var(--muted);
     letter-spacing: 0.04em;
   }
   .recurring-field .recurring-spacer {

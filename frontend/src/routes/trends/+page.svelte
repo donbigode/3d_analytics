@@ -565,9 +565,10 @@
     letter-spacing: -0.01em;
   }
   .heading { display: flex; flex-direction: column; gap: 0.25rem; }
+  /* Override local: sem centralização e com letter-spacing/padding menores
+     que o padrão global (mantém aparência já existente nesta página) */
   .empty {
     padding: 1.5rem 1rem;
-    color: var(--muted);
     font-family: var(--font-mono);
     font-size: 0.78rem;
     letter-spacing: 0.12em;
@@ -889,14 +890,7 @@
     margin-top: 0.2rem;
   }
   .suggestion-tags { display: inline-flex; gap: 0.35rem; }
-  .badge {
-    font-family: var(--font-mono);
-    font-size: 0.6rem;
-    padding: 0.05rem 0.4rem;
-    border: 1px solid var(--line-strong);
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
-  }
+  /* Base de .badge agora vive em app.css; aqui ficam só as variações de cor */
   .badge.window.day { color: var(--danger); border-color: var(--danger); }
   .badge.window.week { color: var(--brand); border-color: var(--brand); }
   .badge.window.month { color: var(--ok); border-color: var(--ok); }
