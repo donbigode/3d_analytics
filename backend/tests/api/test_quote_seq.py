@@ -82,6 +82,8 @@ async def test_listagem_de_quotes_traz_seq(auth_client):
 @pytest.mark.asyncio
 async def test_sale_out_traz_quote_seq(auth_client):
     q = await _novo_quote(status=QuoteStatus.APROVADO)
+    # O sync agora é explícito — o GET é só leitura (Spec 2 §6.1).
+    await auth_client.post("/accounting/sync")
     r = await auth_client.get("/accounting/sales")
     assert r.status_code == 200, r.text
     venda = next(v for v in r.json() if v["quote_id"] == str(q.id))

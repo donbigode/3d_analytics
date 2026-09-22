@@ -21,7 +21,8 @@ async def _seed_commercial_quote() -> str:
 @pytest.mark.asyncio
 async def test_sales_listed_after_sync_and_patch(auth_client):
     await _seed_commercial_quote()
-    # GET dispara o sync e materializa a venda
+    # O sync agora é explícito — o GET é só leitura (Spec 2 §6.1).
+    await auth_client.post("/accounting/sync")
     r = await auth_client.get("/accounting/sales")
     assert r.status_code == 200, r.text
     rows = r.json()
@@ -156,6 +157,8 @@ async def test_sales_have_itens_label(auth_client):
         await s.commit()
         qid = str(q.id)
 
+    # O sync agora é explícito — o GET é só leitura (Spec 2 §6.1).
+    await auth_client.post("/accounting/sync")
     r = await auth_client.get("/accounting/sales")
     assert r.status_code == 200, r.text
     sale = next(x for x in r.json() if x["quote_id"] == qid)
@@ -188,6 +191,8 @@ async def test_sales_have_client_name(auth_client):
         s.add(q); await s.commit()
         qid = str(q.id)
 
+    # O sync agora é explícito — o GET é só leitura (Spec 2 §6.1).
+    await auth_client.post("/accounting/sync")
     r = await auth_client.get("/accounting/sales")
     assert r.status_code == 200, r.text
     sale = next(x for x in r.json() if x["quote_id"] == qid)

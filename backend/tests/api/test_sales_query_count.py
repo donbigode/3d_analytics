@@ -2,19 +2,17 @@
 com o número de linhas.
 
 Antes: sale_items_label e _client_name faziam uma query cada, por linha.
-Depois desta task, essas duas viram uma query em lote cada — o custo por
-linha vai a zero.
+Essas duas viram uma query em lote cada — o custo por linha vai a zero.
 
-O que este teste NÃO cobre (fora de escopo aqui, de propósito): list_sales
-preserva `await sync_sales(session)` (Task 4 não pode remover essa chamada —
-isso é da Task 5). sync_sales reprocessa todo orçamento ativo a cada
-chamada e faz 2 queries por orçamento (quote_items + quote_services), mesmo
-sem nenhum item — um N+1 conhecido, mas *por orçamento ativo*, não por
-linha da listagem. O teto abaixo soma esse custo já esperado (2 por
-orçamento novo) a uma margem pequena, para isolar o que esta task garante.
-Medido nesta mesma configuração: código antigo 19→67 (bate o teto); código
-novo 15→39 (dentro do teto, já que os 24 a mais == 2 × 12 orçamentos novos,
-100% do sync_sales)."""
+Até a Task 5, `list_sales` também chamava `sync_sales(session)` dentro do
+GET, e sync_sales reprocessa todo orçamento ativo a cada chamada (2 queries
+por orçamento, mesmo sem nenhum item) — um termo linear que dependia de
+quantos orçamentos novos o teste semeasse, não da listagem em si. A Task 5
+tirou o sync do GET (agora é explícito via POST /accounting/sync, chamado
+antes de cada medição abaixo), então esse termo linear não existe mais: o
+teto volta a ser uma constante pequena.
+Medido nesta configuração: poucas=6, muitas=6 ao adicionar 12 vendas — sem
+crescimento. Teto = poucas + 2 (folga pequena, sem termo por orçamento)."""
 from decimal import Decimal
 
 import pytest
@@ -65,12 +63,12 @@ async def test_queries_nao_crescem_com_o_numero_de_vendas(auth_client):
     await auth_client.post("/accounting/sync")
     muitas = await _contar_queries(auth_client, "/accounting/sales?kind=commercial")
 
-    # Teto = custo já esperado do sync_sales (2 queries por orçamento ativo
-    # novo, fora de escopo desta task) + margem pequena. Qualquer regressão
-    # em sale_items_label/_client_name (voltar a 1 query por linha, cada)
-    # estoura este teto de sobra — era 48 a mais no código antigo para os
-    # mesmos 12 orçamentos, contra 24 esperados só do sync.
-    teto = poucas + 2 * novas + 4
+    # Sem sync dentro do GET (Task 5), a listagem não tem mais termo linear
+    # no número de orçamentos — só a margem pequena de sempre. Qualquer
+    # regressão em sale_items_label/_client_name (voltar a 1 query por
+    # linha, cada) estoura este teto de sobra: medido poucas=6, muitas=6
+    # (nenhum crescimento) ao adicionar 12 vendas.
+    teto = poucas + 2
     assert muitas <= teto, (
         f"listagem passou de {poucas} para {muitas} queries ao adicionar {novas} vendas "
         f"(teto {teto})"

@@ -85,7 +85,9 @@ async def list_sales(
     is_sold: bool | None = Query(None),
     is_stale: bool | None = Query(None),
 ):
-    await sync_sales(session)  # lazy: materializa ao abrir a aba
+    # GET é só leitura — o sync agora é explícito via POST /accounting/sync
+    # (Spec 2 §6.1). Antes, cada abertura da aba/atualização recalculava o
+    # custo de todo orçamento aprovado.
     stmt = select(Sale).order_by(Sale.created_at.desc())
     if kind is not None:
         stmt = stmt.where(Sale.quote_kind == kind.value)
