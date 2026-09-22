@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { api, errorMessage } from "$lib/api";
   import { handleApiError, requireAuth } from "$lib/guard";
+  import { money as fmtMoney, dateTime as fmtDate } from "$lib/format";
   import type { Client, Person, Quote, QuoteKind, QuoteStatus } from "$lib/types";
 
   let rows: Quote[] = [];
@@ -57,26 +58,6 @@
     if (names.length === 0) return "—";
     if (names.length <= 3) return names.join(" · ");
     return `${names.slice(0, 3).join(" · ")} +${names.length - 3}`;
-  }
-
-  function fmtMoney(v: number | string): string {
-    const n = typeof v === "string" ? parseFloat(v) : v;
-    return n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
-  }
-
-  function fmtDate(s: string | null): string {
-    if (!s) return "—";
-    try {
-      return new Date(s).toLocaleString("pt-BR", {
-        day: "2-digit",
-        month: "2-digit",
-        year: "2-digit",
-        hour: "2-digit",
-        minute: "2-digit",
-      });
-    } catch {
-      return s;
-    }
   }
 
   async function load() {

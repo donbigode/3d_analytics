@@ -4,6 +4,7 @@
   import { goto } from "$app/navigation";
   import { api, errorMessage } from "$lib/api";
   import { handleApiError, requireAuth } from "$lib/guard";
+  import { money as fmtMoney, num as fmtNum, dur as fmtDur, dateTime as fmtDate } from "$lib/format";
   import type {
     Client,
     Material,
@@ -145,32 +146,6 @@
   let producing = false;
   let produceError = "";
 
-  function fmtMoney(v: number | string | null | undefined): string {
-    if (v === null || v === undefined) return "—";
-    const n = typeof v === "string" ? parseFloat(v) : v;
-    return n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
-  }
-  function fmtNum(v: number | string | null | undefined, dec = 2): string {
-    if (v === null || v === undefined) return "—";
-    const n = typeof v === "string" ? parseFloat(v) : v;
-    return n.toLocaleString("pt-BR", { maximumFractionDigits: dec });
-  }
-  function fmtDur(s: number | string | null | undefined): string {
-    if (!s) return "—";
-    const n = typeof s === "string" ? parseFloat(s) : s;
-    if (!isFinite(n)) return "—";
-    const h = Math.floor(n / 3600);
-    const m = Math.floor((n % 3600) / 60);
-    return h > 0 ? `${h}h ${m}min` : `${m}min`;
-  }
-  function fmtDate(s: string | null): string {
-    if (!s) return "—";
-    try {
-      return new Date(s).toLocaleString("pt-BR");
-    } catch {
-      return s;
-    }
-  }
   function statusLabel(s: string): string {
     return (
       {

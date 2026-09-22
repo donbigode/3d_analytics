@@ -33,7 +33,7 @@ export function money(v: string | number | null | undefined): string {
   if (n === null) return DASH;
   // O ICU do Node (e alguns navegadores) usa NBSP (U+00A0) entre "R$" e o
   // valor; normalizamos para espaço comum para ter uma saída previsível.
-  return BRL.format(n).replace(/ /g, " ");
+  return BRL.format(n).replace(/\u00A0/g, " ");
 }
 
 export function date(v: string | null | undefined): string {

@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { api, errorMessage } from "$lib/api";
   import { handleApiError, requireAuth } from "$lib/guard";
+  import { money, date as fmtDate } from "$lib/format";
   import Table from "$lib/components/Table.svelte";
   import Form from "$lib/components/Form.svelte";
   import type {
@@ -55,18 +56,6 @@
   const catLabel = (c: string) => CATS.find((x) => x.value === c)?.label ?? c;
   const fmtKind = (k: string) => (k === "personal" ? "Pessoal" : "Comercial");
 
-  const BRL = new Intl.NumberFormat("pt-BR", {
-    style: "currency",
-    currency: "BRL",
-  });
-  function money(v: string | number | null | undefined): string {
-    const n = Number(v ?? 0);
-    return Number.isFinite(n) ? BRL.format(n) : "—";
-  }
-  function shortDate(v: string | null): string {
-    if (!v) return "—";
-    return v.slice(0, 10).split("-").reverse().join("/");
-  }
   const MONTHS_PT = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
   function monthLabel(m: string): string {
     const [y, mm] = m.split("-");
@@ -307,7 +296,7 @@
           label: "Vendido em",
           mono: true,
           align: "center",
-          format: (v) => shortDate(v as string | null),
+          format: (v) => fmtDate(v as string | null),
         },
       ]}
       rows={sales}
@@ -395,7 +384,7 @@
           key: "incurred_at",
           label: "Data",
           mono: true,
-          format: (v) => shortDate(v as string),
+          format: (v) => fmtDate(v as string),
         },
         { key: "category", label: "Categoria", format: (v) => catLabel(v as string) },
         { key: "description", label: "Descrição" },
@@ -460,7 +449,7 @@
       <section class="ledger panel" aria-label="DRE mensal">
         <div class="ledger-mast">
           <span class="ledger-eyebrow mono">DRE mensal</span>
-          <span class="ledger-range mono">{shortDate(from)} — {shortDate(to)}</span>
+          <span class="ledger-range mono">{fmtDate(from)} — {fmtDate(to)}</span>
         </div>
         <div class="grid-wrap">
           <table class="dre-grid">
@@ -546,7 +535,7 @@
     <section class="ledger panel" aria-label="Demonstrativo de resultado">
       <div class="ledger-mast">
         <span class="ledger-eyebrow mono">DRE</span>
-        <span class="ledger-range mono">{shortDate(from)} — {shortDate(to)}</span>
+        <span class="ledger-range mono">{fmtDate(from)} — {fmtDate(to)}</span>
       </div>
 
       <dl class="statement">
