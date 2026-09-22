@@ -345,8 +345,8 @@
   }
   .banner { color: var(--ink); margin: 0.4rem 0; }
   .banner.ok { color: var(--ok); }
-  .alert { color: var(--danger); }
-  .hint { color: var(--muted); font-size: 0.72rem; margin-top: 0.25rem; }
+  /* Override local: tamanho/margem menores que o padrão global (cor já vem de app.css) */
+  .hint { font-size: 0.72rem; margin-top: 0.25rem; }
   .errors { margin: 0.5rem 0; }
   .errors summary { cursor: pointer; color: var(--muted); font-size: 0.85rem; }
   .errors ul { margin: 0.3rem 0; padding-left: 1.2rem; }
@@ -428,6 +428,9 @@
   .attribution { color: var(--muted); font-size: 0.78rem; }
   .attribution a { color: var(--brand); }
   .asset-actions { display: flex; gap: 0.4rem; margin-top: 0.3rem; }
+  /* Override local total: aqui o vazio é um texto discreto em itálico,
+     bem diferente do padrão mono/caixa-alta/centralizado global — mais
+     fácil redeclarar do que cancelar propriedade por propriedade */
   .empty {
     color: var(--muted);
     padding: 1rem 0;

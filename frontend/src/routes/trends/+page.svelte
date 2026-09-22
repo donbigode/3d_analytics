@@ -569,6 +569,7 @@
      que o padrão global (mantém aparência já existente nesta página) */
   .empty {
     padding: 1.5rem 1rem;
+    text-align: left;
     font-family: var(--font-mono);
     font-size: 0.78rem;
     letter-spacing: 0.12em;
