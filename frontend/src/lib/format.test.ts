@@ -64,8 +64,8 @@ describe("dur", () => {
   it("devolve travessão para nulo", () => {
     expect(dur(null)).toBe(DASH);
   });
-  it("formata zero como 0min, não como travessão", () => {
-    expect(dur(0)).toBe("0min");
+  it("devolve travessão para zero — nenhuma impressão leva 0 minutos, então time_s=0 é ausência de registro", () => {
+    expect(dur(0)).toBe(DASH);
   });
 });
 

@@ -59,7 +59,10 @@ export function num(v: unknown, decimals = 2): string {
 
 export function dur(seconds: number | null | undefined): string {
   const n = toNumber(seconds);
-  if (n === null) return DASH;
+  // Duração é a única exceção à regra "zero é valor, não ausência": uma
+  // impressão não leva zero minutos, então time_s === 0 significa peça sem
+  // gcode lido ainda (tempo não registrado), não um tempo real medido.
+  if (n === null || n === 0) return DASH;
   const total = Math.round(n / 60);
   const h = Math.floor(total / 60);
   const m = total % 60;
