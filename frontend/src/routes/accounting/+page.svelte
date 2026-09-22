@@ -74,8 +74,14 @@
     { initial: [], errorMessage: "Falha ao gerar o DRE mensal.", auto: false },
   );
   $: monthlyRows = $monthly.data ?? [];
-  // Erro exibido nos controles do DRE: período e mensal compartilham o mesmo aviso, como antes.
-  $: dreError = $dre.error || $monthly.error;
+  // Erro exibido nos controles do DRE: dre e monthly são dois resource()
+  // independentes (não um resource+action como vendas/despesas), então não há
+  // um reset() de action() aplicável aqui — em vez de OR (que deixa o erro do
+  // modo que você acabou de sair grudado na tela ao trocar de aba), mostra só
+  // o erro do modo atualmente visível. Reproduz o original (uma única flag,
+  // sempre zerada no início do load que de fato rodou) sem acoplar os dois
+  // resources entre si.
+  $: dreError = dreMode === "mensal" ? $monthly.error : $dre.error;
 
   const prof = resource(() => api<Profitability>(`/accounting/profitability?from=${from}&to=${to}`), {
     errorMessage: "Falha ao gerar a lucratividade.",
@@ -100,6 +106,22 @@
     return `${MONTHS_PT[idx] ?? mm}/${(y ?? "").slice(2)}`;
   }
 
+  // Recarregar a lista é o "caminho de recarga" que também precisa limpar o
+  // erro de uma mutação irmã: sales.reload()/expenses.reload() só zeram o
+  // próprio erro do resource — não sabem (nem devem saber, ver resource.ts)
+  // que existe uma action() cujo erro está combinado no mesmo alerta. Sem
+  // isso, um PATCH/POST/DELETE que falhou deixa a mensagem presa na tela
+  // mesmo depois de um "Atualizar" bem-sucedido.
+  function reloadSales() {
+    saveSale.reset();
+    return sales.reload();
+  }
+  function reloadExpenses() {
+    createExpenseAction.reset();
+    removeExpenseAction.reset();
+    return expenses.reload();
+  }
+
   async function patchSale(s: Sale, body: Partial<Sale>) {
     const updated = await saveSale.run(s.id, body);
     if (updated) await sales.reload();
@@ -116,7 +138,7 @@
       exDescription = "";
       exAmount = "";
       exRecurring = false;
-      await expenses.reload();
+      await reloadExpenses();
     }
   }
   async function removeExpense(id: string) {
@@ -124,7 +146,7 @@
     // run() volta undefined tanto no erro quanto no sucesso sem corpo (DELETE não devolve
     // conteúdo) — os dois casos só se distinguem olhando o .error da action.
     await removeExpenseAction.run(id);
-    if (!$removeExpenseAction.error) await expenses.reload();
+    if (!$removeExpenseAction.error) await reloadExpenses();
   }
   function exportXlsx() {
     window.open(`/api/accounting/dre/export.xlsx?from=${from}&to=${to}`, "_blank");
@@ -179,8 +201,8 @@
 
   onMount(() => {
     if (requireAuth()) return;
-    sales.reload();
-    expenses.reload();
+    reloadSales();
+    reloadExpenses();
     dre.reload();
   });
 </script>
@@ -224,10 +246,10 @@
       </h2>
       <div class="head-tools">
         <label class="toggle mono">
-          <input type="checkbox" bind:checked={showStale} on:change={sales.reload} />
+          <input type="checkbox" bind:checked={showStale} on:change={reloadSales} />
           mostrar arquivadas
         </label>
-        <button class="tiny ghost" on:click={sales.reload} disabled={$sales.loading}>
+        <button class="tiny ghost" on:click={reloadSales} disabled={$sales.loading}>
           {$sales.loading ? "Carregando…" : "Atualizar"}
         </button>
       </div>
@@ -324,7 +346,7 @@
         Despesas <span class="count">· {($expenses.data ?? []).length}</span>
         {#if ($expenses.data ?? []).length > 0}<span class="head-sum mono">total {money(expenseTotal)}</span>{/if}
       </h2>
-      <button class="tiny ghost" on:click={expenses.reload} disabled={$expenses.loading}>
+      <button class="tiny ghost" on:click={reloadExpenses} disabled={$expenses.loading}>
         {$expenses.loading ? "Carregando…" : "Atualizar"}
       </button>
     </div>

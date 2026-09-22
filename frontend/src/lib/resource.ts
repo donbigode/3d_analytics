@@ -62,6 +62,7 @@ export type ActionState = { pending: boolean; error: string };
 
 export type Action<A extends unknown[], R> = Readable<ActionState> & {
   run: (...args: A) => Promise<R | undefined>;
+  reset: () => void;
 };
 
 export function action<A extends unknown[], R>(
@@ -87,5 +88,17 @@ export function action<A extends unknown[], R>(
     }
   }
 
-  return { subscribe, run };
+  /** Volta ao estado inicial (`pending: false, error: ""`). Existe para páginas
+   *  que combinam o erro de uma action() com o de um resource() irmão num único
+   *  alerta (ex.: `$sales.error || $saveSale.error`): sem isso, um erro de
+   *  mutação sobrevive indefinidamente na tela mesmo depois de um reload()
+   *  bem-sucedido, porque resource() e action() são stores independentes — um
+   *  não sabe zerar o erro do outro. Zera `pending` junto com `error` porque os
+   *  dois descrevem a mesma tentativa: não faz sentido um reset() dizer "esqueça
+   *  esse erro" e deixar `pending` de uma tentativa que já não importa mais. */
+  function reset(): void {
+    set({ pending: false, error: "" });
+  }
+
+  return { subscribe, run, reset };
 }

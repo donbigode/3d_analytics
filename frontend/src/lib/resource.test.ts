@@ -172,4 +172,16 @@ describe("action", () => {
     expect(resFalha).toBeUndefined();
     expect(get(falha).error).not.toBe("");
   });
+
+  it("reset() limpa o erro de uma execução que falhou", async () => {
+    const a = action(() => Promise.reject(new ApiError(500, null)), {
+      errorMessage: "Falha ao salvar venda.",
+    });
+    await a.run();
+    expect(get(a).error).not.toBe("");
+
+    a.reset();
+    expect(get(a).error).toBe("");
+    expect(get(a).pending).toBe(false);
+  });
 });
