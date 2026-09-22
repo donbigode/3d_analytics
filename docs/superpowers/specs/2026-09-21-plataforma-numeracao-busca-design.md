@@ -70,7 +70,14 @@ CREATE UNIQUE INDEX ix_quotes_seq ON quotes (seq);
 
 **Compatibilidade com código antigo:** a coluna tem default, então uma API da
 versão anterior continua inserindo orçamentos sem erro. A migração pode subir
-antes do deploy da API, sem janela de indisponibilidade.
+antes do deploy da API.
+
+Precisão sobre indisponibilidade: o `migrations/env.py` envolve as migrações
+numa transação única, e o Postgres segura o `ACCESS EXCLUSIVE` do `ADD COLUMN`
+até o commit. Um INSERT vindo do processo antigo **não erra, mas fica
+bloqueado** durante a transação inteira. Com o volume atual isso é
+imperceptível; a distinção passa a importar se `quotes` crescer a ponto de o
+`CREATE INDEX` não-concorrente demorar.
 
 **Buracos na numeração:** orçamento deletado deixa lacuna. Aceito — a sequence
 nunca reaproveita, e número que se repete seria pior que número que pula.
