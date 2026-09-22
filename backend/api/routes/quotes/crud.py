@@ -13,6 +13,7 @@ from backend.api.schemas.quotes import QuoteCreate, QuoteOut, QuoteUpdate
 from backend.api.routes.quotes._shared import _quote_out
 from backend.core.models import QuoteKind, QuoteStatus
 from backend.infra.db.models import Quote, QuoteItem, QuotePerson, QuoteService, User
+from backend.infra.storage.gcodes import copy_gcode
 
 router = APIRouter()
 
@@ -110,10 +111,10 @@ async def clone_quote(
 
     O clone é um orçamento que ainda não aconteceu: status draft, sem
     timestamps de ciclo, sem consumo de material, sem evento de produção
-    e sem linha no contábil. Copia configuração comercial, peças e
-    serviços — as fotos e os ARQUIVOS em disco (gcode) ficam para as
-    próximas tasks, porque compartilhá-los faria o original apagar o que
-    é do clone.
+    e sem linha no contábil. Copia configuração comercial, peças, serviços
+    e o arquivo de gcode de cada item (para a pasta do novo orçamento,
+    nunca compartilhando com a do original) — as fotos ficam para a
+    próxima task.
     """
     orig = await session.get(Quote, quote_id)
     if not orig:
@@ -140,7 +141,7 @@ async def clone_quote(
         copia = QuoteItem(
             quote_id=novo.id,
             name=it.name,
-            filename=it.filename,          # o arquivo em si é copiado na Task 2
+            filename=copy_gcode(it.filename, novo.id),
             gcode_meta=dict(it.gcode_meta or {}),
             material_version_id=it.material_version_id,
             quantity=it.quantity,
