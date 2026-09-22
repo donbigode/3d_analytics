@@ -134,6 +134,7 @@ async def dashboard(
             orcado_vs_real_rows.append(
                 {
                     "quote_id": str(q.id),
+                    "seq": q.seq,
                     "orcado": float(_q2(cost_orcado)),
                     "real": float(_q2(real_cost)),
                     "variancia_pct": float(_q2(variancia)),
@@ -229,6 +230,7 @@ async def dashboard(
     ultimos = [
         {
             "id": str(q.id),
+            "seq": q.seq,
             "kind": q.kind,
             "status": q.status,
             "created_at": q.created_at.isoformat() if q.created_at else None,
@@ -248,6 +250,7 @@ async def dashboard(
     parados = [
         {
             "id": str(q.id),
+            "seq": q.seq,
             "approved_at": q.approved_at.isoformat() if q.approved_at else None,
         }
         for q in parados_q
