@@ -6,6 +6,7 @@
   import { money, date as fmtDate } from "$lib/format";
   import Table from "$lib/components/Table.svelte";
   import Form from "$lib/components/Form.svelte";
+  import { quoteNumber } from "$lib/quote-number";
   import type {
     Sale,
     Expense,
@@ -285,7 +286,8 @@
     {#if $sales.error || $saveSale.error}<div class="alert">{$sales.error || $saveSale.error}</div>{/if}
     <Table
       columns={[
-        { key: "quote_id", label: "Orçamento", mono: true, format: (v) => String(v).slice(0, 8) },
+        { key: "quote_seq", label: "Orçamento", mono: true,
+          format: (v) => quoteNumber(v as number) },
         { key: "client_name", label: "Cliente" },
         { key: "quote_kind", label: "Tipo", format: (v) => fmtKind(v as string) },
         { key: "itens_label", label: "Itens" },

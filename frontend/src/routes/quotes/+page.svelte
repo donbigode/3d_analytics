@@ -5,6 +5,7 @@
   import { resource, action } from "$lib/resource";
   import { money as fmtMoney, dateTime as fmtDate } from "$lib/format";
   import type { Client, Person, Quote, QuoteKind, QuoteStatus } from "$lib/types";
+  import { quoteNumber } from "$lib/quote-number";
 
   // filters
   let fStatus: QuoteStatus | "" = "";
@@ -174,7 +175,7 @@
       <tbody>
         {#each $rows.data ?? [] as q (q.id)}
           <tr>
-            <td class="mono">{q.id.slice(0, 8)}</td>
+            <td class="mono" title={q.id}>{quoteNumber(q.seq)}</td>
             <td class="items-cell" title={itemNames(q).join(", ")}>{itemsSummary(q)}</td>
             <td>
               <span class="tag {q.kind === 'commercial' ? 'brand' : 'muted'}">

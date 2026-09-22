@@ -1,3 +1,9 @@
+{# Macros compartilhadas pelos templates de PDF — Spec 0 §6. A formatação de
+   moeda estava duplicada inline em quote.html; o valor do currency segue
+   vindo do contexto de chamada (settings), então é passado como parâmetro
+   em vez de depender de import "with context". #}
+{% macro moeda(v, currency) %}{{ currency }} {{ "%.2f"|format(v) }}{% endmacro %}
+{% macro numero(seq) %}#{{ "%04d"|format(seq) }}{% endmacro %}
 <!DOCTYPE html>
 <html>
 <head>

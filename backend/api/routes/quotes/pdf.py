@@ -174,6 +174,7 @@ async def get_pdf(
         "retail_mode": bool(q.retail_mode),
         "quote": {
             "id": str(q.id)[:8],
+            "seq": q.seq,
             "kind": q.kind,
             "status": q.status,
             "client": client_name,

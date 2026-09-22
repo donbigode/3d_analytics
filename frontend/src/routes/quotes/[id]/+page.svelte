@@ -6,6 +6,7 @@
   import { requireAuth } from "$lib/guard";
   import { resource, action } from "$lib/resource";
   import { money as fmtMoney, num as fmtNum, dur as fmtDur, dateTime as fmtDate } from "$lib/format";
+  import { quoteNumber } from "$lib/quote-number";
   import type {
     Client,
     Material,
@@ -803,7 +804,7 @@
   <header class="page-head">
     <div class="head-row">
       <div>
-        <span class="page-eyebrow">Orçamento · {quote.id.slice(0, 8)}</span>
+        <span class="page-eyebrow" title={quote.id}>Orçamento · {quoteNumber(quote.seq)}</span>
         <h1 class="page-title">
           {quote.kind === "commercial" ? "Comercial" : "Pessoal"}<em>.</em>
         </h1>
