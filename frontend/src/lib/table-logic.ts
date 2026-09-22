@@ -29,11 +29,20 @@ function asNumber(v: unknown): number | null {
   return null;
 }
 
+/* ATENÇÃO — armadilha para quem for reordenar por fora deste módulo:
+ * `compareValues` devolve ausente ("null"/"undefined"/"") sempre como
+ * "maior" (1), de forma FIXA — sem nenhuma noção de direção. Essa regra
+ * não pode ser invertida por um fator de "desc". A forma óbvia de simular
+ * decrescente, `dir === "desc" ? -compareValues(a, b) : compareValues(a, b)`,
+ * reintroduz o bug já corrigido em `sortRows`: no decrescente, os ausentes
+ * sobem para o topo e enchem a tela de linhas em branco. Quem precisa
+ * ordenar deve chamar `sortRows` (que isola a ausência do fator de direção)
+ * — não reimplemente essa lógica multiplicando este retorno. */
 export function compareValues(a: unknown, b: unknown): number {
   const aVazio = ausente(a);
   const bVazio = ausente(b);
   if (aVazio && bVazio) return 0;
-  if (aVazio) return 1; // ausente sempre por último
+  if (aVazio) return 1; // ausente sempre por último, independente de direção
   if (bVazio) return -1;
 
   const na = asNumber(a);
@@ -68,7 +77,21 @@ export function sortRows(rows: Row[], key: string | null, dir: SortDir): Row[] {
 export function filterRows(rows: Row[], text: string, haystack: (row: Row) => string): Row[] {
   const alvo = normalize(text.trim());
   if (!alvo) return rows;
-  return rows.filter((r) => normalize(haystack(r)).includes(alvo));
+  return rows.filter((r) => {
+    // `haystack` é fornecido pelo chamador; uma linha com dado inesperado
+    // (campo ausente derrubando a formatação, `haystack` lançando exceção)
+    // não pode derrubar o filtro da tabela inteira. Preferimos excluir só a
+    // linha problemática — ela some da lista filtrada — a propagar o erro
+    // e quebrar a tabela toda. String(...) também absorve um retorno que,
+    // em runtime, não seja de fato string (o tipo promete, mas JS não garante).
+    let valor: string;
+    try {
+      valor = String(haystack(r));
+    } catch {
+      return false;
+    }
+    return normalize(valor).includes(alvo);
+  });
 }
 
 export function nextDir(current: SortDir): SortDir {

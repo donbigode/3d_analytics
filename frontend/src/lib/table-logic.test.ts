@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { normalize, compareValues, sortRows, filterRows, nextDir } from "./table-logic";
+import { normalize, compareValues, sortRows, filterRows, nextDir, type Row } from "./table-logic";
 
 describe("normalize", () => {
   it("remove acento e caixa", () => {
@@ -27,6 +27,19 @@ describe("compareValues", () => {
   it("põe nulo por último", () => {
     expect(compareValues(null, 1)).toBeGreaterThan(0);
     expect(compareValues(1, null)).toBeLessThan(0);
+  });
+
+  // Trava o contrato: compareValues não tem noção de direção. Ausente é
+  // sempre "maior" (1), ponto — quem quiser "desc" deve usar sortRows, e
+  // NUNCA fazer `-compareValues(a, b)` para simular decrescente por fora,
+  // porque isso reintroduz o bug de ausentes subindo para o topo.
+  it("ausente é sempre 'maior', mesmo sob um sinal invertido simulando desc — por isso não deve ser invertido fora de sortRows", () => {
+    expect(compareValues(null, 1)).toBe(1);
+    expect(compareValues(1, null)).toBe(-1);
+    // Isto é exatamente o bug: inverter o sinal "para simular desc" joga o
+    // ausente para o topo. compareValues não protege contra isso sozinho —
+    // é sortRows quem isola a ausência do fator de direção.
+    expect(-compareValues(null, 1)).toBeLessThan(0);
   });
 });
 
@@ -83,6 +96,24 @@ describe("filterRows", () => {
   });
   it("sem casamento devolve vazio", () => {
     expect(filterRows(rows, "zzz", hay)).toHaveLength(0);
+  });
+
+  it("uma linha cujo haystack lança exceção é excluída, sem derrubar o filtro das demais", () => {
+    const rowsComQuebrada = [
+      { id: 1, texto: "R$ 1.234,56 · Maria Silva" },
+      { id: 2, texto: null }, // dado inesperado: hayQuebrada acessa .toUpperCase() e estoura
+      { id: 3, texto: "R$ 1.234,00 · Outra" },
+    ];
+    const hayQuebrada = (r: Record<string, unknown>) => (r.texto as string).toUpperCase();
+
+    expect(filterRows(rowsComQuebrada, "1.234", hayQuebrada).map((r) => r.id)).toEqual([1, 3]);
+  });
+
+  it("haystack que devolve valor não-string (fora do contrato de tipo) ainda é filtrável", () => {
+    const rowsNumerico = [{ id: 1, texto: 1234 }];
+    const hayNumerico = ((r: Record<string, unknown>) => r.texto) as (r: Row) => string;
+
+    expect(filterRows(rowsNumerico, "1234", hayNumerico).map((r) => r.id)).toEqual([1]);
   });
 });
 
