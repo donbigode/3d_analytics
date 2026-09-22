@@ -9,6 +9,9 @@ from backend.core.models import ExpenseCategory
 class SaleOut(BaseModel):
     id: str
     quote_id: str
+    quote_seq: int
+    quote_kind: str
+    produced_on: date | None = None
     quote_status: str
     quote_total: Decimal
     cpv_calc: Decimal

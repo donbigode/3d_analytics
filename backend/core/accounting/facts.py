@@ -1,5 +1,6 @@
 from datetime import date
 from decimal import Decimal
+from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -126,3 +127,58 @@ async def sale_items_label(session: AsyncSession, sale: Sale) -> str:
         suffix = f" ({cor})" if cor else ""
         parts.append(f"{d['nome']} ×{d['quantidade']}{suffix}")
     return " | ".join(parts)
+
+
+async def sale_items_label_map(
+    session: AsyncSession, quote_ids: list[UUID],
+) -> dict[UUID, str]:
+    """Versão em lote de `sale_items_label`: mesmo rótulo, três queries no
+    total (quote_items, material_versions, spool×consumption) em vez de uma
+    por venda + uma por item (o N+1 de `_item_details`).
+
+    Reproduz exatamente a regra de `_item_details`/`sale_items_label`:
+    cor = cor da bobina consumida (pipe-join de cores distintas, ordenadas)
+    ou, na ausência dela, a cor do material do orçamento; item sem nenhuma
+    das duas não leva sufixo. A ordem dos itens dentro de cada orçamento
+    segue a ordem de retorno da query (mesma ordem física que a consulta
+    por-orçamento original já produzia, sem ORDER BY explícito em nenhuma
+    das duas)."""
+    if not quote_ids:
+        return {}
+
+    items = (
+        await session.execute(select(QuoteItem).where(QuoteItem.quote_id.in_(quote_ids)))
+    ).scalars().all()
+    if not items:
+        return {qid: "" for qid in quote_ids}
+
+    mv_ids = [it.material_version_id for it in items if it.material_version_id]
+    cor_material_por_mv: dict[UUID, str | None] = dict(
+        (await session.execute(
+            select(MaterialVersion.id, MaterialVersion.color).where(MaterialVersion.id.in_(mv_ids))
+        )).all()
+    ) if mv_ids else {}
+
+    item_ids = [it.id for it in items]
+    cons_rows = (
+        await session.execute(
+            select(MaterialConsumption.quote_item_id, Spool.color)
+            .join(Spool, MaterialConsumption.spool_id == Spool.id)
+            .where(MaterialConsumption.quote_item_id.in_(item_ids))
+        )
+    ).all()
+    cores_por_item: dict[UUID, set[str]] = {}
+    for item_id, cor in cons_rows:
+        if cor:
+            cores_por_item.setdefault(item_id, set()).add(cor)
+
+    partes_por_quote: dict[UUID, list[str]] = {}
+    for it in items:
+        cores = cores_por_item.get(it.id)
+        cor_bobina = " | ".join(sorted(cores)) if cores else None
+        cor_material = cor_material_por_mv.get(it.material_version_id) if it.material_version_id else None
+        cor = cor_bobina or cor_material
+        suffix = f" ({cor})" if cor else ""
+        partes_por_quote.setdefault(it.quote_id, []).append(f"{it.name} ×{it.quantity}{suffix}")
+
+    return {qid: " | ".join(partes_por_quote.get(qid, [])) for qid in quote_ids}

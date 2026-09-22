@@ -91,6 +91,22 @@ Migração só de dados. `downgrade()` é no-op — não há como saber quais li
 foram tocadas, e reverter para um valor sabidamente errado não serve a ninguém.
 Idempotente: rodar de novo não faz nada.
 
+**Passo obrigatório antes de rodar em produção.** O banco de dev tem zero linhas
+em `sales`, então a verificação lá é trivialmente verdadeira e não prova nada
+sobre este backfill. As linhas mal marcadas existem em produção, não em dev.
+Antes da migração, rodar a contagem de divergência (só leitura) para capturar um
+"antes" real:
+
+```sql
+SELECT count(*) FROM sales s JOIN quotes q ON q.id = s.quote_id
+ WHERE s.quote_kind IS DISTINCT FROM q.kind;
+```
+
+Guardar esse número, rodar a migração, e rodar a mesma contagem de novo
+confirmando que caiu a zero. Se o "antes" já vier zero, não havia nada a
+corrigir — o que também é um resultado válido, só não é evidência de que a
+migração funciona.
+
 ## 4. Data de venda — pedido #2
 
 ### 4.1 Backend

@@ -30,6 +30,26 @@ class QuotePhotoOut(BaseModel):
     sort_order: int
 
 
+class ConsumptionOut(BaseModel):
+    """Uma baixa de material: qual bobina, quantas gramas, a que custo e quando.
+
+    Um ciclo de produção por linha — reimpressão depois de falha aparece
+    como entrada adicional, com data própria.
+    """
+    spool_id: str
+    spool_label: str
+    material_type: str
+    color: str | None
+    manufacturer: str | None
+    grams_used: Decimal
+    unit_cost_snapshot: Decimal
+    # grams_used * unit_cost_snapshot, sem arredondar por linha — o contábil
+    # (backend/core/accounting/cost.py) soma consumos sem arredondar e só
+    # arredonda o agregado. Quem exibe é responsável por formatar em centavos.
+    custo_total: Decimal
+    consumed_at: datetime
+
+
 class QuoteItemOut(BaseModel):
     id: str
     name: str
@@ -48,6 +68,9 @@ class QuoteItemOut(BaseModel):
     model_source_author: str | None = None
     model_source_license: str | None = None
     photos: list[QuotePhotoOut] = []
+    # Filamento efetivamente baixado das bobinas — pode ter mais de uma linha
+    # quando houve reimpressão (falha + nova tentativa consome duas vezes).
+    consumptions: list[ConsumptionOut] = []
 
 
 class QuoteItemUpdate(BaseModel):
@@ -80,6 +103,7 @@ class QuoteServiceOut(BaseModel):
 
 class QuoteOut(BaseModel):
     id: str
+    seq: int
     kind: QuoteKind
     client_id: str | None
     status: QuoteStatus
