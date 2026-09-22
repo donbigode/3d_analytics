@@ -1,13 +1,41 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { api, errorMessage } from "$lib/api";
-  import { handleApiError, requireAuth } from "$lib/guard";
+  import { api } from "$lib/api";
+  import { requireAuth } from "$lib/guard";
+  import { resource, action } from "$lib/resource";
   import type { ForecastOut, InProductionOut, InProductionJob } from "$lib/types";
 
-  let forecast: ForecastOut | null = null;
-  let inProduction: InProductionOut | null = null;
-  let loading = true;
-  let listError = "";
+  type CapacityData = { forecast: ForecastOut; inProduction: InProductionOut };
+  const dataRes = resource<CapacityData>(
+    async () => {
+      const [forecast, inProduction] = await Promise.all([
+        api<ForecastOut>("/capacity/forecast"),
+        api<InProductionOut>("/capacity/in-production"),
+      ]);
+      return { forecast, inProduction };
+    },
+    { errorMessage: "Falha ao carregar previsão.", auto: false },
+  );
+  $: forecast = $dataRes.data?.forecast ?? null;
+  $: inProduction = $dataRes.data?.inProduction ?? null;
+
+  const completeAction = action(
+    (quoteId: string, attempts: number) =>
+      api(`/quotes/${quoteId}/transitions/complete`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ attempts }),
+      }),
+    { errorMessage: "Falha ao concluir." },
+  );
+  // Um reload() bem-sucedido não pode deixar preso o erro de uma conclusão
+  // que falhou antes — os dois dividem o mesmo alerta da página.
+  $: listError = $dataRes.error || $completeAction.error;
+  function reloadCapacity() {
+    completeAction.reset();
+    return dataRes.reload();
+  }
+
   let acting = "";
 
   // fail modal
@@ -15,42 +43,24 @@
   let failDescription = "";
   let failAttempts = 1;
   let failError = "";
-  let failing = false;
-
-  async function load() {
-    loading = true;
-    listError = "";
-    try {
-      [forecast, inProduction] = await Promise.all([
-        api<ForecastOut>("/capacity/forecast"),
-        api<InProductionOut>("/capacity/in-production"),
-      ]);
-    } catch (err) {
-      handleApiError(err);
-      listError = errorMessage(err, "Falha ao carregar previsão.");
-    } finally {
-      loading = false;
-    }
-  }
+  const failAction = action(
+    (quoteId: string, body: Record<string, unknown>) =>
+      api(`/quotes/${quoteId}/transitions/fail`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      }),
+    { errorMessage: "Falha ao registrar." },
+  );
 
   async function complete(job: InProductionJob) {
     const raw = prompt("Quantas tentativas até concluir?", "1");
     if (raw === null) return;
     const attempts = Math.max(1, parseInt(raw, 10) || 1);
     acting = job.quote_id;
-    try {
-      await api(`/quotes/${job.quote_id}/transitions/complete`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ attempts }),
-      });
-      await load();
-    } catch (err) {
-      handleApiError(err);
-      listError = errorMessage(err, "Falha ao concluir.");
-    } finally {
-      acting = "";
-    }
+    await completeAction.run(job.quote_id, attempts);
+    acting = "";
+    if (!$completeAction.error) await reloadCapacity();
   }
 
   function openFail(job: InProductionJob) {
@@ -58,6 +68,7 @@
     failDescription = "";
     failAttempts = 1;
     failError = "";
+    failAction.reset();
   }
 
   async function confirmFail() {
@@ -67,25 +78,17 @@
       failError = "Descreva o que houve.";
       return;
     }
-    failing = true;
     failError = "";
-    try {
-      await api(`/quotes/${failJob.quote_id}/transitions/fail`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          failure_description: desc,
-          attempts: Math.max(1, failAttempts),
-        }),
-      });
-      failJob = null;
-      await load();
-    } catch (err) {
-      handleApiError(err);
-      failError = errorMessage(err, "Falha ao registrar.");
-    } finally {
-      failing = false;
+    await failAction.run(failJob.quote_id, {
+      failure_description: desc,
+      attempts: Math.max(1, failAttempts),
+    });
+    if ($failAction.error) {
+      failError = $failAction.error;
+      return;
     }
+    failJob = null;
+    await reloadCapacity();
   }
 
   function fmtHours(v: number | string): string {
@@ -133,7 +136,7 @@
 
   onMount(() => {
     if (requireAuth()) return;
-    load();
+    reloadCapacity();
   });
 </script>
 
@@ -149,7 +152,7 @@
 
 {#if listError}<div class="banner alert">{listError}</div>{/if}
 
-{#if loading && !forecast}
+{#if $dataRes.loading && !forecast}
   <section class="panel"><p class="empty">Carregando…</p></section>
 {:else if forecast}
   <section class="panel">
@@ -186,8 +189,8 @@
   <section class="panel highlight">
     <div class="panel-head">
       <span class="page-eyebrow">Próxima janela livre</span>
-      <button class="tiny ghost" on:click={load} disabled={loading}>
-        {loading ? "Recarregando…" : "Recarregar"}
+      <button class="tiny ghost" on:click={reloadCapacity} disabled={$dataRes.loading}>
+        {$dataRes.loading ? "Recarregando…" : "Recarregar"}
       </button>
     </div>
     <div class="hero">
@@ -259,9 +262,9 @@
         <input type="number" min="1" step="1" bind:value={failAttempts} />
       </label>
       <div class="modal-actions">
-        <button class="ghost" on:click={() => (failJob = null)} disabled={failing}>Cancelar</button>
-        <button class="danger" on:click={confirmFail} disabled={failing}>
-          {failing ? "Registrando…" : "Registrar falha"}
+        <button class="ghost" on:click={() => (failJob = null)} disabled={$failAction.pending}>Cancelar</button>
+        <button class="danger" on:click={confirmFail} disabled={$failAction.pending}>
+          {$failAction.pending ? "Registrando…" : "Registrar falha"}
         </button>
       </div>
     </div>
