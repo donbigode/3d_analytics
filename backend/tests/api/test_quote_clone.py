@@ -7,15 +7,17 @@ e sem linha no contábil.
 import io
 from decimal import Decimal
 from pathlib import Path
+from uuid import UUID
 
 import pytest
 import sqlalchemy as sa
 from PIL import Image
 
-from backend.core.models import QuoteKind, QuoteStatus
+from backend.core.models import QuoteKind, QuoteStatus, ServiceKind, ServiceUnit
 from backend.infra.db import session as session_module
 from backend.infra.db.models import (
-    MaterialConsumption, ProductionEvent, Quote, QuoteItem, QuotePhoto, Sale, User,
+    MaterialConsumption, ProductionEvent, Quote, QuoteItem, QuotePhoto,
+    QuoteService, Sale, Service, User,
 )
 from backend.settings import get_settings
 
@@ -189,6 +191,8 @@ async def test_clone_copia_fotos_com_arquivo_proprio(auth_client):
         nova_foto = (await s.execute(sa.select(QuotePhoto)
                                      .where(QuotePhoto.quote_id == novo["id"]))).scalars().one()
     assert nova_foto.storage_path != orig_foto.storage_path, "clone compartilhou o arquivo"
+    assert orig_foto.quote_item_id is None
+    assert nova_foto.quote_item_id is None, "foto de capa não deveria ganhar item no clone"
     base = Path(get_settings().storage_dir)
     assert (base / nova_foto.storage_path).exists()
     # save_photo reencoda (JPEG quality/otimização), então bytes idênticos não
@@ -241,3 +245,45 @@ async def test_foto_de_item_aponta_para_o_item_do_clone(auth_client):
                                      .where(QuotePhoto.quote_id == novo["id"]))).scalars().one()
     assert nova_foto.quote_item_id in ids_do_clone
     assert nova_foto.quote_item_id != item_id
+
+
+@pytest.mark.asyncio
+async def test_clone_pula_foto_corrompida_mas_clona_itens_e_servicos(auth_client):
+    """Foto corrompida em disco (ex.: JPEG truncado por disco cheio — já
+    aconteceu neste servidor) não pode abortar o clone inteiro: só aquela
+    foto é pulada, como se estivesse ausente. Itens e serviços seguem
+    intactos."""
+    orig = await _quote_com_item()
+
+    # Serviço de catálogo + linha no orçamento, direto no banco (evita
+    # depender de uma fixture de catálogo pré-cadastrada).
+    async with session_module.SessionFactory() as s:
+        svc = Service(name="Montagem", unit=ServiceUnit.MINUTE,
+                      default_rate=Decimal("10"), kind=ServiceKind.OTHER)
+        s.add(svc)
+        await s.flush()
+        s.add(QuoteService(quote_id=orig.id, service_id=svc.id, quantity=1, rate=Decimal("10")))
+        await s.commit()
+
+    r = await auth_client.post(f"/quotes/{orig.id}/photos",
+                               files={"file": ("foto.jpg", _jpeg(), "image/jpeg")})
+    assert r.status_code == 200, r.text
+    foto_id = r.json()["id"]
+
+    base = Path(get_settings().storage_dir)
+    async with session_module.SessionFactory() as s:
+        foto = await s.get(QuotePhoto, UUID(foto_id))
+        caminho = base / foto.storage_path
+    caminho.write_bytes(b"nao sou um jpeg valido, arquivo truncado/corrompido")
+
+    r = await auth_client.post(f"/quotes/{orig.id}/clone")
+    assert r.status_code == 201, r.text
+    novo = r.json()
+    assert len(novo["items"]) == 1, "clone não deveria abortar por causa da foto"
+    assert len(novo["services"]) == 1
+    assert novo["photos"] == [], "foto corrompida não deveria ter sido copiada"
+
+    async with session_module.SessionFactory() as s:
+        fotos_clone = (await s.execute(sa.select(QuotePhoto)
+                                       .where(QuotePhoto.quote_id == novo["id"]))).scalars().all()
+    assert fotos_clone == []

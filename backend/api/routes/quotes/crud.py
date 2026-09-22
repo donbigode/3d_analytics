@@ -183,7 +183,7 @@ async def clone_quote(
         for foto in fotos:
             copia_arquivo = copy_photo_file(foto.storage_path)
             if copia_arquivo is None:
-                continue   # arquivo sumiu do disco: não replica um registro quebrado
+                continue   # ausente ou corrompido (log em copy_photo_file): não replica um registro quebrado
             escritos.append(copia_arquivo.storage_path)
             session.add(QuotePhoto(
                 quote_id=novo.id,

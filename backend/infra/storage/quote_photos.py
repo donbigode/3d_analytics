@@ -1,4 +1,5 @@
 import io
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
@@ -6,6 +7,8 @@ from uuid import uuid4
 from PIL import Image, ImageOps
 
 from backend.settings import get_settings
+
+logger = logging.getLogger(__name__)
 
 MAX_DIM = 1600
 ALLOWED_EXT = {"jpg", "jpeg", "png", "webp"}
@@ -56,17 +59,28 @@ def copy_photo_file(src_rel: str | None) -> SavedPhoto | None:
     original apagar a imagem do clone — quote_photos é diretório plano,
     sem pasta por orçamento.
 
-    Devolve None quando a origem não existe em disco (mesma regra do
-    clone de gcode): o clone segue sem essa foto em vez de falhar.
+    Devolve None em duas condições, e nas duas o clone segue sem essa foto
+    em vez de falhar (o pulo fica registrado em log com o storage_path e o
+    motivo):
+    - a origem não existe em disco (mesma regra do clone de gcode);
+    - a origem existe mas está corrompida (ex.: JPEG truncado por disco
+      cheio) e o reencode do save_photo falha com ValueError. Só esse
+      ValueError é engolido — um erro na ESCRITA da cópia (disco cheio
+      *agora*, por exemplo) é outra coisa e continua subindo.
     """
     if not src_rel:
         return None
     settings = get_settings()
     src = Path(settings.storage_dir) / src_rel
     if not src.is_file():
+        logger.warning("clone: foto pulada, arquivo ausente em disco: %s", src_rel)
         return None
-    # Reusa save_photo para manter o mesmo reencode e os mesmos metadados.
-    return save_photo(src.read_bytes(), src.name)
+    try:
+        # Reusa save_photo para manter o mesmo reencode e os mesmos metadados.
+        return save_photo(src.read_bytes(), src.name)
+    except ValueError as exc:
+        logger.warning("clone: foto pulada, arquivo corrompido: %s (%s)", src_rel, exc)
+        return None
 
 
 def delete_photo(storage_path: str | None) -> None:
