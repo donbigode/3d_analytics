@@ -4,12 +4,14 @@ Movido sem alteração de lógica a partir do antigo `backend/api/routes/quotes.
 """
 from datetime import datetime, timezone
 from decimal import Decimal
+from uuid import UUID
 
 from fastapi import HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.api.schemas.quotes import (
+    ConsumptionOut,
     QuoteItemOut,
     QuoteOut,
     QuotePhotoOut,
@@ -109,6 +111,55 @@ def _photo_out(p: QuotePhoto) -> QuotePhotoOut:
     )
 
 
+def _spool_label(sp: Spool) -> str:
+    """Mesmo formato (tipo · fabricante · cor) usado no seletor da tela de
+    produzir, para a pessoa reconhecer a bobina nos dois lugares. Os campos
+    que mudam com o tempo (gramas restantes, loja, data de compra) ficam de
+    fora aqui — o consumo é histórico, não um retrato da bobina hoje."""
+    partes = [sp.material_type]
+    if sp.manufacturer:
+        partes.append(sp.manufacturer)
+    if sp.color:
+        partes.append(sp.color)
+    partes.append(str(sp.id)[:8])
+    return " · ".join(partes)
+
+
+async def _consumptions_map(
+    session: AsyncSession, item_ids: list[UUID]
+) -> dict[UUID, list[ConsumptionOut]]:
+    """Consumos de todos os itens do orçamento numa query só — buscar por
+    item reintroduziria o N+1 que a Spec 2 acabou de tirar do contábil."""
+    if not item_ids:
+        return {}
+    rows = (
+        await session.execute(
+            select(MaterialConsumption, Spool)
+            .join(Spool, Spool.id == MaterialConsumption.spool_id)
+            .where(MaterialConsumption.quote_item_id.in_(item_ids))
+            .order_by(MaterialConsumption.consumed_at)
+        )
+    ).all()
+    out: dict[UUID, list[ConsumptionOut]] = {}
+    for cons, sp in rows:
+        out.setdefault(cons.quote_item_id, []).append(
+            ConsumptionOut(
+                spool_id=str(sp.id),
+                spool_label=_spool_label(sp),
+                material_type=sp.material_type,
+                color=sp.color,
+                manufacturer=sp.manufacturer,
+                grams_used=cons.grams_used,
+                unit_cost_snapshot=cons.unit_cost_snapshot,
+                # unit_cost_snapshot é o custo por grama congelado no momento
+                # da baixa — não recalcular pelo preço atual da bobina.
+                custo_total=(cons.grams_used * cons.unit_cost_snapshot).quantize(Decimal("0.01")),
+                consumed_at=cons.consumed_at,
+            )
+        )
+    return out
+
+
 async def _quote_out(session: AsyncSession, q: Quote) -> QuoteOut:
     s = await _get_settings_row(session)
     items = await quote_repo.list_items(session, q.id)
@@ -156,6 +207,8 @@ async def _quote_out(session: AsyncSession, q: Quote) -> QuoteOut:
     )).scalars().all()
     person_ids = [str(pid) for pid in person_rows]
 
+    consumptions_by_item = await _consumptions_map(session, [it.id for it in items])
+
     items_out = [
         QuoteItemOut(
             id=str(it.id),
@@ -174,6 +227,7 @@ async def _quote_out(session: AsyncSession, q: Quote) -> QuoteOut:
             model_source_author=it.model_source_author,
             model_source_license=it.model_source_license,
             photos=photos_by_item.get(str(it.id), []),
+            consumptions=consumptions_by_item.get(it.id, []),
         )
         for idx, it in enumerate(items)
     ]

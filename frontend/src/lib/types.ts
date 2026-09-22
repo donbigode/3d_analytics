@@ -111,6 +111,20 @@ export type QuotePhoto = {
   sort_order: number;
 };
 
+// Uma baixa de material: qual bobina, quantas gramas, a que custo e quando.
+// Reimpressão depois de falha aparece como entrada adicional, com data própria.
+export type Consumption = {
+  spool_id: string;
+  spool_label: string;
+  material_type: string;
+  color: string | null;
+  manufacturer: string | null;
+  grams_used: string;
+  unit_cost_snapshot: string;
+  custo_total: string;
+  consumed_at: string;
+};
+
 export type QuoteItem = {
   id: string;
   name: string;
@@ -132,6 +146,7 @@ export type QuoteItem = {
   model_source_author?: string | null;
   model_source_license?: string | null;
   photos?: QuotePhoto[];
+  consumptions?: Consumption[];
 };
 
 export type QuoteServiceLine = {

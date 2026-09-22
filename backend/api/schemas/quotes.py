@@ -30,6 +30,23 @@ class QuotePhotoOut(BaseModel):
     sort_order: int
 
 
+class ConsumptionOut(BaseModel):
+    """Uma baixa de material: qual bobina, quantas gramas, a que custo e quando.
+
+    Um ciclo de produção por linha — reimpressão depois de falha aparece
+    como entrada adicional, com data própria.
+    """
+    spool_id: str
+    spool_label: str
+    material_type: str
+    color: str | None
+    manufacturer: str | None
+    grams_used: Decimal
+    unit_cost_snapshot: Decimal
+    custo_total: Decimal
+    consumed_at: datetime
+
+
 class QuoteItemOut(BaseModel):
     id: str
     name: str
@@ -48,6 +65,9 @@ class QuoteItemOut(BaseModel):
     model_source_author: str | None = None
     model_source_license: str | None = None
     photos: list[QuotePhotoOut] = []
+    # Filamento efetivamente baixado das bobinas — pode ter mais de uma linha
+    # quando houve reimpressão (falha + nova tentativa consome duas vezes).
+    consumptions: list[ConsumptionOut] = []
 
 
 class QuoteItemUpdate(BaseModel):
