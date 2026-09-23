@@ -1,5 +1,13 @@
 @import url("https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap");
 
+/* Escala de breakpoints do app. Media query não aceita var(), então os
+   literais abaixo são a referência única — não inventar um quarto valor
+   numa página qualquer.
+     560px  telefone em pé
+     700px  limite do modo card das tabelas
+     880px  colapso da sidebar (já em uso)
+    1180px  largura máxima de main */
+
 :root {
   --brand: #111827;
   --bg: #fafaf7;
@@ -426,4 +434,43 @@ label.field .err {
   padding: 0.1rem 0.4rem;
   border: 1px solid currentColor;
   opacity: 0.8;
+}
+
+/* ---------- Alvos de toque (telefone) ----------
+   Abaixo de 700px a mão substitui o cursor: chip, tiny e checkbox de
+   linha crescem em área clicável (padding), nunca em tamanho de fonte —
+   a escala tipográfica do app não muda. Em telas largas a densidade
+   original (pensada pra mouse) permanece intacta. */
+@media (max-width: 700px) {
+  .chip {
+    min-height: 44px;
+    padding: 0.4rem 0.7rem;
+    display: inline-flex;
+    align-items: center;
+  }
+  button.tiny {
+    min-height: 44px;
+    padding: 0.55rem 0.8rem;
+  }
+  .toggle {
+    min-height: 44px;
+    padding-block: 0.4rem;
+  }
+  .toggle input {
+    width: 1.2em;
+    height: 1.2em;
+  }
+  /* Checkboxes de linha fora de .toggle (ex.: "vendido" em Contábil,
+     "multi-cor" no orçamento) — regra genérica por seletor de elemento,
+     única fonte que alcança todas as páginas sem duplicar CSS local. */
+  label:has(> input[type="checkbox"]) {
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+    padding-block: 0.4rem;
+  }
+  input[type="checkbox"] {
+    width: 1.2em;
+    height: 1.2em;
+  }
 }

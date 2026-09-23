@@ -141,8 +141,9 @@
       "side main"
       "side footer";
   }
-  .shell.authed > main { grid-area: main; }
-  .shell.authed > .coda { grid-area: footer; }
+  .shell.authed > main { grid-area: main; min-width: 0; }
+  .shell.authed > .coda { grid-area: footer; min-width: 0; }
+  .shell.authed > .side { min-width: 0; }
 
   /* ---------- sidebar ---------- */
   .side {
@@ -289,11 +290,26 @@
   /* ---------- responsive: drop sidebar on small viewports ---------- */
   @media (max-width: 880px) {
     .shell.authed {
-      grid-template-columns: 1fr;
+      /* minmax(0, 1fr), não só `1fr`: sem o 0 explícito a track de grid
+         herda o min-content do conteúdo (o nav da sidebar, ou uma tabela
+         larga dentro de main) como piso e estoura a viewport inteira —
+         o "grid blowout" clássico. Com minmax(0, ...) quem contém o
+         overflow (table-wrap com overflow-x:auto, ou os cards) volta a
+         funcionar. */
+      grid-template-columns: minmax(0, 1fr);
       grid-template-areas:
         "side"
         "main"
         "footer";
+    }
+    /* `main` (em app.css) tem `margin: 0 auto`, que dentro de um item de
+       grid abandona o stretch padrão e passa a medir a largura por
+       shrink-to-fit — e o shrink-to-fit de uma grid interna com
+       auto-fit/minmax (o .form-grid de filtros) mede como se tivesse
+       espaço infinito, esticando `main` de volta ao tamanho do conteúdo.
+       Fixar 100% devolve o stretch e a largura real da viewport. */
+    main {
+      width: 100%;
     }
     .side {
       position: relative;

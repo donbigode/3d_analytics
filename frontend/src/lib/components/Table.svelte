@@ -19,6 +19,9 @@
   export let dense = false;
   export let searchText = "";
   export let searchExtra: ((row: Row) => string) | undefined = undefined;
+  // Abaixo de 700px a tabela vira uma pilha de cards — mesma `columns`,
+  // sem markup duplicado. Nenhuma coluna some: o card mostra todas.
+  export let stackOnMobile = true;
 
   let sortKey: string | null = null;
   let sortDir: SortDir = null;
@@ -63,7 +66,8 @@
   $: visible = sortRows(filterRows(rows, searchText, haystack), sortKey, sortDir);
 </script>
 
-<div class="table-wrap" class:dense>
+<div class="table-responsive" class:stack={stackOnMobile}>
+  <div class="table-wrap" class:dense>
   <table>
     <thead>
       <tr>
@@ -123,6 +127,29 @@
       {/if}
     </tbody>
   </table>
+  </div>
+  {#if stackOnMobile}
+    <div class="cards">
+      {#each visible as row (rowKey(row))}
+        <article class="card">
+          {#each columns as c}
+            <div class="card-row">
+              <span class="card-label mono">{c.label}</span>
+              <span class="card-value" class:mono={c.mono}>{display(c, row)}</span>
+            </div>
+          {/each}
+          {#if $$slots.actions}
+            <div class="card-actions">
+              <slot name="actions" {row} />
+            </div>
+          {/if}
+        </article>
+      {/each}
+      {#if visible.length === 0}
+        <div class="empty">{searchText ? "Nada encontrado para a busca" : empty}</div>
+      {/if}
+    </div>
+  {/if}
 </div>
 
 <style>
@@ -226,5 +253,63 @@
     font-size: 0.74rem;
     letter-spacing: 0.16em;
     text-transform: uppercase;
+  }
+
+  /* ---------- Modo card (abaixo de 700px) ----------
+     Mesma `columns` da tabela, sem markup duplicado. Toda coluna aparece
+     — nada some por largura, quem confere no bancada precisa do número
+     inteiro. Alternado por classe no wrapper (não por :has() de irmão),
+     pra não depender da ordem dos elementos no DOM. */
+  .cards {
+    display: none;
+  }
+  @media (max-width: 700px) {
+    .table-responsive.stack .table-wrap {
+      display: none;
+    }
+    .table-responsive.stack .cards {
+      display: grid;
+      gap: 0.75rem;
+    }
+  }
+  .card {
+    border: 1px solid var(--line);
+    background: var(--paper);
+    padding: 0.85rem 0.95rem;
+  }
+  .card-row {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 0.4rem 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .card-row:last-of-type {
+    border-bottom: none;
+  }
+  .card-label {
+    font-size: 0.66rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--muted);
+    flex: 0 0 auto;
+  }
+  .card-value {
+    text-align: right;
+    word-break: break-word;
+  }
+  .card-value.mono {
+    font-family: var(--font-mono);
+    font-size: 0.86rem;
+  }
+  .card-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    justify-content: flex-end;
+    margin-top: 0.7rem;
+    padding-top: 0.7rem;
+    border-top: 1px dashed var(--line);
   }
 </style>
