@@ -2,13 +2,14 @@
   import { onMount } from "svelte";
   import { goto } from "$app/navigation";
   import { page } from "$app/stores";
-  import { api, errorMessage } from "$lib/api";
-  import { handleApiError, requireAuth } from "$lib/guard";
+  import { api } from "$lib/api";
+  import { requireAuth } from "$lib/guard";
+  import { resource, action } from "$lib/resource";
   import type { Client, Quote, QuoteKind } from "$lib/types";
 
   let kind: QuoteKind = "commercial";
   let clientId = "";
-  let clients: Client[] = [];
+  const clients = resource(() => api<Client[]>("/clients"), { initial: [], auto: false });
   let markup = 50;
   let minCharge = 0;
   let notes = "";
@@ -21,50 +22,37 @@
     notes = `Modelo: ${prefillModelUrl}${tag}`;
   }
 
-  let submitting = false;
-  let error = "";
-
-  async function loadClients() {
-    try {
-      clients = await api<Client[]>("/clients");
-    } catch (err) {
-      handleApiError(err);
-    }
-  }
-
-  async function create() {
-    error = "";
-    submitting = true;
-    try {
-      const body: Record<string, unknown> = {
-        kind,
-        client_id: kind === "commercial" && clientId ? clientId : null,
-        notes: notes || null,
-      };
-      if (kind === "commercial") {
-        body.markup_pct = markup;
-        body.min_charge = minCharge;
-      } else {
-        body.markup_pct = 0;
-        body.min_charge = 0;
-      }
-      const q = await api<Quote>("/quotes", {
+  const createAction = action(
+    (body: Record<string, unknown>) =>
+      api<Quote>("/quotes", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(body),
-      });
-      goto(`/quotes/${q.id}`);
-    } catch (err) {
-      handleApiError(err);
-      error = errorMessage(err, "Não foi possível criar o orçamento.");
-    } finally {
-      submitting = false;
+      }),
+    { errorMessage: "Não foi possível criar o orçamento." },
+  );
+
+  async function create() {
+    const body: Record<string, unknown> = {
+      kind,
+      client_id: kind === "commercial" && clientId ? clientId : null,
+      notes: notes || null,
+    };
+    if (kind === "commercial") {
+      body.markup_pct = markup;
+      body.min_charge = minCharge;
+    } else {
+      body.markup_pct = 0;
+      body.min_charge = 0;
     }
+    const q = await createAction.run(body);
+    if (!q) return;
+    goto(`/quotes/${q.id}`);
   }
 
   onMount(() => {
     if (requireAuth()) return;
-    loadClients();
+    clients.reload();
   });
 </script>
 
@@ -87,7 +75,7 @@
     <a href="/quotes" class="tiny ghost btn">voltar</a>
   </div>
 
-  {#if error}<div class="alert">{error}</div>{/if}
+  {#if $createAction.error}<div class="alert">{$createAction.error}</div>{/if}
 
   <div class="kind-row">
     <label class="kind-card" class:active={kind === "commercial"}>
@@ -108,7 +96,7 @@
         Cliente
         <select bind:value={clientId}>
           <option value="">— sem cliente —</option>
-          {#each clients as c}
+          {#each $clients.data ?? [] as c}
             <option value={c.id}>{c.name}</option>
           {/each}
         </select>
@@ -128,8 +116,8 @@
     </label>
     <div class="actions">
       <a href="/quotes" class="ghost btn">Cancelar</a>
-      <button type="submit" disabled={submitting}>
-        {submitting ? "Criando…" : "Criar rascunho"}
+      <button type="submit" disabled={$createAction.pending}>
+        {$createAction.pending ? "Criando…" : "Criar rascunho"}
       </button>
     </div>
   </div>
