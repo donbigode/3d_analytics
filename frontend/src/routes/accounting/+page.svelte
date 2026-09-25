@@ -141,6 +141,16 @@
   const vendasSearchExtra = (row: Record<string, unknown>) => (row as Sale).notes ?? "";
   let buscaVendas = "";
   $: vendasMostradas = countShown(vendasFiltradas, buscaVendas, vendasColumns, vendasSearchExtra);
+  // Achado IMPORTANT 4 do review final: statusFiltro começa em "a_confirmar",
+  // então a busca já roda sobre um subconjunto — procurar o número de uma
+  // venda já entregue dá "Nada encontrado para a busca" sem pista nenhuma de
+  // que existe um filtro escondendo o resultado. Mantém o default (é a razão
+  // de abrir a aba, ver comentário de STATUS_CHIPS acima) mas nomeia o filtro
+  // ativo e oferece "ver em todos" assim que a busca zera sob um filtro
+  // restrito — sem isso a busca (que existe pra achar registro antigo) é
+  // exatamente o caso que o default mais atrapalha.
+  $: buscaSemResultadoNoFiltro =
+    buscaVendas.trim() !== "" && vendasMostradas === 0 && statusFiltro !== "todos";
 
   const personalColumns = [
     { key: "quote_seq", label: "#", mono: true, sortable: true,
@@ -570,6 +580,15 @@
         {/if}
       </svelte:fragment>
     </Table>
+    {#if buscaSemResultadoNoFiltro}
+      <p class="hint mono search-filter-hint">
+        Nada encontrado para essa busca no filtro
+        <strong>{STATUS_CHIPS.find((c) => c.value === statusFiltro)?.label}</strong>.
+        <button type="button" class="tiny ghost" on:click={() => (statusFiltro = "todos")}>
+          ver em todos
+        </button>
+      </p>
+    {/if}
     <p class="hint mono">
       A receita confirmada substitui o total do orçamento no DRE. Bobinas e CPV vêm do cálculo original.
     </p>
@@ -1034,6 +1053,16 @@
   }
   .personal-footer strong {
     color: var(--ink);
+    font-weight: 600;
+  }
+  .search-filter-hint {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    color: var(--ink);
+  }
+  .search-filter-hint strong {
     font-weight: 600;
   }
 
