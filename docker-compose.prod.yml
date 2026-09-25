@@ -23,7 +23,12 @@ services:
     restart: unless-stopped
 
   api:
-    build: .
+    build:
+      context: .
+      args:
+        # Sem os extras [dev]: pytest, ruff, mypy e testcontainers não têm o que
+        # fazer em produção, e cada MB conta no disco do Lightsail.
+        EXTRAS: ""
     depends_on:
       db:
         condition: service_healthy

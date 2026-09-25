@@ -24,4 +24,25 @@ jobs:
           # exporting layers no disco lento do Lightsail) passa disso.
           command_timeout: 30m
           script: |
+            # Resgate de disco inline, ANTES do deploy.sh.
+            #
+            # Por que aqui e não só no deploy.sh: o Action executa o
+            # deploy.sh que JÁ está no disco do servidor. O `git pull` é a
+            # primeira linha dele, então o script se substitui, mas o bash em
+            # execução segue no inode antigo até terminar — a versão nova só
+            # vale do próximo run em diante. Quando o disco já está cheio,
+            # esse "próximo run" nunca chega. Este bloco, por estar no YAML,
+            # o GitHub lê do repositório a cada run, então vale já no
+            # primeiro. O deploy.sh mantém o mesmo resgate para quem roda
+            # ele à mão via SSH; rodar duas vezes é no-op instantâneo.
+            #
+            # Nunca `--volumes`: frontend_build e caddy_data são volumes
+            # nomeados.
+            df -h /
+            docker builder prune -f --max-used-space 4GB \
+              || docker builder prune -f --keep-storage 4GB \
+              || docker builder prune -f \
+              || echo "aviso: builder prune falhou, seguindo"
+            docker image prune -af || echo "aviso: image prune falhou, seguindo"
+            df -h /
             /opt/3d-analytics/deploy/deploy.sh
