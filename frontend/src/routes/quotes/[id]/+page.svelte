@@ -645,7 +645,11 @@
   );
 
   async function clonar() {
-    const novo = await clonarAction.run(id);
+    // Segue o padrão de askMarkup/askVariance/askPricing/transition: o botão só
+    // aparece dentro do bloco `{#if quote}`, mas a action espera um `quoteId:
+    // string` (não `string | undefined` como o `id` da rota) — usa quote.id.
+    if (!quote) return;
+    const novo = await clonarAction.run(quote.id);
     if (novo) await goto(`/quotes/${novo.id}`);
   }
 
