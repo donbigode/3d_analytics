@@ -63,6 +63,26 @@ Sufixos únicos por execução evitam colisão hoje, mas é convenção entre do
 arquivos, não garantia, e as linhas se acumulam. Depende também de o Playwright
 rodar sem paralelismo (`fullyParallel: false`).
 
+**9b. O e2e da venda retroativa falha ~1 em 4 execuções.**
+`tests/e2e/venda-retroativa.spec.ts`, na asserção de delta do DRE. Isolado com
+`git stash`: falha igual com ou sem os consertos desta fase, logo é
+pré-existente. A causa é a corrida que o próprio comentário do teste documenta
+— o DRE exibe `data` antigo durante um fetch em voo. O conserto de período
+(`invalidate()`) resolveu o caminho de troca de datas, não este. Enquanto isso
+não for resolvido, o teste treina quem o roda a ignorar falha vermelha, que é
+pior que não ter teste.
+
+**9c. `clone-e-filamento.spec.ts:5` fixa `http://localhost:8000`.**
+Dormente porque o valor está certo hoje. Mesmo defeito que o
+`venda-retroativa.spec.ts` tinha com a porta 8001 — aquele foi corrigido para
+derivar do `baseURL`; este não.
+
+**9d. `quotes/+page.svelte:117` tem dependência reativa não rastreada.**
+`viewRows` chama `clientName()`, que fecha sobre `$clients.data` sem citá-lo no
+bloco `$:`. Mesma classe dos dois bugs corrigidos no contábil (chips de status
+e total de perda operacional), impacto menor porque clientes e orçamentos
+costumam carregar juntos. Pré-existente.
+
 ## Decisões de produto, não defeitos
 
 **10. Não existe indicador de "dado desatualizado" em lugar nenhum.**
