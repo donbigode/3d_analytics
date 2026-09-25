@@ -462,6 +462,7 @@ export type Sale = {
   itens_label: string;
   client_id: string | null;
   client_name: string | null;
+  people: string[];
   is_stale: boolean;
   is_sold: boolean;
   confirmed_revenue: string | null;
