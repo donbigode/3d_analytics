@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { goto } from "$app/navigation";
   import { api } from "$lib/api";
   import { requireAuth } from "$lib/guard";
   import { resource, action } from "$lib/resource";
@@ -34,6 +35,21 @@
       body: JSON.stringify({ person_ids: personIds }),
     }),
   );
+
+  // Clonar copia config comercial, peças (com gcode), fotos e pessoas — mas
+  // nunca status/timeline/consumo. Copiar arquivos (fotos, gcode) leva tempo
+  // perceptível: o `pending` do action() desabilita o botão enquanto a
+  // requisição está em voo, senão um segundo clique impaciente cria um
+  // segundo clone e a pessoa tem que caçar e apagar o duplicado.
+  const clonar = action(
+    (id: string) => api<Quote>(`/quotes/${id}/clone`, { method: "POST" }),
+    { errorMessage: "Falha ao clonar o orçamento." },
+  );
+
+  async function clonarEAbrir(id: string) {
+    const novo = await clonar.run(id);
+    if (novo) await goto(`/quotes/${novo.id}`);
+  }
 
   const STATUS_OPTIONS: { value: QuoteStatus; label: string }[] = [
     { value: "draft", label: "Rascunho" },
@@ -229,6 +245,7 @@
     </button>
   </div>
   {#if $rows.error}<div class="alert">{$rows.error}</div>{/if}
+  {#if $clonar.error}<div class="alert">{$clonar.error}</div>{/if}
 
   <SearchBar
     bind:value={q}
@@ -285,6 +302,14 @@
     <svelte:fragment slot="actions" let:row>
       {@const quote = row as ViewRow}
       <a class="tiny ghost btn" href={`/quotes/${quote.id}`}>abrir</a>
+      <button
+        type="button"
+        class="tiny ghost"
+        disabled={$clonar.pending}
+        on:click={() => clonarEAbrir(quote.id)}
+      >
+        {$clonar.pending ? "clonando…" : "clonar"}
+      </button>
     </svelte:fragment>
   </Table>
 </section>
