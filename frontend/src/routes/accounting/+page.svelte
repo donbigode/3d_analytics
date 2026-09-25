@@ -1,11 +1,13 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { get } from "svelte/store";
   import { api } from "$lib/api";
   import { requireAuth } from "$lib/guard";
   import { resource, action } from "$lib/resource";
   import { money, date as fmtDate } from "$lib/format";
   import Table from "$lib/components/Table.svelte";
   import Form from "$lib/components/Form.svelte";
+  import SaleEditor from "$lib/components/SaleEditor.svelte";
   import { quoteNumber } from "$lib/quote-number";
   import type {
     Sale,
@@ -44,6 +46,9 @@
       }),
     { errorMessage: "Falha ao salvar venda." },
   );
+  // Id da linha (Vendas ou Uso pessoal) com o popover de registro de venda
+  // aberto — só um por vez, compartilhado entre as duas sub-abas.
+  let editandoId: string | null = null;
 
   let exCategory: ExpenseCategory = "maintenance";
   let exDescription = "";
@@ -156,14 +161,39 @@
     return monthly.reload();
   }
 
-  async function patchSale(
-    s: Sale,
-    body: Partial<Sale>,
-    onSaved: () => Promise<void> = () => sales.reload(),
-  ) {
-    const updated = await saveSale.run(s.id, body);
-    if (updated) await onSaved();
+  // Registra a venda com a data escolhida no popover. A resposta do PATCH já
+  // vem com a linha inteira (itens_label, client_name, quote_seq,
+  // produced_on, people) — trocarLinha() substitui a linha na lista em
+  // memória com ela, sem recarregar a lista inteira (o reload provisório da
+  // Task 4 da Spec 0 sai daqui).
+  async function registrarVenda(s: Sale, dados: { sold_at: string; confirmed_revenue: string }) {
+    const atualizada = await saveSale.run(s.id, { is_sold: true, ...dados });
+    if (!atualizada) return; // erro já exposto em $saveSale.error (alerta da aba)
+    editandoId = null;
+    trocarLinha(atualizada);
   }
+
+  // Desfazer apaga a data e a receita confirmada no backend (PATCH com
+  // is_sold: false limpa os dois) — por isso o aviso antes de agir.
+  async function desfazer(s: Sale) {
+    if (!confirm("Desfazer a venda apaga a data e a receita confirmada. Continuar?")) return;
+    const atualizada = await saveSale.run(s.id, { is_sold: false });
+    if (atualizada) trocarLinha(atualizada);
+  }
+
+  // Atualização otimista: substitui a linha pelo objeto que o PATCH devolveu
+  // em qualquer uma das duas listas (Vendas é comercial, Uso pessoal é
+  // pessoal — a linha só existe numa das duas, mas a função não precisa saber
+  // qual).
+  function trocarLinha(nova: Sale) {
+    for (const r of [sales, personal]) {
+      const atual = get(r).data ?? [];
+      if (atual.some((x) => x.id === nova.id)) {
+        r.set(atual.map((x) => (x.id === nova.id ? nova : x)));
+      }
+    }
+  }
+
   async function createExpense() {
     const created = await createExpenseAction.run({
       category: exCategory,
@@ -352,25 +382,26 @@
       empty="Nenhuma venda elegível ainda"
     >
       <svelte:fragment slot="actions" let:row>
-        <div class="sale-actions" class:stale={(row as Sale).is_stale}>
-          <label class="sold-toggle mono" title="Confirmar como vendido">
-            <input
-              type="checkbox"
-              checked={(row as Sale).is_sold}
-              on:change={(e) => patchSale(row as Sale, { is_sold: e.currentTarget.checked })}
-            />
-            Vendido
-          </label>
-          <input
-            class="revenue mono"
-            type="number"
-            step="0.01"
-            min="0"
-            title="Receita confirmada"
-            value={(row as Sale).confirmed_revenue ?? (row as Sale).quote_total}
-            on:change={(e) => patchSale(row as Sale, { confirmed_revenue: e.currentTarget.value })}
+        {@const s = row as Sale}
+        {#if editandoId === s.id}
+          <SaleEditor
+            sale={s}
+            pending={$saveSale.pending}
+            on:save={(e) => registrarVenda(s, e.detail)}
+            on:cancel={() => (editandoId = null)}
           />
-        </div>
+        {:else if s.is_sold}
+          <div class="sale-done mono">
+            <span>{fmtDate(s.sold_at)}</span>
+            <span>{money(s.confirmed_revenue)}</span>
+            <button class="tiny ghost" on:click={() => (editandoId = s.id)}>editar</button>
+            <button class="tiny ghost danger" on:click={() => desfazer(s)}>desfazer</button>
+          </div>
+        {:else}
+          <button class="tiny" class:stale={s.is_stale} on:click={() => (editandoId = s.id)}>
+            registrar venda
+          </button>
+        {/if}
       </svelte:fragment>
     </Table>
     <p class="hint mono">
@@ -429,38 +460,25 @@
       empty="Nenhum uso pessoal produzido ainda"
     >
       <svelte:fragment slot="actions" let:row>
-        {#if (row as Sale).is_sold}
-          <span class="badge mono sold-badge">Vendido</span>
-        {:else}
-          <div class="sale-actions" class:stale={(row as Sale).is_stale}>
-            <label class="sold-toggle mono" title="Registrar como vendido">
-              <input
-                type="checkbox"
-                checked={(row as Sale).is_sold}
-                on:change={(e) =>
-                  patchSale(
-                    row as Sale,
-                    { is_sold: e.currentTarget.checked },
-                    () => personal.reload(),
-                  )}
-              />
-              Vendido
-            </label>
-            <input
-              class="revenue mono"
-              type="number"
-              step="0.01"
-              min="0"
-              title="Receita confirmada"
-              value={(row as Sale).confirmed_revenue ?? (row as Sale).quote_total}
-              on:change={(e) =>
-                patchSale(
-                  row as Sale,
-                  { confirmed_revenue: e.currentTarget.value },
-                  () => personal.reload(),
-                )}
-            />
+        {@const s = row as Sale}
+        {#if editandoId === s.id}
+          <SaleEditor
+            sale={s}
+            pending={$saveSale.pending}
+            on:save={(e) => registrarVenda(s, e.detail)}
+            on:cancel={() => (editandoId = null)}
+          />
+        {:else if s.is_sold}
+          <div class="sale-done mono">
+            <span>{fmtDate(s.sold_at)}</span>
+            <span>{money(s.confirmed_revenue)}</span>
+            <button class="tiny ghost" on:click={() => (editandoId = s.id)}>editar</button>
+            <button class="tiny ghost danger" on:click={() => desfazer(s)}>desfazer</button>
           </div>
+        {:else}
+          <button class="tiny" class:stale={s.is_stale} on:click={() => (editandoId = s.id)}>
+            registrar venda
+          </button>
         {/if}
       </svelte:fragment>
     </Table>
@@ -827,35 +845,20 @@
     gap: 1rem;
   }
   /* .toggle agora vive em app.css */
-  .sale-actions {
+  /* Venda já registrada: data + receita confirmada, com editar/desfazer ao
+     lado. Some com registrar venda/checkbox — quem está registrado mostra o
+     que foi gravado, não um formulário. */
+  .sale-done {
     display: flex;
     align-items: center;
     gap: 0.6rem;
     justify-content: flex-end;
-  }
-  .sale-actions.stale {
-    opacity: 0.45;
-  }
-  .sold-toggle {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.35rem;
-    font-size: 0.64rem;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
+    font-size: 0.82rem;
     color: var(--ink);
-    cursor: pointer;
     white-space: nowrap;
   }
-  .sold-toggle input {
-    width: auto;
-    margin: 0;
-  }
-  .revenue {
-    width: 110px;
-    padding: 0.3rem 0.45rem;
-    font-size: 0.82rem;
-    text-align: right;
+  button.tiny.stale {
+    opacity: 0.45;
   }
   /* Override local: tamanho/margem menores que o padrão global (cor já vem de app.css) */
   .hint {
@@ -866,10 +869,6 @@
   .personal-footer strong {
     color: var(--ink);
     font-weight: 600;
-  }
-  .sold-badge {
-    color: var(--ok);
-    border-color: var(--ok);
   }
 
   /* ---------- uso pessoal: mesmo padrão de .field das datas do DRE, só compacto */
