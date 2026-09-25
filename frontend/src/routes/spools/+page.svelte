@@ -428,6 +428,19 @@
     gap: 0.75rem;
     align-items: center;
   }
+  /* Abaixo de 700px (mesmo corte do modo card do Table) os dois `minmax`
+     somados (180px + 120px + gap) não cabem em 390px — é o que estourava
+     76px na tela do celular (ver tests/e2e/mobile.spec.ts). Empilha em vez
+     de espremer a barra num track ilegível. */
+  @media (max-width: 700px) {
+    .bar-row {
+      grid-template-columns: 1fr;
+      gap: 0.3rem;
+    }
+    .bar-value {
+      text-align: left;
+    }
+  }
   .bar-label {
     font-size: 0.85rem;
     display: flex;
