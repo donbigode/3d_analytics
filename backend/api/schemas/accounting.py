@@ -12,6 +12,14 @@ class SaleOut(BaseModel):
     quote_seq: int
     quote_kind: str
     produced_on: date | None = None
+    # Critério de perda operacional do DRE (dre.py:_perda_operacional): menor
+    # consumed_at da baixa de material, OU sale.created_at se ainda não houve
+    # baixa (aprovado mas não produzido). Ao contrário de produced_on, nunca é
+    # None pra uma Sale existente — é o campo certo pra filtrar o rodapé de
+    # Uso pessoal (e qualquer outro cálculo que precise bater com o DRE).
+    # produced_on continua servindo só pra exibir a coluna "Produzido em",
+    # que não pode mostrar created_at como se fosse data de produção.
+    loss_on: date | None = None
     quote_status: str
     quote_total: Decimal
     cpv_calc: Decimal

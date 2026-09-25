@@ -380,18 +380,18 @@
   $: dreNegative = $dre.data ? Number($dre.data.resultado_liquido) < 0 : false;
 
   // Linhas que entram na perda operacional do período: pessoal, não vendida,
-  // não arquivada, com produção dentro de [from, to]. Critério idêntico ao
-  // do backend/tests/api/test_perda_vs_aba_pessoal.py — comparação lexicográfica
+  // não arquivada, com loss_on dentro de [from, to]. loss_on (não produced_on)
+  // é o critério real do DRE (backend/core/accounting/dre.py:_perda_operacional):
+  // produced_on OU, na falta de produção, a data de criação da venda — um
+  // orçamento pessoal aprovado mas ainda não produzido já pesa na perda, e
+  // produced_on ficaria null pra ele (a coluna "Produzido em" não pode mentir
+  // dizendo que foi produzido). Usar produced_on aqui foi o bug que fez este
+  // rodapé divergir do DRE silenciosamente — travado por
+  // backend/tests/api/test_perda_vs_aba_pessoal.py. Comparação lexicográfica
   // de datas ISO (YYYY-MM-DD) é comparação cronológica, então dá pra comparar
   // as strings direto sem parsear.
   function isLossRow(s: Sale): boolean {
-    return (
-      !s.is_sold &&
-      !s.is_stale &&
-      s.produced_on !== null &&
-      s.produced_on >= from &&
-      s.produced_on <= to
-    );
+    return !s.is_sold && !s.is_stale && s.loss_on >= from && s.loss_on <= to;
   }
   $: perdaPeriodo = ($personal.data ?? [])
     .filter(isLossRow)

@@ -27,10 +27,10 @@ router = APIRouter()
 
 def _sale_out(s: Sale, itens_label: str = "", client_name: str | None = None,
               quote_seq: int = 0, produced_on: date | None = None,
-              people: list[str] | None = None) -> SaleOut:
+              people: list[str] | None = None, loss_on: date | None = None) -> SaleOut:
     return SaleOut(
         id=str(s.id), quote_id=str(s.quote_id), quote_seq=quote_seq,
-        quote_kind=s.quote_kind, produced_on=produced_on,
+        quote_kind=s.quote_kind, produced_on=produced_on, loss_on=loss_on,
         quote_status=s.quote_status,
         quote_total=s.quote_total, cpv_calc=s.cpv_calc,
         client_id=str(s.client_id) if s.client_id else None,
@@ -83,6 +83,18 @@ async def _people_map(session: AsyncSession, quote_ids: list[UUID]) -> dict[UUID
     for qid, name in rows:
         people_por_quote.setdefault(qid, []).append(name)
     return people_por_quote
+
+
+def _loss_on(sale: Sale, produced_on: date | None) -> date:
+    """Mesmo critério de dre.py:_perda_operacional — produced_on (menor
+    consumed_at da baixa de material) se houver, senão sale.created_at.
+    Ao contrário de produced_on, é sempre um valor (toda Sale tem created_at),
+    por isso é o campo certo pra decidir se a linha pesa na perda operacional
+    do período; produced_on continua sendo só a data de produção de fato."""
+    if produced_on is not None:
+        return produced_on
+    dt = sale.created_at
+    return dt.date() if hasattr(dt, "date") else dt
 
 
 async def _quote_seq(session: AsyncSession, quote_id: UUID) -> int:
@@ -147,6 +159,7 @@ async def list_sales(
             quote_seq=seq_por_quote.get(s.quote_id, 0),
             produced_on=produced_on_por_quote.get(s.quote_id),
             people=people_por_quote.get(s.quote_id),
+            loss_on=_loss_on(s, produced_on_por_quote.get(s.quote_id)),
         )
         for s in rows
     ]
@@ -195,6 +208,7 @@ async def update_sale(
         quote_seq=await _quote_seq(session, sale.quote_id),
         produced_on=produced_on,
         people=people,
+        loss_on=_loss_on(sale, produced_on),
     )
 
 

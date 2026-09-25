@@ -41,7 +41,18 @@ async def test_soma_da_aba_pessoal_bate_com_perda_operacional(auth_client):
         q_vendido = Quote(kind=QuoteKind.PERSONAL.value, user_id=user.id,
                           status=QuoteStatus.ENTREGUE.value, markup_pct=Decimal("0"),
                           min_charge=Decimal("0"))
-        s.add_all([q_perdido, q_vendido])
+        # Pessoal APROVADO mas ainda NÃO produzido: sync_sales já cria a Sale a
+        # partir de APROVADO (backend/core/accounting/sync.py), mas material só
+        # é consumido em produce() — não há MaterialConsumption nenhuma. O DRE
+        # (dre.py:102) cai no fallback `sale.created_at` e CONTA essa linha na
+        # perda. _produced_on_map (rota /accounting/sales) não tem esse
+        # fallback: produced_on fica None pra essa linha. Isso é o caso que o
+        # teste antigo não pegava, porque filtrava o rodapé por
+        # "produced_on is not None" — o critério da TELA, não o do DRE.
+        q_aprovado = Quote(kind=QuoteKind.PERSONAL.value, user_id=user.id,
+                           status=QuoteStatus.APROVADO.value, markup_pct=Decimal("0"),
+                           min_charge=Decimal("0"))
+        s.add_all([q_perdido, q_vendido, q_aprovado])
         await s.commit()
 
         s.add(Sale(quote_id=q_perdido.id, quote_status="produzido", quote_kind="personal",
@@ -51,6 +62,12 @@ async def test_soma_da_aba_pessoal_bate_com_perda_operacional(auth_client):
                    quote_total=Decimal("200"), cpv_calc=Decimal("40"), is_sold=True,
                    confirmed_revenue=Decimal("200"), variable_costs=Decimal("0"),
                    sold_at=date(2026, 9, 10)))
+        # created_at explícito (não o default de "agora") pra não depender da
+        # data real de execução do teste — só precisa cair dentro do período.
+        s.add(Sale(quote_id=q_aprovado.id, quote_status="aprovado", quote_kind="personal",
+                   quote_total=Decimal("0"), cpv_calc=Decimal("30"), is_sold=False,
+                   variable_costs=Decimal("0"),
+                   created_at=datetime(2026, 9, 20, tzinfo=timezone.utc)))
 
         item_perdido = QuoteItem(quote_id=q_perdido.id, name="p", gcode_meta={}, quantity=1)
         item_vendido = QuoteItem(quote_id=q_vendido.id, name="v", gcode_meta={}, quantity=1)
@@ -61,6 +78,8 @@ async def test_soma_da_aba_pessoal_bate_com_perda_operacional(auth_client):
         await s.commit()
 
         # A data de produção é o que atribui a linha ao período, nos dois lados.
+        # q_aprovado não ganha QuoteItem/MaterialConsumption nenhuma — é
+        # justamente o caso "aprovado, ainda não produzido".
         s.add(MaterialConsumption(quote_item_id=item_perdido.id, spool_id=spool.id,
                                   grams_used=Decimal("100"), unit_cost_snapshot=Decimal("0.50"),
                                   consumed_at=datetime(2026, 9, 12, tzinfo=timezone.utc)))
@@ -72,18 +91,30 @@ async def test_soma_da_aba_pessoal_bate_com_perda_operacional(auth_client):
     async with session_module.SessionFactory() as s:
         dre = await compute_dre(s, PERIODO_DE, PERIODO_ATE)
 
-    # O vendido não entra na perda; só o não-vendido, pelo CPV cheio.
-    assert dre["perda_operacional"] == Decimal("70.00")
+    # O vendido não entra na perda; o produzido-não-vendido (70) e o
+    # aprovado-ainda-não-produzido (30, via fallback created_at) entram os dois.
+    assert dre["perda_operacional"] == Decimal("100.00")
 
     linhas = (await auth_client.get("/accounting/sales?kind=personal")).json()
+    # loss_on replica o critério do DRE (produced_on OU created_at) — ao
+    # contrário de produced_on, nunca é None pra uma Sale existente, então o
+    # filtro não precisa (e não deve) do escape "is not None" que o teste
+    # antigo usava: esse escape era o bug, ele replicava o filtro da TELA
+    # (que já perde a linha aprovada-não-produzida) em vez do critério do DRE.
     soma_aba = sum(
         (Decimal(linha["cpv_override"] or linha["cpv_calc"])
          for linha in linhas
          if not linha["is_sold"] and not linha["is_stale"]
-         and linha["produced_on"] is not None
-         and PERIODO_DE <= date.fromisoformat(linha["produced_on"]) <= PERIODO_ATE),
+         and PERIODO_DE <= date.fromisoformat(linha["loss_on"]) <= PERIODO_ATE),
         Decimal(0),
     )
     assert soma_aba == dre["perda_operacional"], (
         f"rodapé da aba ({soma_aba}) diverge do DRE ({dre['perda_operacional']})"
     )
+
+    # A linha aprovada-não-produzida precisa aparecer nos dois lados: produced_on
+    # None (não foi produzida — a coluna "Produzido em" não deve mentir), mas
+    # loss_on preenchido (é o que decide se ela pesa na perda operacional).
+    linha_aprovada = next(l for l in linhas if l["quote_id"] == str(q_aprovado.id))
+    assert linha_aprovada["produced_on"] is None
+    assert linha_aprovada["loss_on"] == "2026-09-20"

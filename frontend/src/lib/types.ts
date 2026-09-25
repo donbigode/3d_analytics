@@ -456,6 +456,11 @@ export type Sale = {
   quote_seq: number;
   quote_kind: string;
   produced_on: string | null;
+  // Critério de perda operacional do DRE (produced_on OU sale.created_at,
+  // ver backend/api/routes/accounting.py:_loss_on) — nunca null pra uma
+  // linha existente. É o campo certo pra filtrar "isso pesa na perda desse
+  // período?"; produced_on é só a data de produção de fato (pode ser null).
+  loss_on: string;
   quote_status: string;
   quote_total: string;
   cpv_calc: string;
