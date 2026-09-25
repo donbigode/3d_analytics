@@ -16,14 +16,23 @@
     Profitability,
   } from "$lib/types";
 
-  let tab: "vendas" | "despesas" | "dre" | "lucratividade" = "vendas";
+  let tab: "vendas" | "pessoal" | "despesas" | "dre" | "lucratividade" = "vendas";
   let dreMode: "periodo" | "mensal" = "periodo";
 
   let showStale = false;
-  $: salesUrl = `/accounting/sales${showStale ? "" : "?is_stale=false"}`;
+  // Vendas é só comercial — pessoal tem sub-aba própria (não é candidato a venda).
+  $: salesUrl = `/accounting/sales?kind=commercial${showStale ? "" : "&is_stale=false"}`;
   const sales = resource(() => api<Sale[]>(salesUrl), {
     initial: [],
     errorMessage: "Falha ao carregar vendas.",
+    auto: false,
+  });
+  // Uso pessoal: sem filtro de arquivada na URL — o rodapé (e o badge da
+  // sub-aba) fazem o próprio filtro em JS, no mesmo critério do teste que
+  // trava a consistência com o DRE (test_perda_vs_aba_pessoal.py).
+  const personal = resource(() => api<Sale[]>("/accounting/sales?kind=personal"), {
+    initial: [],
+    errorMessage: "Falha ao carregar uso pessoal.",
     auto: false,
   });
   const saveSale = action(
@@ -118,6 +127,13 @@
     saveSale.reset();
     return sales.reload();
   }
+  // Mesmo raciocínio de reloadSales(): saveSale é a mesma action() das duas
+  // sub-abas (mesmo endpoint PATCH /accounting/sales/{id}), então seu erro
+  // preso precisa ser limpo aqui também, não só do lado Vendas.
+  function reloadPersonal() {
+    saveSale.reset();
+    return personal.reload();
+  }
   function reloadExpenses() {
     createExpenseAction.reset();
     removeExpenseAction.reset();
@@ -140,9 +156,13 @@
     return monthly.reload();
   }
 
-  async function patchSale(s: Sale, body: Partial<Sale>) {
+  async function patchSale(
+    s: Sale,
+    body: Partial<Sale>,
+    onSaved: () => Promise<void> = () => sales.reload(),
+  ) {
     const updated = await saveSale.run(s.id, body);
-    if (updated) await sales.reload();
+    if (updated) await onSaved();
   }
   async function createExpense() {
     const created = await createExpenseAction.run({
@@ -228,9 +248,31 @@
   $: expenseTotal = ($expenses.data ?? []).reduce((acc, e) => acc + Number(e.amount || 0), 0);
   $: dreNegative = $dre.data ? Number($dre.data.resultado_liquido) < 0 : false;
 
+  // Linhas que entram na perda operacional do período: pessoal, não vendida,
+  // não arquivada, com produção dentro de [from, to]. Critério idêntico ao
+  // do backend/tests/api/test_perda_vs_aba_pessoal.py — comparação lexicográfica
+  // de datas ISO (YYYY-MM-DD) é comparação cronológica, então dá pra comparar
+  // as strings direto sem parsear.
+  function isLossRow(s: Sale): boolean {
+    return (
+      !s.is_sold &&
+      !s.is_stale &&
+      s.produced_on !== null &&
+      s.produced_on >= from &&
+      s.produced_on <= to
+    );
+  }
+  $: perdaPeriodo = ($personal.data ?? [])
+    .filter(isLossRow)
+    .reduce((acc, s) => acc + Number(s.cpv_override ?? s.cpv_calc), 0);
+  // Erro combinado do painel Uso pessoal: mesma lógica de expError acima —
+  // saveSale é action() compartilhada com Vendas.
+  $: personalError = $personal.error || $saveSale.error;
+
   onMount(() => {
     if (requireAuth()) return;
     reloadSales();
+    reloadPersonal();
     reloadExpenses();
     reloadDre();
   });
@@ -250,12 +292,16 @@
     <span class="idx">01</span> Vendas
     <span class="badge mono">{confirmedCount}/{($sales.data ?? []).length}</span>
   </button>
+  <button type="button" class="subtab" class:active={tab === "pessoal"} on:click={() => openTab("pessoal")}>
+    <span class="idx">02</span> Uso pessoal
+    <span class="badge mono" title="Perda operacional no período">{money(perdaPeriodo)}</span>
+  </button>
   <button type="button" class="subtab" class:active={tab === "despesas"} on:click={() => openTab("despesas")}>
-    <span class="idx">02</span> Despesas
+    <span class="idx">03</span> Despesas
     <span class="badge mono">{($expenses.data ?? []).length}</span>
   </button>
   <button type="button" class="subtab" class:active={tab === "dre"} on:click={() => openTab("dre")}>
-    <span class="idx">03</span> DRE
+    <span class="idx">04</span> DRE
   </button>
   <button
     type="button"
@@ -263,7 +309,7 @@
     class:active={tab === "lucratividade"}
     on:click={() => openTab("lucratividade")}
   >
-    <span class="idx">04</span> Lucratividade
+    <span class="idx">05</span> Lucratividade
   </button>
 </nav>
 
@@ -329,6 +375,95 @@
     </Table>
     <p class="hint mono">
       A receita confirmada substitui o total do orçamento no DRE. Bobinas e CPV vêm do cálculo original.
+    </p>
+  </section>
+{/if}
+
+{#if tab === "pessoal"}
+  <section class="panel list-panel">
+    <div class="panel-head">
+      <h2 class="section-title">
+        Uso pessoal <span class="count">· {($personal.data ?? []).length}</span>
+      </h2>
+      <div class="head-tools">
+        <label class="field">
+          De
+          <input type="date" bind:value={from} />
+        </label>
+        <label class="field">
+          Até
+          <input type="date" bind:value={to} />
+        </label>
+        <button class="tiny ghost" on:click={reloadPersonal} disabled={$personal.loading}>
+          {$personal.loading ? "Carregando…" : "Atualizar"}
+        </button>
+      </div>
+    </div>
+    {#if personalError}<div class="alert">{personalError}</div>{/if}
+    <Table
+      columns={[
+        { key: "quote_seq", label: "#", mono: true, format: (v) => quoteNumber(v as number) },
+        { key: "itens_label", label: "Itens" },
+        { key: "client_name", label: "Pessoas" },
+        {
+          key: "produced_on",
+          label: "Produzido em",
+          mono: true,
+          align: "center",
+          format: (v) => fmtDate(v as string | null),
+        },
+        {
+          key: "cpv_calc",
+          label: "CPV",
+          mono: true,
+          align: "right",
+          format: (_v, row) => money((row as Sale).cpv_override ?? (row as Sale).cpv_calc),
+        },
+        { key: "quote_status", label: "Estado" },
+      ]}
+      rows={$personal.data ?? []}
+      empty="Nenhum uso pessoal produzido ainda"
+    >
+      <svelte:fragment slot="actions" let:row>
+        {#if (row as Sale).is_sold}
+          <span class="badge mono sold-badge">Vendido</span>
+        {:else}
+          <div class="sale-actions" class:stale={(row as Sale).is_stale}>
+            <label class="sold-toggle mono" title="Registrar como vendido">
+              <input
+                type="checkbox"
+                checked={(row as Sale).is_sold}
+                on:change={(e) =>
+                  patchSale(
+                    row as Sale,
+                    { is_sold: e.currentTarget.checked },
+                    () => personal.reload(),
+                  )}
+              />
+              Vendido
+            </label>
+            <input
+              class="revenue mono"
+              type="number"
+              step="0.01"
+              min="0"
+              title="Receita confirmada"
+              value={(row as Sale).confirmed_revenue ?? (row as Sale).quote_total}
+              on:change={(e) =>
+                patchSale(
+                  row as Sale,
+                  { confirmed_revenue: e.currentTarget.value },
+                  () => personal.reload(),
+                )}
+            />
+          </div>
+        {/if}
+      </svelte:fragment>
+    </Table>
+    <p class="hint mono personal-footer">
+      Perda operacional no período ({fmtDate(from)} — {fmtDate(to)}): <strong>{money(perdaPeriodo)}</strong>
+      — soma o CPV das linhas não vendidas e não arquivadas produzidas nessa janela. Bate com a linha
+      "Perda operacional" do DRE no mesmo período.
     </p>
   </section>
 {/if}
@@ -723,6 +858,23 @@
     margin: 1rem 0 0;
     font-size: 0.68rem;
     letter-spacing: 0.04em;
+  }
+  .personal-footer strong {
+    color: var(--ink);
+    font-weight: 600;
+  }
+  .sold-badge {
+    color: var(--ok);
+    border-color: var(--ok);
+  }
+
+  /* ---------- uso pessoal: mesmo padrão de .field das datas do DRE, só compacto */
+  .head-tools .field {
+    min-width: 0;
+  }
+  .head-tools .field input {
+    padding: 0.3rem 0.45rem;
+    font-size: 0.78rem;
   }
   .recurring-field .recurring-spacer {
     display: block;
