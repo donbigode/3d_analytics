@@ -48,6 +48,20 @@
     return STATUS_OPTIONS.find((o) => o.value === s)?.label ?? s;
   }
 
+  function statusClass(s: string): string {
+    switch (s) {
+      case "entregue":
+      case "produzido":
+        return "ok";
+      case "cancelado":
+        return "warn";
+      case "aprovado":
+        return "brand";
+      default:
+        return "muted";
+    }
+  }
+
   function clientName(id: string | null): string {
     if (!id) return "—";
     return ($clients.data ?? []).find((c) => c.id === id)?.name ?? "—";
@@ -71,24 +85,47 @@
   // correta; ordenar pela chave crua client_id ordenaria por UUID) e
   // items_summary (o resumo "até 3 + N" que já existia, agora como coluna
   // em vez de célula construída na mão). O resto dos campos do Quote
-  // (id, kind, person_ids…) segue disponível pro slot de ações.
-  $: viewRows = ($rows.data ?? []).map((r) => ({
-    ...r,
-    client_name: clientName(r.client_id),
-    items_summary: itemsSummary(r),
-  }));
+  // (id, kind, person_ids…) segue disponível pro slot "cell" da Table e
+  // pro slot de ações.
+  type ViewRow = Quote & { client_name: string; items_summary: string };
+  $: viewRows = ($rows.data ?? []).map(
+    (r): ViewRow => ({
+      ...r,
+      client_name: clientName(r.client_id),
+      items_summary: itemsSummary(r),
+    }),
+  );
 
   let q = "";
+  // seq/items_summary/kind/status marcam `cell: true` — a Table ainda usa
+  // o `format` abaixo pra montar o texto de exibição/busca (é a base do
+  // haystack, ver table-logic.ts), mas a apresentação real destas quatro
+  // colunas vem do slot "cell" logo abaixo no template (tooltip com
+  // UUID/lista completa, tag colorida de Tipo/Status, chips de pessoa).
   const columns = [
-    { key: "seq", label: "#", mono: true, sortable: true, format: (v: unknown) => quoteNumber(v as number) },
-    { key: "items_summary", label: "Itens", width: "22rem" },
+    {
+      key: "seq",
+      label: "#",
+      mono: true,
+      sortable: true,
+      cell: true,
+      format: (v: unknown) => quoteNumber(v as number),
+    },
+    { key: "items_summary", label: "Itens", width: "22rem", cell: true },
     {
       key: "kind",
       label: "Tipo",
       sortable: true,
+      cell: true,
       format: (v: unknown) => (v === "commercial" ? "comercial" : "pessoal"),
     },
-    { key: "status", label: "Status", sortable: true, format: (v: unknown) => statusLabel(v as string) },
+    {
+      key: "status",
+      label: "Status",
+      sortable: true,
+      cell: true,
+      format: (v: unknown) => statusLabel(v as string),
+    },
     { key: "client_name", label: "Cliente", sortable: true },
     {
       key: "total",
@@ -199,6 +236,7 @@
     shown={mostrados}
     placeholder="buscar por número, peça ou cliente…"
   />
+
   <Table
     {columns}
     rows={viewRows}
@@ -206,23 +244,47 @@
     {searchExtra}
     empty="Nenhum orçamento encontrado"
   >
-    <svelte:fragment slot="actions" let:row>
-      {@const quote = row as Quote}
-      <a class="tiny ghost btn" href={`/quotes/${quote.id}`}>abrir</a>
-      {#if quote.kind === "personal" && ($people.data ?? []).length > 0}
-        <div class="people-chips">
-          {#each ($people.data ?? []).filter((p) => p.active || (quote.person_ids ?? []).includes(p.id)) as p (p.id)}
-            <button
-              type="button"
-              class="chip"
-              class:on={(quote.person_ids ?? []).includes(p.id)}
-              on:click={() => togglePerson(quote, p.id)}
-            >
-              {p.name}
-            </button>
-          {/each}
-        </div>
+    <!-- Slot "cell": restaura o markup rico que a Table (texto puro via
+         format()) não conseguiria — tooltip com UUID/lista completa, tag
+         colorida de Tipo/Status, e os chips de atribuição de pessoa, que
+         precisam continuar dentro da célula Tipo pra manter o sentido de
+         "este orçamento é destas pessoas" (não um botão de ação solto).
+         `value` já é o mesmo texto formatado usado na busca (o format()
+         de columns, acima) — os ramos abaixo só decidem como DESENHAR
+         esse texto, nunca mudam o que a busca casa. Roda uma vez por
+         coluna marcada `cell: true`, tanto no desktop quanto no card
+         (é o mesmo slot da Table.svelte nos dois modos). -->
+    <svelte:fragment slot="cell" let:row let:col let:value>
+      {@const quote = row as ViewRow}
+      {#if col.key === "seq"}
+        <span title={quote.id}>{value}</span>
+      {:else if col.key === "items_summary"}
+        <span title={itemNames(quote).join(", ")}>{value}</span>
+      {:else if col.key === "kind"}
+        <span class="tag {quote.kind === 'commercial' ? 'brand' : 'muted'}">{value}</span>
+        {#if quote.kind === "personal" && ($people.data ?? []).length > 0}
+          <div class="people-chips">
+            {#each ($people.data ?? []).filter((p) => p.active || (quote.person_ids ?? []).includes(p.id)) as p (p.id)}
+              <button
+                type="button"
+                class="chip"
+                class:on={(quote.person_ids ?? []).includes(p.id)}
+                on:click={() => togglePerson(quote, p.id)}
+              >
+                {p.name}
+              </button>
+            {/each}
+          </div>
+        {/if}
+      {:else if col.key === "status"}
+        <span class="tag {statusClass(quote.status)}">{value}</span>
+      {:else}
+        {value}
       {/if}
+    </svelte:fragment>
+    <svelte:fragment slot="actions" let:row>
+      {@const quote = row as ViewRow}
+      <a class="tiny ghost btn" href={`/quotes/${quote.id}`}>abrir</a>
     </svelte:fragment>
   </Table>
 </section>
@@ -255,7 +317,6 @@
   .people-chips {
     display: flex;
     flex-wrap: wrap;
-    justify-content: flex-end;
     gap: 0.25rem;
     margin-top: 0.3rem;
   }

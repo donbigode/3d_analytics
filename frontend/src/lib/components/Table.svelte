@@ -11,6 +11,13 @@
     width?: string;
     format?: (v: unknown, row: Row) => string;
     sortable?: boolean;
+    // Marca que esta coluna quer passar pelo slot "cell" em vez do
+    // display() padrão — célula com conteúdo rico (tag colorida, chips
+    // clicáveis, o que for) que texto puro não consegue expressar.
+    // Colunas sem esta flag seguem 100% inalteradas: o Table.svelte de
+    // hoje é o comportamento padrão, nenhuma página precisa mudar nada
+    // pra continuar funcionando.
+    cell?: boolean;
   }[];
   export let rows: Row[];
   export let rowKey: (r: Row) => string = (r) =>
@@ -108,7 +115,11 @@
               class:center={c.align === "center"}
               class:mono={c.mono}
             >
-              {display(c, row)}
+              {#if c.cell}
+                <slot name="cell" {row} col={c} value={display(c, row)}>{display(c, row)}</slot>
+              {:else}
+                {display(c, row)}
+              {/if}
             </td>
           {/each}
           {#if $$slots.actions}
@@ -135,7 +146,13 @@
           {#each columns as c}
             <div class="card-row">
               <span class="card-label mono">{c.label}</span>
-              <span class="card-value" class:mono={c.mono}>{display(c, row)}</span>
+              <span class="card-value" class:mono={c.mono}>
+                {#if c.cell}
+                  <slot name="cell" {row} col={c} value={display(c, row)}>{display(c, row)}</slot>
+                {:else}
+                  {display(c, row)}
+                {/if}
+              </span>
             </div>
           {/each}
           {#if $$slots.actions}
