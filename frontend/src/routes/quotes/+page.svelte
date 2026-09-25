@@ -46,8 +46,18 @@
     { errorMessage: "Falha ao clonar o orçamento." },
   );
 
+  // A `action()` é compartilhada pela lista inteira — só uma clonagem por
+  // vez, de propósito. `cloningId` lembra qual linha disparou a que está em
+  // voo, pra distinguir "esta linha está clonando" (rótulo já muda sozinho)
+  // de "outra linha está clonando" (esta fica desabilitada sem nenhum sinal
+  // visível — numa lista longa/filtrada a linha em voo pode nem estar na
+  // tela — daí o `title` explicativo no botão das demais).
+  let cloningId: string | null = null;
+
   async function clonarEAbrir(id: string) {
+    cloningId = id;
     const novo = await clonar.run(id);
+    cloningId = null;
     if (novo) await goto(`/quotes/${novo.id}`);
   }
 
@@ -306,9 +316,12 @@
         type="button"
         class="tiny ghost"
         disabled={$clonar.pending}
+        title={$clonar.pending && cloningId !== quote.id
+          ? "Aguardando outra clonagem terminar…"
+          : undefined}
         on:click={() => clonarEAbrir(quote.id)}
       >
-        {$clonar.pending ? "clonando…" : "clonar"}
+        {$clonar.pending && cloningId === quote.id ? "clonando…" : "clonar"}
       </button>
     </svelte:fragment>
   </Table>
