@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, onDestroy } from "svelte";
   import { get } from "svelte/store";
   import { api } from "$lib/api";
   import { requireAuth } from "$lib/guard";
@@ -406,7 +406,44 @@
     reloadPersonal();
     reloadExpenses();
     reloadDre();
+    periodReady = true;
   });
+
+  // from/to são compartilhados por Vendas, Uso pessoal, DRE e Lucratividade,
+  // mas só Vendas/Uso pessoal filtram client-side (passaPeriodo/isLossRow,
+  // reativos de graça). DRE e Lucratividade vêm de resource() escopados por
+  // from/to no fetch (dre, monthly, prof) — nada os recarregava ao trocar o
+  // período: o cabeçalho ({fmtDate(from)} — {fmtDate(to)}) mudava, os números
+  // continuavam do período antigo, sem aviso nenhum (CRITICAL 1 do review
+  // final). invalidatePeriodo() corrige isso apagando os três assim que
+  // from/to mudam — imediato e sem custo de rede (só limpa a store), então
+  // não tem por que atrasar: atrasar deixaria uma janela com cabeçalho novo e
+  // número velho, exatamente o bug. Isso também resolve de graça o problema
+  // irmão (a guarda `$dre.loading && !$dre.data` ficava falsa durante um
+  // reload porque `data` já existia): com data limpo antes do reload, a
+  // guarda volta a ser verdadeira assim que o reload começa.
+  // O reload de fato (que gasta rede) é debounced — do contrário, arrastar
+  // o seletor de data ou digitar dispararia uma requisição por tecla — e só
+  // acontece pra aba ATUALMENTE aberta; as outras ficam invalidadas e
+  // recarregam sozinhas na próxima vez que forem abertas, pela guarda já
+  // existente em openTab()/setDreMode().
+  let periodReady = false; // true só depois do onMount(): evita invalidar antes da primeira carga
+  let periodDebounceTimer: ReturnType<typeof setTimeout> | undefined;
+  $: {
+    from; to;
+    if (periodReady) invalidatePeriodo();
+  }
+  function invalidatePeriodo() {
+    dre.invalidate();
+    monthly.invalidate();
+    prof.invalidate();
+    clearTimeout(periodDebounceTimer);
+    periodDebounceTimer = setTimeout(() => {
+      if (tab === "dre") generateDre();
+      else if (tab === "lucratividade") prof.reload();
+    }, 400);
+  }
+  onDestroy(() => clearTimeout(periodDebounceTimer));
 </script>
 
 <header class="page-head">

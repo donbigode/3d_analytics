@@ -84,6 +84,37 @@ describe("resource", () => {
     expect(get(r2).loading).toBe(false);
   });
 
+  it("invalidate() apaga data (volta a initial) e error, sem disparar reload sozinho", async () => {
+    const fetcher = vi.fn().mockResolvedValue([1, 2]);
+    const r = resource(fetcher, { auto: false, initial: [] });
+    await r.reload();
+    expect(get(r).data).toEqual([1, 2]);
+
+    r.invalidate();
+    expect(get(r).data).toEqual([]); // volta a opts.initial, não fica undefined à toa
+    expect(get(r).loading).toBe(false);
+    expect(get(r).error).toBe("");
+    expect(fetcher).toHaveBeenCalledTimes(1); // invalidate() não refaz a chamada — quem chama decide se/quando recarrega
+  });
+
+  it("invalidate() cancela um reload() em voo do filtro antigo — ele não pode sobrescrever depois", async () => {
+    let solta: (v: number[]) => void = () => {};
+    const r = resource(() => new Promise<number[]>((res) => { solta = res; }), { auto: false });
+    const p = r.reload();
+    expect(get(r).loading).toBe(true);
+
+    r.invalidate();
+    expect(get(r).data).toBeUndefined();
+    expect(get(r).loading).toBe(false);
+
+    // a resposta do fetch do filtro antigo chega tarde — não pode ressuscitar
+    // um dado que já foi invalidado.
+    solta([9]);
+    await p;
+    expect(get(r).data).toBeUndefined();
+    expect(get(r).loading).toBe(false);
+  });
+
   it("redireciona para /login em 401", async () => {
     gotoCalls.length = 0;
     const r = resource(() => Promise.reject(new ApiError(401, null)), { auto: false });

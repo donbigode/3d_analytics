@@ -15,6 +15,7 @@ export type Resource<T> = Readable<ResourceState<T>> & {
   reload: () => Promise<void>;
   set: (v: T) => void;
   reset: () => void;
+  invalidate: () => void;
 };
 
 export function resource<T>(
@@ -70,9 +71,25 @@ export function resource<T>(
     update((s) => ({ ...s, error: "" }));
   }
 
+  /** Apaga `data` (volta a `opts.initial`) e cancela qualquer reload() em
+   *  voo — mesmo mecanismo de seq que `set()` usa — sem disparar um reload
+   *  novo sozinho. Existe pra telas com filtro compartilhado por vários
+   *  resource() (ex.: from/to do DRE, usado por dre/monthly/prof): trocar o
+   *  filtro precisa apagar o dado do filtro ANTIGO imediatamente, antes de
+   *  qualquer requisição nova, senão a tela mostra um cabeçalho do filtro
+   *  novo com números que ainda são do filtro velho — e ninguém percebe,
+   *  porque a guarda de "só recarrega se vazio" (`!data`) não disparava
+   *  (data não fica vazio sozinho ao trocar o filtro). Depois de invalidate(),
+   *  essa mesma guarda volta a ser verdadeira, então tanto um reload()
+   *  manual quanto a guarda de abrir aba fazem a coisa certa de novo. */
+  function invalidate(): void {
+    seq++; // cancela reload() em voo: ele não pode escrever o dado do filtro antigo depois disto
+    update((s) => ({ ...s, data: opts.initial, loading: false, error: "" }));
+  }
+
   if (opts.auto !== false) void reload();
 
-  return { subscribe, reload, set, reset };
+  return { subscribe, reload, set, reset, invalidate };
 }
 
 export type ActionState = { pending: boolean; error: string };
