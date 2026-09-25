@@ -4,6 +4,9 @@
   import { requireAuth } from "$lib/guard";
   import { resource, action } from "$lib/resource";
   import { money as fmtMoney, dateTime as fmtDate } from "$lib/format";
+  import Table from "$lib/components/Table.svelte";
+  import SearchBar from "$lib/components/SearchBar.svelte";
+  import { countShown } from "$lib/table-search";
   import type { Client, Person, Quote, QuoteKind, QuoteStatus } from "$lib/types";
   import { quoteNumber } from "$lib/quote-number";
 
@@ -45,20 +48,6 @@
     return STATUS_OPTIONS.find((o) => o.value === s)?.label ?? s;
   }
 
-  function statusClass(s: string): string {
-    switch (s) {
-      case "entregue":
-      case "produzido":
-        return "ok";
-      case "cancelado":
-        return "warn";
-      case "aprovado":
-        return "brand";
-      default:
-        return "muted";
-    }
-  }
-
   function clientName(id: string | null): string {
     if (!id) return "—";
     return ($clients.data ?? []).find((c) => c.id === id)?.name ?? "—";
@@ -75,6 +64,52 @@
     if (names.length <= 3) return names.join(" · ");
     return `${names.slice(0, 3).join(" · ")} +${names.length - 3}`;
   }
+
+  // Linhas que a Table efetivamente recebe: mesmo objeto Quote, mais dois
+  // campos derivados só pra virarem coluna — client_name (nome resolvido
+  // do cliente, pro texto exibido/buscado E pra ordenação alfabética
+  // correta; ordenar pela chave crua client_id ordenaria por UUID) e
+  // items_summary (o resumo "até 3 + N" que já existia, agora como coluna
+  // em vez de célula construída na mão). O resto dos campos do Quote
+  // (id, kind, person_ids…) segue disponível pro slot de ações.
+  $: viewRows = ($rows.data ?? []).map((r) => ({
+    ...r,
+    client_name: clientName(r.client_id),
+    items_summary: itemsSummary(r),
+  }));
+
+  let q = "";
+  const columns = [
+    { key: "seq", label: "#", mono: true, sortable: true, format: (v: unknown) => quoteNumber(v as number) },
+    { key: "items_summary", label: "Itens", width: "22rem" },
+    {
+      key: "kind",
+      label: "Tipo",
+      sortable: true,
+      format: (v: unknown) => (v === "commercial" ? "comercial" : "pessoal"),
+    },
+    { key: "status", label: "Status", sortable: true, format: (v: unknown) => statusLabel(v as string) },
+    { key: "client_name", label: "Cliente", sortable: true },
+    {
+      key: "total",
+      label: "Total",
+      mono: true,
+      align: "right" as const,
+      sortable: true,
+      format: (v: unknown) => fmtMoney(v as string | number),
+    },
+    {
+      key: "created_at",
+      label: "Criado",
+      mono: true,
+      sortable: true,
+      format: (v: unknown) => fmtDate(v as string),
+    },
+  ];
+  // Notas não é coluna — entra na busca via searchExtra, igual ao combinado
+  // no brief da tarefa.
+  const searchExtra = (row: Record<string, unknown>) => (row as Quote).notes ?? "";
+  $: mostrados = countShown(viewRows, q, columns, searchExtra);
 
   async function togglePerson(q: Quote, personId: string) {
     const current = new Set(q.person_ids ?? []);
@@ -158,63 +193,38 @@
   </div>
   {#if $rows.error}<div class="alert">{$rows.error}</div>{/if}
 
-  <div class="table-wrap">
-    <table>
-      <thead>
-        <tr>
-          <th>#</th>
-          <th>Itens</th>
-          <th>Tipo</th>
-          <th>Status</th>
-          <th>Cliente</th>
-          <th class="right">Total</th>
-          <th>Criado</th>
-          <th class="right">Ações</th>
-        </tr>
-      </thead>
-      <tbody>
-        {#each $rows.data ?? [] as q (q.id)}
-          <tr>
-            <td class="mono" title={q.id}>{quoteNumber(q.seq)}</td>
-            <td class="items-cell" title={itemNames(q).join(", ")}>{itemsSummary(q)}</td>
-            <td>
-              <span class="tag {q.kind === 'commercial' ? 'brand' : 'muted'}">
-                {q.kind === "commercial" ? "comercial" : "pessoal"}
-              </span>
-              {#if q.kind === "personal" && ($people.data ?? []).length > 0}
-                <div class="people-chips">
-                  {#each ($people.data ?? []).filter((p) => p.active || (q.person_ids ?? []).includes(p.id)) as p (p.id)}
-                    <button
-                      type="button"
-                      class="chip"
-                      class:on={(q.person_ids ?? []).includes(p.id)}
-                      on:click={() => togglePerson(q, p.id)}
-                    >
-                      {p.name}
-                    </button>
-                  {/each}
-                </div>
-              {/if}
-            </td>
-            <td>
-              <span class="tag {statusClass(q.status)}">{statusLabel(q.status)}</span>
-            </td>
-            <td>{clientName(q.client_id)}</td>
-            <td class="right mono">{fmtMoney(q.total)}</td>
-            <td class="mono dim">{fmtDate(q.created_at)}</td>
-            <td class="right">
-              <a class="tiny ghost btn" href={`/quotes/${q.id}`}>abrir</a>
-            </td>
-          </tr>
-        {/each}
-        {#if ($rows.data ?? []).length === 0}
-          <tr>
-            <td colspan="8"><div class="empty">Nenhum orçamento encontrado</div></td>
-          </tr>
-        {/if}
-      </tbody>
-    </table>
-  </div>
+  <SearchBar
+    bind:value={q}
+    total={($rows.data ?? []).length}
+    shown={mostrados}
+    placeholder="buscar por número, peça ou cliente…"
+  />
+  <Table
+    {columns}
+    rows={viewRows}
+    searchText={q}
+    {searchExtra}
+    empty="Nenhum orçamento encontrado"
+  >
+    <svelte:fragment slot="actions" let:row>
+      {@const quote = row as Quote}
+      <a class="tiny ghost btn" href={`/quotes/${quote.id}`}>abrir</a>
+      {#if quote.kind === "personal" && ($people.data ?? []).length > 0}
+        <div class="people-chips">
+          {#each ($people.data ?? []).filter((p) => p.active || (quote.person_ids ?? []).includes(p.id)) as p (p.id)}
+            <button
+              type="button"
+              class="chip"
+              class:on={(quote.person_ids ?? []).includes(p.id)}
+              on:click={() => togglePerson(quote, p.id)}
+            >
+              {p.name}
+            </button>
+          {/each}
+        </div>
+      {/if}
+    </svelte:fragment>
+  </Table>
 </section>
 
 <style>
@@ -239,68 +249,17 @@
     flex-direction: column;
     gap: 0.25rem;
   }
-  /* Override local: sem a margem superior padrão — aqui a tabela fica
-     colada no panel-head, sem gap extra (mantém aparência já existente) */
-  .table-wrap {
-    margin-top: 0;
-  }
-  .items-cell {
-    max-width: 22rem;
-    font-size: 0.9rem;
+  .list-panel :global(.searchbar) {
+    margin-bottom: 1rem;
   }
   .people-chips {
     display: flex;
     flex-wrap: wrap;
+    justify-content: flex-end;
     gap: 0.25rem;
     margin-top: 0.3rem;
   }
   /* .chip e .chip.on agora vivem em app.css (mesmos valores) */
-  table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 0.92rem;
-  }
-  thead th {
-    text-align: left;
-    padding: 0.7rem 0.85rem;
-    font-family: var(--font-mono);
-    font-weight: 500;
-    font-size: 0.68rem;
-    letter-spacing: 0.18em;
-    text-transform: uppercase;
-    color: var(--muted);
-    border-bottom: 1px solid var(--line-strong);
-    background: var(--paper);
-  }
-  thead th.right,
-  td.right {
-    text-align: right;
-  }
-  tbody td {
-    padding: 0.7rem 0.85rem;
-    border-bottom: 1px solid var(--line);
-    vertical-align: middle;
-  }
-  tbody tr:hover td {
-    background: rgba(26, 26, 29, 0.025);
-  }
-  td.mono {
-    font-family: var(--font-mono);
-    font-size: 0.86rem;
-  }
-  td.dim {
-    color: var(--muted);
-  }
-  /* Override local: padding/letter-spacing diferentes do padrão global
-     (mantém aparência já existente nesta página) */
-  .empty {
-    padding: 2rem 1rem;
-    text-align: center;
-    font-family: var(--font-mono);
-    font-size: 0.74rem;
-    letter-spacing: 0.16em;
-    text-transform: uppercase;
-  }
   a.btn {
     text-decoration: none;
     display: inline-block;
