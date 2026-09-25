@@ -157,8 +157,28 @@
   ];
   const personalSearchExtra = (row: Record<string, unknown>) => (row as Sale).notes ?? "";
   let buscaPessoal = "";
+  // Chip ativos/arquivados em Uso pessoal — mesmo problema que Vendas já
+  // tinha resolvido com activeSalesCount/STATUS_CHIPS (achado IMPORTANT 3 do
+  // review final): sem filtro nenhum, a tabela, o contador do cabeçalho e o
+  // total da busca misturavam linhas arquivadas (is_stale) com as vivas, sem
+  // indicação nenhuma — só o rodapé de perda operacional excluía arquivadas
+  // (isLossRow já checa !s.is_stale), então "quantas tem" e "quanto pesa" já
+  // não contavam as mesmas linhas. Ao contrário de Vendas, não há chip
+  // "vendidos"/"a confirmar" aqui: is_sold em Uso pessoal é uma transição rara
+  // (virou venda depois de produzido pra uso próprio) e continua visível
+  // inline (div .sale-done), então dois estados (ativos/arquivados) bastam —
+  // replicar as quatro posições de Vendas seria filtro sem uso real.
+  type PersonalFiltro = "ativos" | "arquivados";
+  let personalFiltro: PersonalFiltro = "ativos";
+  const PERSONAL_CHIPS: { value: PersonalFiltro; label: string }[] = [
+    { value: "ativos", label: "ativos" },
+    { value: "arquivados", label: "arquivados" },
+  ];
+  $: personalFiltrados = ($personal.data ?? []).filter((s) =>
+    personalFiltro === "arquivados" ? s.is_stale : !s.is_stale,
+  );
   $: personalMostrados = countShown(
-    $personal.data ?? [],
+    personalFiltrados,
     buscaPessoal,
     personalColumns,
     personalSearchExtra,
@@ -560,9 +580,21 @@
   <section class="panel list-panel">
     <div class="panel-head">
       <h2 class="section-title">
-        Uso pessoal <span class="count">· {($personal.data ?? []).length}</span>
+        Uso pessoal <span class="count">· {personalFiltrados.length}</span>
       </h2>
       <div class="head-tools">
+        <div class="chips" role="group" aria-label="Filtrar por status">
+          {#each PERSONAL_CHIPS as c}
+            <button
+              type="button"
+              class="chip"
+              class:on={personalFiltro === c.value}
+              on:click={() => (personalFiltro = c.value)}
+            >
+              {c.label}
+            </button>
+          {/each}
+        </div>
         <label class="field">
           De
           <input type="date" bind:value={from} />
@@ -579,13 +611,13 @@
     {#if personalError}<div class="alert">{personalError}</div>{/if}
     <SearchBar
       bind:value={buscaPessoal}
-      total={($personal.data ?? []).length}
+      total={personalFiltrados.length}
       shown={personalMostrados}
       placeholder="buscar por número, peça, pessoa ou nota…"
     />
     <Table
       columns={personalColumns}
-      rows={$personal.data ?? []}
+      rows={personalFiltrados}
       searchText={buscaPessoal}
       searchExtra={personalSearchExtra}
       empty="Nenhum uso pessoal produzido ainda"
