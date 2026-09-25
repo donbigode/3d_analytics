@@ -19,14 +19,15 @@ from backend.core.accounting.profitability import compute_profitability
 from backend.core.accounting.sync import sync_sales
 from backend.core.models import QuoteKind
 from backend.infra.db.models import (
-    Client, Expense, MaterialConsumption, Quote, QuoteItem, Sale, User,
+    Client, Expense, MaterialConsumption, Person, Quote, QuoteItem, QuotePerson, Sale, User,
 )
 
 router = APIRouter()
 
 
 def _sale_out(s: Sale, itens_label: str = "", client_name: str | None = None,
-              quote_seq: int = 0, produced_on: date | None = None) -> SaleOut:
+              quote_seq: int = 0, produced_on: date | None = None,
+              people: list[str] | None = None) -> SaleOut:
     return SaleOut(
         id=str(s.id), quote_id=str(s.quote_id), quote_seq=quote_seq,
         quote_kind=s.quote_kind, produced_on=produced_on,
@@ -36,6 +37,7 @@ def _sale_out(s: Sale, itens_label: str = "", client_name: str | None = None,
         is_stale=s.is_stale, is_sold=s.is_sold, confirmed_revenue=s.confirmed_revenue,
         variable_costs=s.variable_costs, cpv_override=s.cpv_override,
         sold_at=s.sold_at, notes=s.notes, itens_label=itens_label, client_name=client_name,
+        people=people or [],
     )
 
 
@@ -61,6 +63,26 @@ async def _produced_on_map(session: AsyncSession, quote_ids: list[UUID]) -> dict
         )
     ).all()
     return {qid: (dt.date() if hasattr(dt, "date") else dt) for qid, dt in rows}
+
+
+async def _people_map(session: AsyncSession, quote_ids: list[UUID]) -> dict[UUID, list[str]]:
+    """Nomes das pessoas atribuídas a cada orçamento (quote_people ↔ people),
+    em ordem alfabética. Uma query em lote pra toda a listagem — mesmo padrão
+    de _produced_on_map, evitando N+1."""
+    if not quote_ids:
+        return {}
+    rows = (
+        await session.execute(
+            select(QuotePerson.quote_id, Person.name)
+            .join(Person, Person.id == QuotePerson.person_id)
+            .where(QuotePerson.quote_id.in_(quote_ids))
+            .order_by(Person.name)
+        )
+    ).all()
+    people_por_quote: dict[UUID, list[str]] = {}
+    for qid, name in rows:
+        people_por_quote.setdefault(qid, []).append(name)
+    return people_por_quote
 
 
 async def _quote_seq(session: AsyncSession, quote_id: UUID) -> int:
@@ -113,6 +135,7 @@ async def list_sales(
     ) if client_ids else {}
     produced_on_por_quote = await _produced_on_map(session, quote_ids)
     label_por_quote = await sale_items_label_map(session, quote_ids)
+    people_por_quote = await _people_map(session, quote_ids)
     return [
         _sale_out(
             s,
@@ -123,6 +146,7 @@ async def list_sales(
             # Mantido como defesa, não como caminho esperado.
             quote_seq=seq_por_quote.get(s.quote_id, 0),
             produced_on=produced_on_por_quote.get(s.quote_id),
+            people=people_por_quote.get(s.quote_id),
         )
         for s in rows
     ]
@@ -161,12 +185,16 @@ async def update_sale(
     # apagaria a coluna mesmo quando a produção existe (mesma classe de bug
     # já corrigida para itens_label/client_name).
     produced_on = (await _produced_on_map(session, [sale.quote_id])).get(sale.quote_id)
+    # people também precisa vir preenchido aqui pela mesma razão de
+    # produced_on acima: a atualização otimista da linha usa esta resposta.
+    people = (await _people_map(session, [sale.quote_id])).get(sale.quote_id)
     return _sale_out(
         sale,
         await sale_items_label(session, sale),
         await _client_name(session, sale),
         quote_seq=await _quote_seq(session, sale.quote_id),
         produced_on=produced_on,
+        people=people,
     )
 
 

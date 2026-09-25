@@ -404,7 +404,11 @@
       columns={[
         { key: "quote_seq", label: "#", mono: true, format: (v) => quoteNumber(v as number) },
         { key: "itens_label", label: "Itens" },
-        { key: "client_name", label: "Pessoas" },
+        {
+          key: "people",
+          label: "Pessoas",
+          format: (v) => ((v as string[] | undefined)?.join(", ") || "—"),
+        },
         {
           key: "produced_on",
           label: "Produzido em",

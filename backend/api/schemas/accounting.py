@@ -25,6 +25,7 @@ class SaleOut(BaseModel):
     notes: str | None
     itens_label: str = ""
     client_name: str | None = None
+    people: list[str] = []
 
 
 class SaleUpdate(BaseModel):
