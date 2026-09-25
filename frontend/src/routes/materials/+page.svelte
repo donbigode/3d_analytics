@@ -5,7 +5,9 @@
   import { resource, action } from "$lib/resource";
   import { date as fmtDate } from "$lib/format";
   import Table from "$lib/components/Table.svelte";
+  import SearchBar from "$lib/components/SearchBar.svelte";
   import Form from "$lib/components/Form.svelte";
+  import { countShown } from "$lib/table-search";
   import type { Material } from "$lib/types";
   import { MATERIAL_TYPES } from "$lib/types";
 
@@ -13,6 +15,48 @@
     initial: [], errorMessage: "Falha ao carregar materiais.", auto: false,
   });
   $: rows = $materialsRes.data ?? [];
+
+  // Nome não é coluna visível (a tabela mostra tipo/fabricante/cor
+  // separados) — entra na busca via searchExtra. Tipo já é coluna.
+  let q = "";
+  const columns = [
+    { key: "material_type", label: "Tipo", mono: true, width: "10ch", sortable: true },
+    { key: "manufacturer", label: "Fabricante", sortable: true },
+    { key: "color", label: "Cor" },
+    {
+      key: "density_g_cm3",
+      label: "Densidade",
+      mono: true,
+      align: "right" as const,
+      sortable: true,
+      format: (v: unknown) => `${v} g/cm³`,
+    },
+    {
+      key: "price_per_kg_ref",
+      label: "Preço ref.",
+      mono: true,
+      align: "right" as const,
+      sortable: true,
+      format: (v: unknown) => `R$ ${v}/kg`,
+    },
+    {
+      key: "failure_rate_pct",
+      label: "Falha",
+      mono: true,
+      align: "right" as const,
+      sortable: true,
+      format: (v: unknown) => `${v}%`,
+    },
+    {
+      key: "effective_from",
+      label: "Vigente desde",
+      mono: true,
+      sortable: true,
+      format: (v: unknown) => fmtDate(v as string),
+    },
+  ];
+  const searchExtra = (row: Record<string, unknown>) => String((row as Material).name ?? "");
+  $: mostrados = countShown(rows, q, columns, searchExtra);
   const removeAction = action((id: string) => api(`/materials/${id}`, { method: "DELETE" }), {
     errorMessage: "Não foi possível remover o material.",
   });
@@ -199,18 +243,18 @@
     </button>
   </div>
   {#if listError}<div class="alert">{listError}</div>{/if}
+  <SearchBar
+    bind:value={q}
+    total={rows.length}
+    shown={mostrados}
+    placeholder="buscar por nome ou tipo…"
+  />
   <Table
-    columns={[
-      { key: "material_type", label: "Tipo", mono: true, width: "10ch" },
-      { key: "manufacturer", label: "Fabricante" },
-      { key: "color", label: "Cor" },
-      { key: "density_g_cm3", label: "Densidade", mono: true, align: "right", format: (v) => `${v} g/cm³` },
-      { key: "price_per_kg_ref", label: "Preço ref.", mono: true, align: "right", format: (v) => `R$ ${v}/kg` },
-      { key: "failure_rate_pct", label: "Falha", mono: true, align: "right", format: (v) => `${v}%` },
-      { key: "effective_from", label: "Vigente desde", mono: true, format: (v) => fmtDate(v as string) },
-    ]}
+    {columns}
     {rows}
     rowKey={(r) => (r as Material).id}
+    searchText={q}
+    {searchExtra}
     empty="Nenhum material cadastrado"
   >
     <svelte:fragment slot="actions" let:row>
@@ -311,6 +355,7 @@
 <style>
   .page-head { margin-bottom: 2rem; }
   .list-panel { margin-top: 2rem; }
+  .list-panel :global(.searchbar) { margin-bottom: 1rem; }
   .actions { display: flex; justify-content: flex-end; }
   /* Override local: .hint aqui nunca teve cor própria (cinza-mudo é novo em
      app.css); mantém herdada pra não mudar a aparência desta página */

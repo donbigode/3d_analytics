@@ -9,9 +9,12 @@ __pycache__/
 .env.local
 /storage/
 node_modules/
+/node_modules
 dist/
 build/
 .svelte-kit/
+/test-results/
+/frontend/test-results/
 
 # Terraform
 infra/.terraform/

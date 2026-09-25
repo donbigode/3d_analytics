@@ -4,12 +4,64 @@
   import { requireAuth } from "$lib/guard";
   import { resource, action } from "$lib/resource";
   import { dateTime as fmtDate, dur as fmtDur } from "$lib/format";
+  import Table from "$lib/components/Table.svelte";
+  import SearchBar from "$lib/components/SearchBar.svelte";
+  import { countShown } from "$lib/table-search";
   import type { Asset, DownloadOut, RemoteSearchHit, SearchResponse } from "$lib/types";
 
   const libraryRes = resource(() => api<Asset[]>("/library"), {
     initial: [], errorMessage: "Falha ao carregar biblioteca.", auto: false,
   });
   $: rows = $libraryRes.data ?? [];
+
+  // Nome (arquivo) e autor — autor não tinha coluna própria antes (vivia
+  // só na linha de atribuição condicional), agora é a coluna "Atribuição".
+  let assetQuery = "";
+  const assetColumns = [
+    { key: "filename", label: "Arquivo", sortable: true },
+    { key: "format", label: "Formato", mono: true, align: "center" as const, width: "9ch", sortable: true },
+    {
+      key: "size_bytes",
+      label: "Tamanho",
+      mono: true,
+      align: "right" as const,
+      sortable: true,
+      format: (v: unknown) => fmtSize(v as number),
+    },
+    {
+      key: "created_at",
+      label: "Adicionado",
+      mono: true,
+      sortable: true,
+      format: (v: unknown) => fmtDate(v as string),
+    },
+    {
+      key: "source_author",
+      label: "Atribuição",
+      format: (_v: unknown, row: Record<string, unknown>) => {
+        const r = row as Asset;
+        const parts: string[] = [];
+        if (r.source_author) parts.push(`por ${r.source_author}`);
+        if (r.source_license) parts.push(r.source_license);
+        return parts.join(" · ");
+      },
+    },
+    {
+      key: "parsed_meta",
+      label: "Detalhes",
+      mono: true,
+      format: (_v: unknown, row: Record<string, unknown>) => {
+        const r = row as Asset;
+        const parts: string[] = [];
+        if (r.parsed_meta?.time_s) parts.push(fmtDur(r.parsed_meta.time_s));
+        if (r.parsed_meta?.filament_m) parts.push(`${r.parsed_meta.filament_m.toFixed(2)}m`);
+        if (r.parsed_meta?.material) parts.push(r.parsed_meta.material);
+        if (r.source_site) parts.push(r.source_site);
+        return parts.join(" · ");
+      },
+    },
+  ];
+  $: assetsShown = countShown(rows, assetQuery, assetColumns);
   const removeAction = action((id: string) => api(`/library/${id}`, { method: "DELETE" }), {
     errorMessage: "Falha ao remover.",
   });
@@ -268,39 +320,28 @@
     </button>
   </div>
   {#if listError}<p class="alert">{listError}</p>{/if}
-  {#if rows.length === 0 && !$libraryRes.loading}
-    <p class="empty">Nenhum arquivo na biblioteca. Faça upload acima ou busque online.</p>
-  {:else}
-    <div class="asset-list">
-      {#each rows as a (a.id)}
-        <article class="asset">
-          <div class="asset-head">
-            <strong>{a.filename}</strong>
-            <span class="format mono">{a.format}</span>
-            {#if a.source_site}<span class="source mono">{a.source_site}</span>{/if}
-          </div>
-          <div class="asset-meta mono">
-            {fmtSize(a.size_bytes)}
-            {#if a.parsed_meta?.time_s} · ⏱ {fmtDur(a.parsed_meta.time_s)}{/if}
-            {#if a.parsed_meta?.filament_m} · {a.parsed_meta.filament_m.toFixed(2)}m{/if}
-            {#if a.parsed_meta?.material} · {a.parsed_meta.material}{/if}
-            · {fmtDate(a.created_at)}
-          </div>
-          {#if a.source_author || a.source_license}
-            <div class="attribution mono">
-              {#if a.source_author}por {a.source_author}{/if}
-              {#if a.source_license} · {a.source_license}{/if}
-              {#if a.source_url}· <a href={a.source_url} target="_blank" rel="noreferrer">link</a>{/if}
-            </div>
-          {/if}
-          <div class="asset-actions">
-            <a class="tiny ghost" href={`/api/library/${a.id}/file`} download>↓ Arquivo</a>
-            <button class="tiny danger" on:click={() => removeAsset(a.id, a.filename)}>remover</button>
-          </div>
-        </article>
-      {/each}
-    </div>
-  {/if}
+  <SearchBar
+    bind:value={assetQuery}
+    total={rows.length}
+    shown={assetsShown}
+    placeholder="buscar por nome ou autor…"
+  />
+  <Table
+    columns={assetColumns}
+    {rows}
+    searchText={assetQuery}
+    empty="Nenhum arquivo na biblioteca. Faça upload acima ou busque online."
+  >
+    <svelte:fragment slot="actions" let:row>
+      {#if (row as Asset).source_url}
+        <a class="tiny ghost" href={(row as Asset).source_url} target="_blank" rel="noreferrer">Site ↗</a>
+      {/if}
+      <a class="tiny ghost" href={`/api/library/${(row as Asset).id}/file`} download>↓ Arquivo</a>
+      <button class="tiny danger" on:click={() => removeAsset((row as Asset).id, (row as Asset).filename)}>
+        remover
+      </button>
+    </svelte:fragment>
+  </Table>
 </section>
 
 <style>
@@ -371,44 +412,7 @@
     border-top: 1px dashed var(--line);
   }
 
-  .asset-list {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-    margin-top: 0.5rem;
-  }
-  .asset {
-    border: 1px solid var(--line);
-    background: var(--paper);
-    padding: 0.6rem 0.85rem;
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
-  }
-  .asset-head { display: flex; align-items: baseline; gap: 0.6rem; flex-wrap: wrap; }
-  .format {
-    font-size: 0.62rem;
-    padding: 0.05rem 0.4rem;
-    border: 1px solid var(--line-strong);
-    text-transform: uppercase;
-    letter-spacing: 0.1em;
-  }
-  .source {
-    font-size: 0.62rem;
-    color: var(--muted);
-    text-transform: uppercase;
-    letter-spacing: 0.1em;
-  }
-  .asset-meta { color: var(--muted); font-size: 0.78rem; }
-  .attribution { color: var(--muted); font-size: 0.78rem; }
-  .attribution a { color: var(--brand); }
-  .asset-actions { display: flex; gap: 0.4rem; margin-top: 0.3rem; }
-  /* Override local total: aqui o vazio é um texto discreto em itálico,
-     bem diferente do padrão mono/caixa-alta/centralizado global — mais
-     fácil redeclarar do que cancelar propriedade por propriedade */
-  .empty {
-    color: var(--muted);
-    padding: 1rem 0;
-    font-style: italic;
+  .panel :global(.searchbar) {
+    margin: 0.5rem 0 0.8rem;
   }
 </style>

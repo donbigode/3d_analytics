@@ -4,13 +4,26 @@
   import { requireAuth } from "$lib/guard";
   import { resource, action } from "$lib/resource";
   import Table from "$lib/components/Table.svelte";
+  import SearchBar from "$lib/components/SearchBar.svelte";
   import Form from "$lib/components/Form.svelte";
+  import { countShown } from "$lib/table-search";
   import type { Client } from "$lib/types";
 
   const clientsRes = resource(() => api<Client[]>("/clients"), {
     initial: [], errorMessage: "Falha ao carregar clientes.", auto: false,
   });
   $: rows = $clientsRes.data ?? [];
+
+  // Nome e contato (telefone/e-mail) — já são colunas da tabela, então a
+  // busca padrão da Table já cobre os dois. `q` é só o texto do filtro.
+  let q = "";
+  const columns = [
+    { key: "name", label: "Nome", sortable: true },
+    { key: "phone", label: "Telefone", mono: true },
+    { key: "email", label: "E-mail", mono: true },
+    { key: "notes", label: "Notas" },
+  ];
+  $: mostrados = countShown(rows, q, columns);
   const removeAction = action((id: string) => api(`/clients/${id}`, { method: "DELETE" }), {
     errorMessage: "Falha ao remover cliente.",
   });
@@ -126,14 +139,16 @@
     </button>
   </div>
   {#if listError}<div class="alert">{listError}</div>{/if}
+  <SearchBar
+    bind:value={q}
+    total={rows.length}
+    shown={mostrados}
+    placeholder="buscar por nome, telefone ou e-mail…"
+  />
   <Table
-    columns={[
-      { key: "name", label: "Nome" },
-      { key: "phone", label: "Telefone", mono: true },
-      { key: "email", label: "E-mail", mono: true },
-      { key: "notes", label: "Notas" },
-    ]}
+    {columns}
     {rows}
+    searchText={q}
     empty="Nenhum cliente cadastrado"
   >
     <svelte:fragment slot="actions" let:row>
@@ -182,6 +197,9 @@
   }
   .list-panel {
     margin-top: 2rem;
+  }
+  .list-panel :global(.searchbar) {
+    margin-bottom: 1rem;
   }
   .field.full {
     grid-column: 1 / -1;

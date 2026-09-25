@@ -634,6 +634,21 @@
     window.open(`/api/quotes/${id}/pdf`, "_blank");
   }
 
+  // Clonar está disponível em qualquer status (o clone sempre nasce
+  // rascunho) — por isso fica ao lado de "Baixar PDF", fora dos blocos
+  // condicionados a status/tipo. Copiar arquivos (fotos, gcode) leva tempo
+  // perceptível: `pending` desabilita o botão pra um clique duplo não criar
+  // dois clones.
+  const clonarAction = action(
+    (quoteId: string) => api<Quote>(`/quotes/${quoteId}/clone`, { method: "POST" }),
+    { errorMessage: "Falha ao clonar o orçamento." },
+  );
+
+  async function clonar() {
+    const novo = await clonarAction.run(id);
+    if (novo) await goto(`/quotes/${novo.id}`);
+  }
+
   // ---- IA ----
   const askMarkupAction = action(
     (quoteId: string) => api<MarkupSuggestionOut>(`/llm/markup/${quoteId}`, { method: "POST" }),
@@ -726,7 +741,7 @@
   $: metaError = $saveMetaAction.error || $toggleRetailModeAction.error || $togglePersonAction.error;
   $: savingMeta = $saveMetaAction.pending;
 
-  $: txError = $transitionAction.error;
+  $: txError = $transitionAction.error || $clonarAction.error;
   $: producing = $confirmProduceAction.pending;
   $: produceError = $confirmProduceAction.error;
 
@@ -1141,7 +1156,7 @@
             </h2>
           </div>
           <div class="table-wrap">
-            <table>
+            <table class="fil-table">
               <thead>
                 <tr>
                   <th>Peça</th><th>Bobina</th>
@@ -1477,6 +1492,9 @@
           {/if}
 
           <button class="ghost" on:click={openPdf}>Baixar PDF</button>
+          <button class="ghost" on:click={clonar} disabled={$clonarAction.pending}>
+            {$clonarAction.pending ? "Clonando…" : "Clonar"}
+          </button>
 
           {#if canCancel}
             <button class="danger" on:click={() => transition("cancel")} disabled={transitioning === "cancel"}>
@@ -1808,6 +1826,14 @@
   table th:nth-child(3), table td:nth-child(3),
   table th:nth-child(4), table td:nth-child(4) { width: 9rem; white-space: nowrap; }
   table th:nth-child(5), table td:nth-child(5) { width: 5.5rem; }
+  /* A 5ª coluna da tabela "Filamento consumido" é Data (carimbo do ciclo de
+     produção, ex. "23/09/26 14:32") — herda width: 5.5rem da regra genérica
+     acima mas, ao contrário das colunas 3/4, não herda nowrap, então quebra
+     em duas linhas. É o sinal principal do painel (quando cada baixa
+     aconteceu), então escopar a classe própria da tabela em vez de alargar
+     a regra genérica (que também vale pra Serviços e o modal de Produzir,
+     onde a 5ª coluna é outra coisa). */
+  .fil-table td:nth-child(5) { white-space: nowrap; }
   .retail-toggle {
     flex-direction: row !important;
     align-items: flex-start;

@@ -5,7 +5,9 @@
   import { resource, action } from "$lib/resource";
   import { appSettings } from "$lib/stores/settings";
   import Table from "$lib/components/Table.svelte";
+  import SearchBar from "$lib/components/SearchBar.svelte";
   import Form from "$lib/components/Form.svelte";
+  import { countShown } from "$lib/table-search";
   import type { Spool, SpoolStatus, Material } from "$lib/types";
 
   const STATUS: { value: SpoolStatus; label: string }[] = [
@@ -24,6 +26,46 @@
   );
   $: rows = $dataRes.data?.spools ?? [];
   $: materials = $dataRes.data?.materials ?? [];
+
+  // Busca cobre material, cor e fabricante — fabricante entra pela própria
+  // formatação da coluna "Material" (junto do tipo), então não precisa de
+  // searchExtra.
+  let q = "";
+  const columns = [
+    {
+      key: "material_type",
+      label: "Material",
+      mono: true,
+      sortable: true,
+      format: (_v: unknown, row: Record<string, unknown>) =>
+        `${row.material_type}${row.manufacturer ? ` · ${row.manufacturer}` : ""}`,
+    },
+    { key: "color", label: "Cor" },
+    {
+      key: "remaining_grams",
+      label: "Restante (g)",
+      mono: true,
+      align: "right" as const,
+      sortable: true,
+      format: (v: unknown) => String(v),
+    },
+    {
+      key: "initial_grams",
+      label: "Inicial (g)",
+      mono: true,
+      align: "right" as const,
+      sortable: true,
+      format: (v: unknown) => String(v),
+    },
+    {
+      key: "status",
+      label: "Status",
+      align: "center" as const,
+      sortable: true,
+      format: (v: unknown) => statusLabel(v as string),
+    },
+  ];
+  $: mostrados = countShown(rows, q, columns);
   // Pré-seleciona o primeiro material do catálogo no formulário de criação
   // assim que a carga chegar — mesmo efeito que o load() fazia antes.
   $: if (!material_id && materials[0]) material_id = materials[0].id;
@@ -246,33 +288,16 @@
     </button>
   </div>
   {#if listError}<div class="alert">{listError}</div>{/if}
+  <SearchBar
+    bind:value={q}
+    total={rows.length}
+    shown={mostrados}
+    placeholder="buscar por material, cor ou fabricante…"
+  />
   <Table
-    columns={[
-      {
-        key: "material_type",
-        label: "Material",
-        mono: true,
-        format: (_v, row) =>
-          `${row.material_type}${row.manufacturer ? ` · ${row.manufacturer}` : ""}`,
-      },
-      { key: "color", label: "Cor" },
-      {
-        key: "remaining_grams",
-        label: "Restante (g)",
-        mono: true,
-        align: "right",
-        format: (v) => String(v),
-      },
-      {
-        key: "initial_grams",
-        label: "Inicial (g)",
-        mono: true,
-        align: "right",
-        format: (v) => String(v),
-      },
-      { key: "status", label: "Status", align: "center", format: (v) => statusLabel(v as string) },
-    ]}
+    {columns}
     {rows}
+    searchText={q}
     empty="Nenhuma bobina registrada"
   >
     <svelte:fragment slot="actions" let:row>
@@ -376,6 +401,9 @@
   }
   .list-panel {
     margin-top: 2rem;
+  }
+  .list-panel :global(.searchbar) {
+    margin-bottom: 1rem;
   }
   .field.full {
     grid-column: 1 / -1;

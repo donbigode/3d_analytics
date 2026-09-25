@@ -8,6 +8,8 @@
   import Table from "$lib/components/Table.svelte";
   import Form from "$lib/components/Form.svelte";
   import SaleEditor from "$lib/components/SaleEditor.svelte";
+  import SearchBar from "$lib/components/SearchBar.svelte";
+  import { countShown } from "$lib/table-search";
   import { quoteNumber } from "$lib/quote-number";
   import type {
     Sale,
@@ -21,10 +23,13 @@
   let tab: "vendas" | "pessoal" | "despesas" | "dre" | "lucratividade" = "vendas";
   let dreMode: "periodo" | "mensal" = "periodo";
 
-  let showStale = false;
   // Vendas é só comercial — pessoal tem sub-aba própria (não é candidato a venda).
-  $: salesUrl = `/accounting/sales?kind=commercial${showStale ? "" : "&is_stale=false"}`;
-  const sales = resource(() => api<Sale[]>(salesUrl), {
+  // Antes filtrava is_stale=false na URL; agora a lista traz tudo do tipo e os
+  // chips de status (abaixo) filtram na tela — um controle client-side só
+  // faz sentido porque o volume aqui é o de um negócio pequeno (dezenas a
+  // poucas centenas de orçamentos por ano). Se um dia isso estourar, o chip
+  // "arquivados" volta a virar parâmetro de API (?is_stale=).
+  const sales = resource(() => api<Sale[]>("/accounting/sales?kind=commercial"), {
     initial: [],
     errorMessage: "Falha ao carregar vendas.",
     auto: false,
@@ -79,6 +84,98 @@
 
   let from = new Date().toISOString().slice(0, 8) + "01";
   let to = new Date().toISOString().slice(0, 10);
+
+  // Chips de status em Vendas — substituem o checkbox "mostrar arquivadas"
+  // (duas posições) por quatro. Começa em "a_confirmar": é a razão de abrir
+  // a aba, então o caso comum não exige clique nenhum.
+  type StatusFiltro = "todos" | "a_confirmar" | "vendidos" | "arquivados";
+  let statusFiltro: StatusFiltro = "a_confirmar";
+  const STATUS_CHIPS: { value: StatusFiltro; label: string }[] = [
+    { value: "todos", label: "todos" },
+    { value: "a_confirmar", label: "a confirmar" },
+    { value: "vendidos", label: "vendidos" },
+    { value: "arquivados", label: "arquivados" },
+  ];
+  function passaStatus(s: Sale): boolean {
+    switch (statusFiltro) {
+      case "vendidos":
+        return s.is_sold;
+      case "arquivados":
+        return s.is_stale;
+      case "a_confirmar":
+        return !s.is_sold && !s.is_stale;
+      default:
+        return true;
+    }
+  }
+  // Período em Vendas reaproveita o mesmo from/to do DRE e do Uso pessoal —
+  // dois estados de data independentes fariam a aba Uso pessoal divergir do
+  // DRE assim que alguém mexesse só num dos dois (há teste de backend
+  // (test_perda_vs_aba_pessoal.py) travando que os dois números batem).
+  // Linha sem sold_at (ainda não vendida) passa sempre: se o período
+  // derrubasse essas linhas, o chip "a confirmar" — que é só isso —
+  // ficaria sempre vazio, o oposto do que a busca deveria resolver.
+  function passaPeriodo(s: Sale): boolean {
+    return !s.sold_at || (s.sold_at >= from && s.sold_at <= to);
+  }
+  $: vendasFiltradas = ($sales.data ?? []).filter((s) => passaStatus(s) && passaPeriodo(s));
+
+  // Colunas extraídas pra variável (em vez de literal no template) porque
+  // countShown() precisa da mesma definição de coluna que a Table usa pra
+  // montar o haystack da busca — ver table-search.ts.
+  const vendasColumns = [
+    { key: "quote_seq", label: "Orçamento", mono: true, sortable: true,
+      format: (v: unknown) => quoteNumber(v as number) },
+    { key: "client_name", label: "Cliente", sortable: true },
+    { key: "quote_kind", label: "Tipo", format: (v: unknown) => fmtKind(v as string) },
+    { key: "itens_label", label: "Itens" },
+    { key: "quote_status", label: "Estado" },
+    { key: "quote_total", label: "Total", mono: true, align: "right" as const, sortable: true,
+      format: (v: unknown) => money(v as string) },
+    { key: "cpv_calc", label: "CPV", mono: true, align: "right" as const, sortable: true,
+      format: (v: unknown) => money(v as string) },
+    { key: "sold_at", label: "Vendido em", mono: true, align: "center" as const, sortable: true,
+      format: (v: unknown) => fmtDate(v as string | null) },
+  ];
+  // Notas não é coluna — entra na busca via searchExtra.
+  const vendasSearchExtra = (row: Record<string, unknown>) => (row as Sale).notes ?? "";
+  let buscaVendas = "";
+  $: vendasMostradas = countShown(vendasFiltradas, buscaVendas, vendasColumns, vendasSearchExtra);
+
+  const personalColumns = [
+    { key: "quote_seq", label: "#", mono: true, sortable: true,
+      format: (v: unknown) => quoteNumber(v as number) },
+    { key: "itens_label", label: "Itens" },
+    { key: "people", label: "Pessoas",
+      format: (v: unknown) => ((v as string[] | undefined)?.join(", ") || "—") },
+    { key: "produced_on", label: "Produzido em", mono: true, align: "center" as const, sortable: true,
+      format: (v: unknown) => fmtDate(v as string | null) },
+    { key: "cpv_calc", label: "CPV", mono: true, align: "right" as const, sortable: true,
+      format: (_v: unknown, row: Record<string, unknown>) =>
+        money((row as Sale).cpv_override ?? (row as Sale).cpv_calc) },
+    { key: "quote_status", label: "Estado" },
+  ];
+  const personalSearchExtra = (row: Record<string, unknown>) => (row as Sale).notes ?? "";
+  let buscaPessoal = "";
+  $: personalMostrados = countShown(
+    $personal.data ?? [],
+    buscaPessoal,
+    personalColumns,
+    personalSearchExtra,
+  );
+
+  const despesasColumns = [
+    { key: "incurred_at", label: "Data", mono: true, sortable: true,
+      format: (v: unknown) => fmtDate(v as string) },
+    { key: "category", label: "Categoria", sortable: true, format: (v: unknown) => catLabel(v as string) },
+    { key: "description", label: "Descrição" },
+    { key: "is_recurring", label: "Recorrência", align: "center" as const,
+      format: (v: unknown) => (v ? "mensal" : "—") },
+    { key: "amount", label: "Valor", mono: true, align: "right" as const, sortable: true,
+      format: (v: unknown) => money(v as string) },
+  ];
+  let buscaDespesas = "";
+  $: despesasMostradas = countShown($expenses.data ?? [], buscaDespesas, despesasColumns);
 
   const dre = resource(() => api<Dre>(`/accounting/dre?from=${from}&to=${to}`), {
     errorMessage: "Falha ao gerar o DRE.",
@@ -274,7 +371,11 @@
   $: totalMargemPct =
     totalReceitaLiquida !== 0 ? (totalResultado / totalReceitaLiquida) * 100 : 0;
 
-  $: confirmedCount = ($sales.data ?? []).filter((s) => s.is_sold).length;
+  // Denominador exclui arquivadas — o mesmo recorte que o default antigo
+  // (is_stale=false na URL) já dava ao badge da sub-aba; sem isso, a busca
+  // agora trazendo tudo do backend infla o "de quantas" com registros mortos.
+  $: activeSalesCount = ($sales.data ?? []).filter((s) => !s.is_stale).length;
+  $: confirmedCount = ($sales.data ?? []).filter((s) => s.is_sold && !s.is_stale).length;
   $: expenseTotal = ($expenses.data ?? []).reduce((acc, e) => acc + Number(e.amount || 0), 0);
   $: dreNegative = $dre.data ? Number($dre.data.resultado_liquido) < 0 : false;
 
@@ -320,7 +421,7 @@
 <nav class="subtabs" aria-label="Seções da contabilidade">
   <button type="button" class="subtab" class:active={tab === "vendas"} on:click={() => openTab("vendas")}>
     <span class="idx">01</span> Vendas
-    <span class="badge mono">{confirmedCount}/{($sales.data ?? []).length}</span>
+    <span class="badge mono">{confirmedCount}/{activeSalesCount}</span>
   </button>
   <button type="button" class="subtab" class:active={tab === "pessoal"} on:click={() => openTab("pessoal")}>
     <span class="idx">02</span> Uso pessoal
@@ -347,12 +448,28 @@
   <section class="panel list-panel">
     <div class="panel-head">
       <h2 class="section-title">
-        Vendas <span class="count">· {($sales.data ?? []).length}</span>
+        Vendas <span class="count">· {vendasFiltradas.length}</span>
       </h2>
       <div class="head-tools">
-        <label class="toggle mono">
-          <input type="checkbox" bind:checked={showStale} on:change={reloadSales} />
-          mostrar arquivadas
+        <div class="chips" role="group" aria-label="Filtrar por status">
+          {#each STATUS_CHIPS as c}
+            <button
+              type="button"
+              class="chip"
+              class:on={statusFiltro === c.value}
+              on:click={() => (statusFiltro = c.value)}
+            >
+              {c.label}
+            </button>
+          {/each}
+        </div>
+        <label class="field">
+          De
+          <input type="date" bind:value={from} />
+        </label>
+        <label class="field">
+          Até
+          <input type="date" bind:value={to} />
         </label>
         <button class="tiny ghost" on:click={reloadSales} disabled={$sales.loading}>
           {$sales.loading ? "Carregando…" : "Atualizar"}
@@ -360,25 +477,17 @@
       </div>
     </div>
     {#if $sales.error || $saveSale.error}<div class="alert">{$sales.error || $saveSale.error}</div>{/if}
+    <SearchBar
+      bind:value={buscaVendas}
+      total={vendasFiltradas.length}
+      shown={vendasMostradas}
+      placeholder="buscar por número, cliente, peça ou nota…"
+    />
     <Table
-      columns={[
-        { key: "quote_seq", label: "Orçamento", mono: true,
-          format: (v) => quoteNumber(v as number) },
-        { key: "client_name", label: "Cliente" },
-        { key: "quote_kind", label: "Tipo", format: (v) => fmtKind(v as string) },
-        { key: "itens_label", label: "Itens" },
-        { key: "quote_status", label: "Estado" },
-        { key: "quote_total", label: "Total", mono: true, align: "right", format: (v) => money(v as string) },
-        { key: "cpv_calc", label: "CPV", mono: true, align: "right", format: (v) => money(v as string) },
-        {
-          key: "sold_at",
-          label: "Vendido em",
-          mono: true,
-          align: "center",
-          format: (v) => fmtDate(v as string | null),
-        },
-      ]}
-      rows={$sales.data ?? []}
+      columns={vendasColumns}
+      rows={vendasFiltradas}
+      searchText={buscaVendas}
+      searchExtra={vendasSearchExtra}
       empty="Nenhuma venda elegível ainda"
     >
       <svelte:fragment slot="actions" let:row>
@@ -431,32 +540,17 @@
       </div>
     </div>
     {#if personalError}<div class="alert">{personalError}</div>{/if}
+    <SearchBar
+      bind:value={buscaPessoal}
+      total={($personal.data ?? []).length}
+      shown={personalMostrados}
+      placeholder="buscar por número, peça, pessoa ou nota…"
+    />
     <Table
-      columns={[
-        { key: "quote_seq", label: "#", mono: true, format: (v) => quoteNumber(v as number) },
-        { key: "itens_label", label: "Itens" },
-        {
-          key: "people",
-          label: "Pessoas",
-          format: (v) => ((v as string[] | undefined)?.join(", ") || "—"),
-        },
-        {
-          key: "produced_on",
-          label: "Produzido em",
-          mono: true,
-          align: "center",
-          format: (v) => fmtDate(v as string | null),
-        },
-        {
-          key: "cpv_calc",
-          label: "CPV",
-          mono: true,
-          align: "right",
-          format: (_v, row) => money((row as Sale).cpv_override ?? (row as Sale).cpv_calc),
-        },
-        { key: "quote_status", label: "Estado" },
-      ]}
+      columns={personalColumns}
       rows={$personal.data ?? []}
+      searchText={buscaPessoal}
+      searchExtra={personalSearchExtra}
       empty="Nenhum uso pessoal produzido ainda"
     >
       <svelte:fragment slot="actions" let:row>
@@ -538,25 +632,16 @@
       </button>
     </div>
     {#if expError}<div class="alert">{expError}</div>{/if}
+    <SearchBar
+      bind:value={buscaDespesas}
+      total={($expenses.data ?? []).length}
+      shown={despesasMostradas}
+      placeholder="buscar por descrição ou categoria…"
+    />
     <Table
-      columns={[
-        {
-          key: "incurred_at",
-          label: "Data",
-          mono: true,
-          format: (v) => fmtDate(v as string),
-        },
-        { key: "category", label: "Categoria", format: (v) => catLabel(v as string) },
-        { key: "description", label: "Descrição" },
-        {
-          key: "is_recurring",
-          label: "Recorrência",
-          align: "center",
-          format: (v) => (v ? "mensal" : "—"),
-        },
-        { key: "amount", label: "Valor", mono: true, align: "right", format: (v) => money(v as string) },
-      ]}
+      columns={despesasColumns}
       rows={$expenses.data ?? []}
+      searchText={buscaDespesas}
       empty="Nenhuma despesa lançada"
     >
       <svelte:fragment slot="actions" let:row>
@@ -823,6 +908,9 @@
   .list-panel {
     margin-top: 1.5rem;
   }
+  .list-panel :global(.searchbar) {
+    margin: 1rem 0;
+  }
   .field.full {
     grid-column: 1 / -1;
   }
@@ -841,10 +929,19 @@
   /* ---------- vendas ---------- */
   .head-tools {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: 1rem;
   }
   /* .toggle agora vive em app.css */
+  /* Chips de status (todos · a confirmar · vendidos · arquivados) — mesma
+     classe .chip/.chip.on que os chips de pessoa em Orçamentos, só que
+     aqui é seleção única (um "on" por vez), não múltipla. */
+  .chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+  }
   /* Venda já registrada: data + receita confirmada, com editar/desfazer ao
      lado. Some com registrar venda/checkbox — quem está registrado mostra o
      que foi gravado, não um formulário. */
