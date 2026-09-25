@@ -2,7 +2,14 @@ import { test, expect } from "@playwright/test";
 import path from "node:path";
 import fs from "node:fs";
 
-const API = "http://localhost:8001";
+// Sem porta fixa: a fixture `request` do Playwright resolve caminhos
+// relativos contra `use.baseURL` do playwright.config.ts (o dev server do
+// frontend), e o vite proxeia /api pro backend (ver frontend/vite.config.ts
+// e src/lib/api.ts, que usa a mesma base "/api"). Uma versão anterior deste
+// teste apontava direto pro backend com uma porta fixa (8001) que só existia
+// num docker-compose.override.yml de bancada — nunca commitado — e por isso
+// não rodava na máquina de ninguém além de quem escreveu o teste.
+const API = "/api";
 const EMAIL = "t@t.com";
 const PASSWORD = "pw";
 
@@ -52,8 +59,9 @@ test("venda com data retroativa cai no DRE do mês certo, não no corrente", asy
   const materiaisRes = await request.get(`${API}/materials`, {
     headers: { cookie: cookieHeader },
   });
-  const materiais = (await materiaisRes.json()) as { material_type: string }[];
-  if (!materiais.some((m) => m.material_type === "PLA")) {
+  const materiais = (await materiaisRes.json()) as { id: string; material_type: string }[];
+  let materialPla = materiais.find((m) => m.material_type === "PLA");
+  if (!materialPla) {
     const criado = await request.post(`${API}/materials`, {
       headers: { "content-type": "application/json", cookie: cookieHeader },
       data: {
@@ -65,6 +73,7 @@ test("venda com data retroativa cai no DRE do mês certo, não no corrente", asy
       },
     });
     expect(criado.ok()).toBe(true);
+    materialPla = (await criado.json()) as { id: string; material_type: string };
   }
 
   // ---- 3. Cria orçamento comercial e sobe o gcode
@@ -80,9 +89,16 @@ test("venda com data retroativa cai no DRE do mês certo, não no corrente", asy
   await page.locator('button[type="submit"]', { hasText: /adicionar peça/i }).click();
   await expect(page.locator("td", { hasText: itemName })).toBeVisible({ timeout: 15_000 });
 
-  // Material resolveu sozinho (um único PLA cadastrado) — sem badge "pendente"
-  // e sem precisar abrir o modal "Resolver material pendente".
-  await expect(page.locator(".badge.pending")).toHaveCount(0);
+  // Se este ambiente (base compartilhada, sem reset entre specs) já tem mais
+  // de um material do tipo PLA cadastrado, o auto-resolve fica ambíguo e a
+  // peça nasce com badge "pendente" — resolve explicitamente pelo seletor
+  // inline, igual ao padrão de tests/e2e/clone-e-filamento.spec.ts, em vez de
+  // depender de o ambiente ter exatamente um PLA cadastrado.
+  const itemRow = page.locator("tr", { hasText: itemName });
+  if (await itemRow.locator(".badge.pending").count()) {
+    await itemRow.locator("select.inline").selectOption(materialPla.id);
+  }
+  await expect(itemRow.locator(".badge.pending")).toHaveCount(0, { timeout: 10_000 });
 
   // ---- Finalizar → Aprovar
   await page.locator("button", { hasText: /^Finalizar$/ }).click();
@@ -168,6 +184,16 @@ test("venda com data retroativa cai no DRE do mês certo, não no corrente", asy
   await expect(editor.locator(".hint.warn")).toBeVisible();
   await editor.locator("button", { hasText: /^salvar$/i }).click();
   await expect(editor).toHaveCount(0);
+
+  // O chip de status em Vendas começa em "a confirmar" (accounting/+page.svelte
+  // — passaStatus: !is_sold && !is_stale) — é o que falta faturar, a razão de
+  // abrir a aba. Ao registrar a venda o item vira is_sold e sai desse
+  // conjunto por decisão de produto, não por bug: troca pra "vendidos" pra
+  // continuar enxergando a linha.
+  await page
+    .getByRole("group", { name: "Filtrar por status" })
+    .getByRole("button", { name: "vendidos", exact: true })
+    .click();
 
   const linhaVendida = page.locator("tr", { has: page.locator("td", { hasText: itemName }) });
   await expect(linhaVendida.locator(".sale-done")).toBeVisible({ timeout: 15_000 });

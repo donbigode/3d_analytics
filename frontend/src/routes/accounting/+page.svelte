@@ -118,7 +118,18 @@
   function passaPeriodo(s: Sale): boolean {
     return !s.sold_at || (s.sold_at >= from && s.sold_at <= to);
   }
-  $: vendasFiltradas = ($sales.data ?? []).filter((s) => passaStatus(s) && passaPeriodo(s));
+  // `passaStatus`/`passaPeriodo` leem `statusFiltro`/`from`/`to` por closure,
+  // não como argumento — o Svelte só enxerga dependência reativa em
+  // identificador citado no próprio bloco `$:`, não nas variáveis lidas
+  // dentro de uma função externa que ele chama. Sem citar as três aqui, o
+  // clique nos chips de status (e a troca de período) reordenava a classe
+  // "on" do botão mas nunca refiltrava a tabela — os e2e pegaram isso.
+  $: vendasFiltradas = (
+    statusFiltro,
+    from,
+    to,
+    ($sales.data ?? []).filter((s) => passaStatus(s) && passaPeriodo(s))
+  );
 
   // Colunas extraídas pra variável (em vez de literal no template) porque
   // countShown() precisa da mesma definição de coluna que a Table usa pra
