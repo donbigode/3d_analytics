@@ -27,7 +27,7 @@ router = APIRouter()
 
 def _sale_out(s: Sale, itens_label: str = "", client_name: str | None = None,
               quote_seq: int = 0, produced_on: date | None = None,
-              people: list[str] | None = None, loss_on: date | None = None) -> SaleOut:
+              people: list[str] | None = None, *, loss_on: date) -> SaleOut:
     return SaleOut(
         id=str(s.id), quote_id=str(s.quote_id), quote_seq=quote_seq,
         quote_kind=s.quote_kind, produced_on=produced_on, loss_on=loss_on,

@@ -19,7 +19,12 @@ class SaleOut(BaseModel):
     # Uso pessoal (e qualquer outro cálculo que precise bater com o DRE).
     # produced_on continua servindo só pra exibir a coluna "Produzido em",
     # que não pode mostrar created_at como se fosse data de produção.
-    loss_on: date | None = None
+    # NÃO opcional de propósito (ao contrário de produced_on): se algum dia
+    # alguém passar produced_on direto aqui em vez de rotear por _loss_on() e
+    # a invariante quebrar, isso tem que estourar erro de validação — falhar
+    # alto — em vez de serializar null e o isLossRow do frontend avaliar
+    # falso em silêncio, subcontando a perda operacional sem ninguém notar.
+    loss_on: date
     quote_status: str
     quote_total: Decimal
     cpv_calc: Decimal
