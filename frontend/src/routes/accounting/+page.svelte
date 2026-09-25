@@ -457,13 +457,23 @@
   // acontece pra aba ATUALMENTE aberta; as outras ficam invalidadas e
   // recarregam sozinhas na próxima vez que forem abertas, pela guarda já
   // existente em openTab()/setDreMode().
+  // periodReady é lido só de DENTRO de invalidatePeriodo(), nunca no corpo
+  // do `$:` abaixo — Svelte só rastreia como dependência reativa o que
+  // aparece textualmente na própria declaração `$:`, não o que uma função
+  // chamada por ela lê. Colocar `periodReady` ali dentro (como uma versão
+  // anterior fazia) faz esse próprio `$:` também disparar quando
+  // periodReady vira true no fim do onMount() — depois que reloadDre() já
+  // começou — e invalidatePeriodo() cancelava (seq++) o fetch que tinha
+  // acabado de sair, trocando o pré-aquecimento da aba DRE por um GET
+  // jogado fora e 400ms de spinner a mais em toda carga de página.
   let periodReady = false; // true só depois do onMount(): evita invalidar antes da primeira carga
   let periodDebounceTimer: ReturnType<typeof setTimeout> | undefined;
   $: {
     from; to;
-    if (periodReady) invalidatePeriodo();
+    invalidatePeriodo();
   }
   function invalidatePeriodo() {
+    if (!periodReady) return;
     dre.invalidate();
     monthly.invalidate();
     prof.invalidate();
