@@ -2,8 +2,11 @@
   import { onMount } from "svelte";
   import { page } from "$app/stores";
   import { goto } from "$app/navigation";
-  import { api, errorMessage } from "$lib/api";
-  import { handleApiError, requireAuth } from "$lib/guard";
+  import { api } from "$lib/api";
+  import { requireAuth } from "$lib/guard";
+  import { resource, action } from "$lib/resource";
+  import { money as fmtMoney, num as fmtNum, dur as fmtDur, dateTime as fmtDate } from "$lib/format";
+  import { quoteNumber } from "$lib/quote-number";
   import type {
     Client,
     Material,
@@ -20,21 +23,9 @@
 
   $: id = $page.params.id;
 
-  let quote: Quote | null = null;
-  let loading = true;
-  let pageError = "";
-
-  let clients: Client[] = [];
-  let services: Service[] = [];
-  let spools: Spool[] = [];
-  let materials: Material[] = [];
-  let people: Person[] = [];
-
   // resolve pending material modal
   let resolveItem: QuoteItem | null = null;
   let resolveCode = "";
-  let resolveError = "";
-  let resolving = false;
   let showQuickCreateMaterial = false;
   let qcName = "";
 
@@ -44,8 +35,6 @@
   let qcDensity = "1.24";
   let qcPrice = "100";
   let qcFailure = "5";
-  let qcSubmitting = false;
-  let qcError = "";
 
   // add item form
   let itemFile: FileList | null = null;
@@ -54,306 +43,89 @@
   let itemModelUrl = "";
   let itemModelAuthor = "";
   let itemModelLicense = "";
-  let addingItem = false;
-  let itemError = "";
+  let itemValidationError = "";
 
   // add service form
   let svcId = "";
   let svcQty = 1;
   let svcRate: string = "";
-  let addingSvc = false;
-  let svcError = "";
 
   // edit meta (markup/min/client/notes/produced services)
   let editMarkup = 0;
   let editMin = 0;
   let editClient: string = "";
   let editNotes = "";
-  let savingMeta = false;
-  let metaError = "";
 
   // ---- IA panel state ----
-  let llmBusy: "markup" | "variance" | "pricing" | "variants" | null = null;
-  let llmError = "";
   let markupSuggestion: MarkupSuggestionOut | null = null;
   let varianceResult: VarianceOut | null = null;
   let pricingResult: PricingOut | null = null;
   let variantsResult: VariantsOut | null = null;
   let variantsForItem = "";
 
-  async function askMarkup() {
-    if (!quote) return;
-    llmBusy = "markup"; llmError = "";
-    try {
-      markupSuggestion = await api<MarkupSuggestionOut>(`/llm/markup/${quote.id}`, { method: "POST" });
-    } catch (err) {
-      handleApiError(err);
-      llmError = errorMessage(err, "Falha ao consultar IA.");
-    } finally { llmBusy = null; }
-  }
-  async function applyMarkup() {
-    if (!quote || !markupSuggestion) return;
-    const v = Number(markupSuggestion.suggested_markup_pct);
-    if (!Number.isFinite(v)) return;
-    editMarkup = v;
-    await saveMeta();
-  }
-
-  async function askVariance() {
-    if (!quote) return;
-    llmBusy = "variance"; llmError = "";
-    try {
-      varianceResult = await api<VarianceOut>(`/llm/variance/${quote.id}`, { method: "POST" });
-    } catch (err) {
-      handleApiError(err);
-      llmError = errorMessage(err, "Falha ao consultar IA.");
-    } finally { llmBusy = null; }
-  }
-
-  async function askPricing() {
-    if (!quote) return;
-    llmBusy = "pricing"; llmError = "";
-    try {
-      pricingResult = await api<PricingOut>(`/llm/pricing/${quote.id}`, { method: "POST" });
-    } catch (err) {
-      handleApiError(err);
-      llmError = errorMessage(err, "Falha ao consultar IA.");
-    } finally { llmBusy = null; }
-  }
-
-  async function askVariants(itemId: string) {
-    if (!quote) return;
-    variantsForItem = itemId;
-    llmBusy = "variants"; llmError = "";
-    try {
-      variantsResult = await api<VariantsOut>(`/llm/variants/items/${itemId}`, { method: "POST" });
-    } catch (err) {
-      handleApiError(err);
-      llmError = errorMessage(err, "Falha ao consultar IA.");
-    } finally { llmBusy = null; }
-  }
-
   // transition state
   let transitioning = "";
-  let txError = "";
 
   // produce modal
   let showProduceModal = false;
   let produceAssignments: Record<string, string> = {}; // quote_item_id -> spool_id
   let produceMeters: Record<string, string> = {}; // quote_item_id -> filament_m (override)
   let produceGrams: Record<string, string> = {}; // quote_item_id -> gramas (override direto)
-  let producing = false;
-  let produceError = "";
-
-  function fmtMoney(v: number | string | null | undefined): string {
-    if (v === null || v === undefined) return "—";
-    const n = typeof v === "string" ? parseFloat(v) : v;
-    return n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
-  }
-  function fmtNum(v: number | string | null | undefined, dec = 2): string {
-    if (v === null || v === undefined) return "—";
-    const n = typeof v === "string" ? parseFloat(v) : v;
-    return n.toLocaleString("pt-BR", { maximumFractionDigits: dec });
-  }
-  function fmtDur(s: number | string | null | undefined): string {
-    if (!s) return "—";
-    const n = typeof s === "string" ? parseFloat(s) : s;
-    if (!isFinite(n)) return "—";
-    const h = Math.floor(n / 3600);
-    const m = Math.floor((n % 3600) / 60);
-    return h > 0 ? `${h}h ${m}min` : `${m}min`;
-  }
-  function fmtDate(s: string | null): string {
-    if (!s) return "—";
-    try {
-      return new Date(s).toLocaleString("pt-BR");
-    } catch {
-      return s;
-    }
-  }
-  function statusLabel(s: string): string {
-    return (
-      {
-        draft: "Rascunho",
-        orcado: "Orçado",
-        aprovado: "Aprovado",
-        em_producao: "Em produção",
-        produzido: "Produzido",
-        entregue: "Entregue",
-        falhou: "Falhou",
-        cancelado: "Cancelado",
-      } as Record<string, string>
-    )[s] ?? s;
-  }
-  function statusClass(s: string): string {
-    if (s === "entregue" || s === "produzido") return "ok";
-    if (s === "cancelado" || s === "falhou") return "warn";
-    if (s === "aprovado" || s === "em_producao") return "brand";
-    return "muted";
-  }
-
-  function clientName(cid: string | null): string {
-    if (!cid) return "—";
-    return clients.find((c) => c.id === cid)?.name ?? "—";
-  }
-
-  function serviceName(sid: string): string {
-    return services.find((s) => s.id === sid)?.name ?? sid.slice(0, 8);
-  }
-
-  async function load() {
-    loading = true;
-    pageError = "";
-    try {
-      quote = await api<Quote>(`/quotes/${id}`);
-      editMarkup = Number(quote.markup_pct ?? 0);
-      editMin = Number(quote.min_charge ?? 0);
-      editClient = quote.client_id ?? "";
-      editNotes = quote.notes ?? "";
-    } catch (err) {
-      handleApiError(err);
-      pageError = errorMessage(err, "Falha ao carregar orçamento.");
-    } finally {
-      loading = false;
-    }
-  }
 
   let photoVersion = 0; // cache-bust após upload/delete
   let photoBusy = false;
 
-  async function uploadPhoto(file: File, quoteItemId: string | null) {
-    photoBusy = true;
-    try {
-      const fd = new FormData();
-      fd.append("file", file);
-      if (quoteItemId) fd.append("quote_item_id", quoteItemId);
-      const res = await fetch(`/api/quotes/${id}/photos`, { method: "POST", body: fd });
-      if (!res.ok) throw new Error(await res.text());
-      photoVersion += 1;
-      await load();
-    } catch (err) {
-      handleApiError(err);
-      pageError = errorMessage(err, "Falha ao enviar a foto.");
-    } finally {
-      photoBusy = false;
-    }
-  }
+  // ---- cargas ----
+  const quoteRes = resource(() => api<Quote>(`/quotes/${id}`), {
+    errorMessage: "Falha ao carregar orçamento.",
+    auto: false,
+  });
 
-  async function deletePhoto(photoId: string) {
-    photoBusy = true;
-    try {
-      await api(`/quotes/${id}/photos/${photoId}`, { method: "DELETE" });
-      photoVersion += 1;
-      await load();
-    } catch (err) {
-      handleApiError(err);
-      pageError = errorMessage(err, "Falha ao remover a foto.");
-    } finally {
-      photoBusy = false;
-    }
-  }
-
-  async function loadRefs() {
-    try {
-      [clients, services, spools, materials, people] = await Promise.all([
+  // resource() tipa `.data` como `T | undefined` mesmo com `initial` — o
+  // genérico não sabe que um `initial` foi passado. REFS_INITIAL serve de
+  // fallback nas leituras (`$refs.data ?? REFS_INITIAL`) pra não espalhar
+  // `?? []` em cada campo.
+  const REFS_INITIAL = {
+    clients: [] as Client[],
+    services: [] as Service[],
+    spools: [] as Spool[],
+    materials: [] as Material[],
+    people: [] as Person[],
+  };
+  const refs = resource(
+    async () => {
+      const [clients, services, spools, materials, people] = await Promise.all([
         api<Client[]>("/clients"),
         api<Service[]>("/services"),
         api<Spool[]>("/spools"),
         api<Material[]>("/materials"),
         api<Person[]>("/people"),
       ]);
-    } catch (err) {
-      handleApiError(err);
+      return { clients, services, spools, materials, people };
+    },
+    { initial: REFS_INITIAL, auto: false },
+  );
+
+  // `load()` original recarregava o orçamento E reiniciava os campos do
+  // formulário de metadados (markup/mínimo/cliente/notas) a partir do que
+  // veio do servidor. Isso acontecia na carga inicial e também depois de
+  // upload/remoção de foto (o único jeito de saber o novo array de fotos era
+  // recarregar tudo) — mas nunca depois de saveMeta/patchItem/etc, que já
+  // aplicam o retorno da própria mutação. Mantém esse mesmo gatilho aqui.
+  async function loadQuote() {
+    await quoteRes.reload();
+    const q = $quoteRes.data;
+    if (q) {
+      editMarkup = Number(q.markup_pct ?? 0);
+      editMin = Number(q.min_charge ?? 0);
+      editClient = q.client_id ?? "";
+      editNotes = q.notes ?? "";
     }
   }
 
-  async function togglePerson(personId: string, checked: boolean) {
-    if (!quote) return;
-    const current = new Set(quote.person_ids ?? []);
-    if (checked) current.add(personId);
-    else current.delete(personId);
-    try {
-      quote = await api<Quote>(`/quotes/${id}/people`, {
-        method: "PUT",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ person_ids: [...current] }),
-      });
-    } catch (err) {
-      handleApiError(err);
-      metaError = errorMessage(err, "Falha ao salvar atribuição.");
-    }
-  }
-
-  $: filteredServices = quote
-    ? services.filter(
-        (s) =>
-          s.is_active &&
-          (quote!.kind === "commercial" ? true : s.kind !== "labor"),
-      )
-    : [];
-
-  $: isDraft = quote?.status === "draft";
-  $: canCancel =
-    quote && quote.status !== "entregue" && quote.status !== "cancelado";
-
-  async function toggleRetailMode(next: boolean) {
-    if (!quote) return;
-    try {
-      quote = await api<Quote>(`/quotes/${id}`, {
-        method: "PUT",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ retail_mode: next }),
-      });
-    } catch (err) {
-      handleApiError(err);
-      metaError = errorMessage(err, "Falha ao alternar modo varejo.");
-    }
-  }
-
-  async function saveMeta() {
-    if (!quote) return;
-    metaError = "";
-    savingMeta = true;
-    try {
-      const body: Record<string, unknown> = {
-        notes: editNotes || null,
-      };
-      if (quote.kind === "commercial") {
-        body.client_id = editClient || null;
-        body.markup_pct = editMarkup;
-        body.min_charge = editMin;
-      }
-      quote = await api<Quote>(`/quotes/${id}`, {
-        method: "PUT",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(body),
-      });
-    } catch (err) {
-      handleApiError(err);
-      metaError = errorMessage(err, "Falha ao salvar.");
-    } finally {
-      savingMeta = false;
-    }
-  }
-
-  async function addItem() {
-    if (!quote) return;
-    if (!itemName.trim()) {
-      itemError = "Informe um nome para a peça.";
-      return;
-    }
-    itemError = "";
-    addingItem = true;
-    try {
-      const fd = new FormData();
-      if (itemFile && itemFile.length > 0) {
-        fd.append("file", itemFile[0]);
-      }
-      fd.append("name", itemName.trim());
-      fd.append("quantity", String(itemQty));
-      if (itemModelUrl) fd.append("model_source_url", itemModelUrl);
-      if (itemModelAuthor) fd.append("model_source_author", itemModelAuthor);
-      if (itemModelLicense) fd.append("model_source_license", itemModelLicense);
+  // ---- mutações de item ----
+  const addItemAction = action(
+    async (fd: FormData) => {
       const res = await fetch(`/api/quotes/${id}/items`, {
         method: "POST",
         body: fd,
@@ -368,7 +140,86 @@
         } catch {}
         throw new Error(msg);
       }
-      quote = (await res.json()) as Quote;
+      return (await res.json()) as Quote;
+    },
+    { errorMessage: "Falha ao adicionar peça." },
+  );
+
+  const patchItemAction = action(
+    (itemId: string, fields: Record<string, unknown>) =>
+      api<Quote>(`/quotes/${id}/items/${itemId}`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(fields),
+      }),
+    { errorMessage: "Falha ao salvar alteração." },
+  );
+
+  const reparseAction = action(
+    (itemId: string) => api<Quote>(`/quotes/${id}/items/${itemId}/reparse`, { method: "POST" }),
+    { errorMessage: "Falha ao reanalisar o gcode." },
+  );
+
+  const removeItemAction = action(
+    (itemId: string) => api<Quote>(`/quotes/${id}/items/${itemId}`, { method: "DELETE" }),
+    { errorMessage: "Falha ao remover peça." },
+  );
+
+  const quickCreateMaterialAction = action(
+    (body: Record<string, unknown>) =>
+      api<Material>("/materials", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      }),
+    { errorMessage: "Não foi possível criar o material." },
+  );
+
+  const confirmResolveAction = action(
+    (itemId: string, materialCode: string) =>
+      api<Quote>(`/quotes/${id}/items/${itemId}`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ material_code: materialCode }),
+      }),
+    { errorMessage: "Falha ao resolver material." },
+  );
+
+  // Peças (addItem/patchItem/reparseItem/removeItem) dividem o mesmo alerta
+  // (itemError). No código original isso era uma única variável — qualquer
+  // uma das quatro funções a sobrescrevia. addItem e patchItem já zeravam
+  // no início; reparseItem e removeItem não zeravam, então um erro de uma
+  // delas sobrevivia na tela mesmo depois de outra operação ter sucesso.
+  // clearItemErrors() replica o "sobrescreve sempre" do original nas quatro,
+  // chamado no início de cada uma — a própria operação que começa agora é
+  // que vai decidir o que aparece a seguir (erro novo ou nada).
+  function clearItemErrors() {
+    itemValidationError = "";
+    addItemAction.reset();
+    patchItemAction.reset();
+    reparseAction.reset();
+    removeItemAction.reset();
+  }
+
+  async function addItem() {
+    if (!quote) return;
+    clearItemErrors();
+    if (!itemName.trim()) {
+      itemValidationError = "Informe um nome para a peça.";
+      return;
+    }
+    const fd = new FormData();
+    if (itemFile && itemFile.length > 0) {
+      fd.append("file", itemFile[0]);
+    }
+    fd.append("name", itemName.trim());
+    fd.append("quantity", String(itemQty));
+    if (itemModelUrl) fd.append("model_source_url", itemModelUrl);
+    if (itemModelAuthor) fd.append("model_source_author", itemModelAuthor);
+    if (itemModelLicense) fd.append("model_source_license", itemModelLicense);
+    const updated = await addItemAction.run(fd);
+    if (updated) {
+      quoteRes.set(updated);
       itemFile = null;
       itemName = "";
       itemQty = 1;
@@ -377,42 +228,27 @@
       itemModelLicense = "";
       const input = document.getElementById("itemFile") as HTMLInputElement | null;
       if (input) input.value = "";
-    } catch (err) {
-      handleApiError(err);
-      itemError = errorMessage(err, "Falha ao adicionar peça.");
-    } finally {
-      addingItem = false;
     }
   }
 
   function openResolve(it: QuoteItem) {
     resolveItem = it;
     resolveCode = it.pending_material_code || it.gcode_meta?.material || "";
-    resolveError = "";
+    confirmResolveAction.reset();
     showQuickCreateMaterial = false;
     qcName = resolveCode || "";
     qcDensity = "1.24";
     qcPrice = "100";
     qcFailure = "5";
-    qcError = "";
+    quickCreateMaterialAction.reset();
   }
 
   async function confirmResolve() {
     if (!resolveItem || !resolveCode) return;
-    resolveError = "";
-    resolving = true;
-    try {
-      quote = await api<Quote>(`/quotes/${id}/items/${resolveItem.id}`, {
-        method: "PUT",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ material_code: resolveCode }),
-      });
+    const updated = await confirmResolveAction.run(resolveItem.id, resolveCode);
+    if (updated) {
+      quoteRes.set(updated);
       resolveItem = null;
-    } catch (err) {
-      handleApiError(err);
-      resolveError = errorMessage(err, "Falha ao resolver material.");
-    } finally {
-      resolving = false;
     }
   }
 
@@ -422,25 +258,12 @@
    * filamento, material or quantity refreshes the cost immediately.
    * The optional ``field`` argument drives a per-cell saving spinner.
    */
-  async function patchItem(
-    itemId: string,
-    fields: Record<string, unknown>,
-    field?: string,
-  ) {
+  async function patchItem(itemId: string, fields: Record<string, unknown>, field?: string) {
+    clearItemErrors();
     if (field) savingField = { ...savingField, [itemId]: field };
-    itemError = "";
-    try {
-      quote = await api<Quote>(`/quotes/${id}/items/${itemId}`, {
-        method: "PUT",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(fields),
-      });
-    } catch (err) {
-      handleApiError(err);
-      itemError = errorMessage(err, "Falha ao salvar alteração.");
-    } finally {
-      if (field) savingField = { ...savingField, [itemId]: undefined };
-    }
+    const updated = await patchItemAction.run(itemId, fields);
+    if (updated) quoteRes.set(updated);
+    if (field) savingField = { ...savingField, [itemId]: undefined };
   }
 
   function patchTime(itemId: string, minutesStr: string) {
@@ -472,111 +295,218 @@
 
   let reparsingId: string | null = null;
   async function reparseItem(itemId: string) {
+    clearItemErrors();
     reparsingId = itemId;
-    try {
-      quote = await api<Quote>(`/quotes/${id}/items/${itemId}/reparse`, {
-        method: "POST",
-      });
-    } catch (err) {
-      handleApiError(err);
-      itemError = errorMessage(err, "Falha ao reanalisar o gcode.");
-    } finally {
-      reparsingId = null;
-    }
+    const updated = await reparseAction.run(itemId);
+    if (updated) quoteRes.set(updated);
+    reparsingId = null;
   }
 
   async function quickCreateMaterial() {
     if (!qcName) return;
-    qcError = "";
-    qcSubmitting = true;
-    try {
-      const mv = await api<Material>("/materials", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          material_type: qcName,
-          name: qcName,
-          density_g_cm3: qcDensity,
-          price_per_kg_ref: qcPrice,
-          failure_rate_pct: qcFailure,
-        }),
-      });
+    const mv = await quickCreateMaterialAction.run({
+      material_type: qcName,
+      name: qcName,
+      density_g_cm3: qcDensity,
+      price_per_kg_ref: qcPrice,
+      failure_rate_pct: qcFailure,
+    });
+    if (mv) {
       // refresh local materials list and set resolveCode to the new one
-      materials = [...materials, mv];
+      refs.set({ ...($refs.data ?? REFS_INITIAL), materials: [...materials, mv] });
       resolveCode = mv.material_type;
       showQuickCreateMaterial = false;
-    } catch (err) {
-      handleApiError(err);
-      qcError = errorMessage(err, "Não foi possível criar o material.");
-    } finally {
-      qcSubmitting = false;
     }
   }
 
   async function removeItem(itemId: string) {
     if (!confirm("Remover esta peça?")) return;
-    try {
-      quote = await api<Quote>(`/quotes/${id}/items/${itemId}`, {
-        method: "DELETE",
-      });
-    } catch (err) {
-      handleApiError(err);
-      itemError = errorMessage(err, "Falha ao remover peça.");
-    }
+    clearItemErrors();
+    const updated = await removeItemAction.run(itemId);
+    if (updated) quoteRes.set(updated);
+  }
+
+  // ---- mutações de serviço ----
+  const addServiceAction = action(
+    (body: Record<string, unknown>) =>
+      api<Quote>(`/quotes/${id}/services`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      }),
+    { errorMessage: "Falha ao adicionar serviço." },
+  );
+  const removeServiceAction = action(
+    (qsId: string) => api<Quote>(`/quotes/${id}/services/${qsId}`, { method: "DELETE" }),
+    { errorMessage: "Falha ao remover serviço." },
+  );
+  // Mesmo raciocínio de clearItemErrors(): addService já zerava svcError no
+  // original, removeService não — corrigido aqui pros dois sempre se
+  // sobrescreverem no início de qualquer nova tentativa.
+  function clearSvcErrors() {
+    addServiceAction.reset();
+    removeServiceAction.reset();
   }
 
   async function addService() {
     if (!quote || !svcId) return;
-    svcError = "";
-    addingSvc = true;
-    try {
-      const body: Record<string, unknown> = {
-        service_id: svcId,
-        quantity: svcQty,
-      };
-      if (svcRate !== "") body.rate = Number(svcRate);
-      quote = await api<Quote>(`/quotes/${id}/services`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(body),
-      });
+    clearSvcErrors();
+    const body: Record<string, unknown> = {
+      service_id: svcId,
+      quantity: svcQty,
+    };
+    if (svcRate !== "") body.rate = Number(svcRate);
+    const updated = await addServiceAction.run(body);
+    if (updated) {
+      quoteRes.set(updated);
       svcId = "";
       svcQty = 1;
       svcRate = "";
-    } catch (err) {
-      handleApiError(err);
-      svcError = errorMessage(err, "Falha ao adicionar serviço.");
-    } finally {
-      addingSvc = false;
     }
   }
 
   async function removeService(qsId: string) {
     if (!confirm("Remover este serviço?")) return;
-    try {
-      quote = await api<Quote>(`/quotes/${id}/services/${qsId}`, {
-        method: "DELETE",
-      });
-    } catch (err) {
-      handleApiError(err);
-      svcError = errorMessage(err, "Falha ao remover serviço.");
-    }
+    clearSvcErrors();
+    const updated = await removeServiceAction.run(qsId);
+    if (updated) quoteRes.set(updated);
   }
+
+  // ---- fotos ----
+  const uploadPhotoAction = action(
+    async (file: File, quoteItemId: string | null) => {
+      const fd = new FormData();
+      fd.append("file", file);
+      if (quoteItemId) fd.append("quote_item_id", quoteItemId);
+      const res = await fetch(`/api/quotes/${id}/photos`, { method: "POST", body: fd });
+      if (!res.ok) throw new Error(await res.text());
+    },
+    { errorMessage: "Falha ao enviar a foto." },
+  );
+  const deletePhotoAction = action(
+    (photoId: string) => api(`/quotes/${id}/photos/${photoId}`, { method: "DELETE" }),
+    { errorMessage: "Falha ao remover a foto." },
+  );
+  // pageError combina o erro da carga do orçamento com o de upload/remoção
+  // de foto (assim como no original, era uma única variável reescrita por
+  // qualquer uma das três). clearPageErrors() replica isso — chamado no
+  // início de upload/delete, sempre seguido de uma tentativa real (a própria
+  // mutação, e loadQuote() no sucesso), nunca deixando o aviso sumir sem uma
+  // operação de verdade acontecer em seguida.
+  function clearPageErrors() {
+    quoteRes.reset();
+    uploadPhotoAction.reset();
+    deletePhotoAction.reset();
+  }
+
+  async function uploadPhoto(file: File, quoteItemId: string | null) {
+    photoBusy = true;
+    clearPageErrors();
+    await uploadPhotoAction.run(file, quoteItemId);
+    if (!$uploadPhotoAction.error) {
+      photoVersion += 1;
+      await loadQuote();
+    }
+    photoBusy = false;
+  }
+
+  async function deletePhoto(photoId: string) {
+    photoBusy = true;
+    clearPageErrors();
+    await deletePhotoAction.run(photoId);
+    if (!$deletePhotoAction.error) {
+      photoVersion += 1;
+      await loadQuote();
+    }
+    photoBusy = false;
+  }
+
+  // ---- metadados / pessoas ----
+  const saveMetaAction = action(
+    (body: Record<string, unknown>) =>
+      api<Quote>(`/quotes/${id}`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      }),
+    { errorMessage: "Falha ao salvar." },
+  );
+  const toggleRetailModeAction = action(
+    (next: boolean) =>
+      api<Quote>(`/quotes/${id}`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ retail_mode: next }),
+      }),
+    { errorMessage: "Falha ao alternar modo varejo." },
+  );
+  const togglePersonAction = action(
+    (personIds: string[]) =>
+      api<Quote>(`/quotes/${id}/people`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ person_ids: personIds }),
+      }),
+    { errorMessage: "Falha ao salvar atribuição." },
+  );
+  // Igual aos outros grupos: saveMeta já zerava metaError, toggleRetailMode e
+  // togglePerson não — corrigido pros três se sobrescreverem sempre.
+  function clearMetaErrors() {
+    saveMetaAction.reset();
+    toggleRetailModeAction.reset();
+    togglePersonAction.reset();
+  }
+
+  async function togglePerson(personId: string, checked: boolean) {
+    if (!quote) return;
+    clearMetaErrors();
+    const current = new Set(quote.person_ids ?? []);
+    if (checked) current.add(personId);
+    else current.delete(personId);
+    const updated = await togglePersonAction.run([...current]);
+    if (updated) quoteRes.set(updated);
+  }
+
+  async function toggleRetailMode(next: boolean) {
+    if (!quote) return;
+    clearMetaErrors();
+    const updated = await toggleRetailModeAction.run(next);
+    if (updated) quoteRes.set(updated);
+  }
+
+  async function saveMeta() {
+    if (!quote) return;
+    clearMetaErrors();
+    const body: Record<string, unknown> = {
+      notes: editNotes || null,
+    };
+    if (quote.kind === "commercial") {
+      body.client_id = editClient || null;
+      body.markup_pct = editMarkup;
+      body.min_charge = editMin;
+    }
+    const updated = await saveMetaAction.run(body);
+    if (updated) quoteRes.set(updated);
+  }
+
+  // ---- transições / produção ----
+  // errorMessage do transitionAction precisa variar por transição (ex.:
+  // "Falha ao executar approve.") — como action() lê opts.errorMessage no
+  // momento do erro (não só na criação), mutar essa mesma referência antes
+  // de cada run() preserva a mensagem específica do original.
+  const transitionOpts = { errorMessage: "Falha ao executar a transição." };
+  const transitionAction = action(
+    (t: string) => api<Quote>(`/quotes/${id}/transitions/${t}`, { method: "POST" }),
+    transitionOpts,
+  );
 
   async function transition(t: "finalize" | "approve" | "deliver" | "cancel" | "reopen") {
     if (!quote) return;
-    txError = "";
+    transitionOpts.errorMessage = `Falha ao executar ${t}.`;
     transitioning = t;
-    try {
-      quote = await api<Quote>(`/quotes/${id}/transitions/${t}`, {
-        method: "POST",
-      });
-    } catch (err) {
-      handleApiError(err);
-      txError = errorMessage(err, `Falha ao executar ${t}.`);
-    } finally {
-      transitioning = "";
-    }
+    const updated = await transitionAction.run(t);
+    if (updated) quoteRes.set(updated);
+    transitioning = "";
   }
 
   function openProduce() {
@@ -605,7 +535,7 @@
       const fg = Number(it.gcode_meta?.filament_g ?? 0);
       produceGrams[it.id] = fg > 0 ? String(fg) : "";
     }
-    produceError = "";
+    confirmProduceAction.reset();
     showProduceModal = true;
   }
 
@@ -655,40 +585,48 @@
     return parts.join(" · ");
   }
 
-  async function confirmProduce() {
-    if (!quote) return;
-    produceError = "";
-    producing = true;
-    try {
-      const consumption = quote.items.map((it) => {
-        const a: {
-          quote_item_id: string;
-          spool_id: string;
-          grams?: string;
-          filament_m?: number;
-        } = { quote_item_id: it.id, spool_id: produceAssignments[it.id] };
-        const g = parseFloat(produceGrams[it.id] ?? "");
-        const m = parseFloat(produceMeters[it.id] ?? "");
-        if (Number.isFinite(g) && g > 0) a.grams = String(g);
-        else if (Number.isFinite(m) && m > 0) a.filament_m = m;
-        return a;
-      });
+  const confirmProduceAction = action(
+    (
+      consumption: {
+        quote_item_id: string;
+        spool_id: string;
+        grams?: string;
+        filament_m?: number;
+      }[],
+    ) => {
       if (consumption.some((c) => !c.spool_id)) {
+        // errorMessage extrai o detalhe do ApiError (ex.: "item sem filamento…");
+        // pra Error simples (validação local) devolve a própria mensagem.
         throw new Error("Selecione um spool para cada peça.");
       }
-      quote = await api<Quote>(`/quotes/${id}/transitions/produce`, {
+      return api<Quote>(`/quotes/${id}/transitions/produce`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ consumption }),
       });
+    },
+    { errorMessage: "Falha ao produzir." },
+  );
+
+  async function confirmProduce() {
+    if (!quote) return;
+    const consumption = quote.items.map((it) => {
+      const a: {
+        quote_item_id: string;
+        spool_id: string;
+        grams?: string;
+        filament_m?: number;
+      } = { quote_item_id: it.id, spool_id: produceAssignments[it.id] };
+      const g = parseFloat(produceGrams[it.id] ?? "");
+      const m = parseFloat(produceMeters[it.id] ?? "");
+      if (Number.isFinite(g) && g > 0) a.grams = String(g);
+      else if (Number.isFinite(m) && m > 0) a.filament_m = m;
+      return a;
+    });
+    const updated = await confirmProduceAction.run(consumption);
+    if (updated) {
+      quoteRes.set(updated);
       showProduceModal = false;
-    } catch (err) {
-      handleApiError(err);
-      // errorMessage extrai o detalhe do ApiError (ex.: "item sem filamento…");
-      // pra Error simples (validação local) devolve a própria mensagem.
-      produceError = errorMessage(err, "Falha ao produzir.");
-    } finally {
-      producing = false;
     }
   }
 
@@ -696,10 +634,195 @@
     window.open(`/api/quotes/${id}/pdf`, "_blank");
   }
 
+  // Clonar está disponível em qualquer status (o clone sempre nasce
+  // rascunho) — por isso fica ao lado de "Baixar PDF", fora dos blocos
+  // condicionados a status/tipo. Copiar arquivos (fotos, gcode) leva tempo
+  // perceptível: `pending` desabilita o botão pra um clique duplo não criar
+  // dois clones.
+  const clonarAction = action(
+    (quoteId: string) => api<Quote>(`/quotes/${quoteId}/clone`, { method: "POST" }),
+    { errorMessage: "Falha ao clonar o orçamento." },
+  );
+
+  async function clonar() {
+    // Segue o padrão de askMarkup/askVariance/askPricing/transition: o botão só
+    // aparece dentro do bloco `{#if quote}`, mas a action espera um `quoteId:
+    // string` (não `string | undefined` como o `id` da rota) — usa quote.id.
+    if (!quote) return;
+    const novo = await clonarAction.run(quote.id);
+    if (novo) await goto(`/quotes/${novo.id}`);
+  }
+
+  // ---- IA ----
+  const askMarkupAction = action(
+    (quoteId: string) => api<MarkupSuggestionOut>(`/llm/markup/${quoteId}`, { method: "POST" }),
+    { errorMessage: "Falha ao consultar IA." },
+  );
+  const askVarianceAction = action(
+    (quoteId: string) => api<VarianceOut>(`/llm/variance/${quoteId}`, { method: "POST" }),
+    { errorMessage: "Falha ao consultar IA." },
+  );
+  const askPricingAction = action(
+    (quoteId: string) => api<PricingOut>(`/llm/pricing/${quoteId}`, { method: "POST" }),
+    { errorMessage: "Falha ao consultar IA." },
+  );
+  const askVariantsAction = action(
+    (itemId: string) => api<VariantsOut>(`/llm/variants/items/${itemId}`, { method: "POST" }),
+    { errorMessage: "Falha ao consultar IA." },
+  );
+  // As quatro dividem o painel de IA (llmError) — o original já zerava a
+  // única variável no início de cada uma; aqui replica zerando as quatro.
+  function clearLlmErrors() {
+    askMarkupAction.reset();
+    askVarianceAction.reset();
+    askPricingAction.reset();
+    askVariantsAction.reset();
+  }
+
+  async function askMarkup() {
+    if (!quote) return;
+    clearLlmErrors();
+    const res = await askMarkupAction.run(quote.id);
+    if (res) markupSuggestion = res;
+  }
+  async function applyMarkup() {
+    if (!quote || !markupSuggestion) return;
+    const v = Number(markupSuggestion.suggested_markup_pct);
+    if (!Number.isFinite(v)) return;
+    editMarkup = v;
+    await saveMeta();
+  }
+
+  async function askVariance() {
+    if (!quote) return;
+    clearLlmErrors();
+    const res = await askVarianceAction.run(quote.id);
+    if (res) varianceResult = res;
+  }
+
+  async function askPricing() {
+    if (!quote) return;
+    clearLlmErrors();
+    const res = await askPricingAction.run(quote.id);
+    if (res) pricingResult = res;
+  }
+
+  async function askVariants(itemId: string) {
+    if (!quote) return;
+    variantsForItem = itemId;
+    clearLlmErrors();
+    const res = await askVariantsAction.run(itemId);
+    if (res) variantsResult = res;
+  }
+
+  // ---- vínculos derivados dos resource()/action() acima ----
+  $: loading = $quoteRes.loading;
+  $: pageError = $quoteRes.error || $uploadPhotoAction.error || $deletePhotoAction.error;
+  $: quote = $quoteRes.data ?? null;
+
+  $: refsData = $refs.data ?? REFS_INITIAL;
+  $: clients = refsData.clients;
+  $: services = refsData.services;
+  $: spools = refsData.spools;
+  $: materials = refsData.materials;
+  $: people = refsData.people;
+
+  $: itemError =
+    itemValidationError ||
+    $addItemAction.error ||
+    $patchItemAction.error ||
+    $reparseAction.error ||
+    $removeItemAction.error;
+  $: addingItem = $addItemAction.pending;
+  $: resolveError = $confirmResolveAction.error;
+  $: resolving = $confirmResolveAction.pending;
+  $: qcError = $quickCreateMaterialAction.error;
+  $: qcSubmitting = $quickCreateMaterialAction.pending;
+
+  $: svcError = $addServiceAction.error || $removeServiceAction.error;
+  $: addingSvc = $addServiceAction.pending;
+
+  $: metaError = $saveMetaAction.error || $toggleRetailModeAction.error || $togglePersonAction.error;
+  $: savingMeta = $saveMetaAction.pending;
+
+  $: txError = $transitionAction.error || $clonarAction.error;
+  $: producing = $confirmProduceAction.pending;
+  $: produceError = $confirmProduceAction.error;
+
+  $: llmError =
+    $askMarkupAction.error ||
+    $askVarianceAction.error ||
+    $askPricingAction.error ||
+    $askVariantsAction.error;
+  let llmBusy: "markup" | "variance" | "pricing" | "variants" | null;
+  $: llmBusy = $askMarkupAction.pending
+    ? "markup"
+    : $askVarianceAction.pending
+      ? "variance"
+      : $askPricingAction.pending
+        ? "pricing"
+        : $askVariantsAction.pending
+          ? "variants"
+          : null;
+
+  function statusLabel(s: string): string {
+    return (
+      {
+        draft: "Rascunho",
+        orcado: "Orçado",
+        aprovado: "Aprovado",
+        em_producao: "Em produção",
+        produzido: "Produzido",
+        entregue: "Entregue",
+        falhou: "Falhou",
+        cancelado: "Cancelado",
+      } as Record<string, string>
+    )[s] ?? s;
+  }
+  function statusClass(s: string): string {
+    if (s === "entregue" || s === "produzido") return "ok";
+    if (s === "cancelado" || s === "falhou") return "warn";
+    if (s === "aprovado" || s === "em_producao") return "brand";
+    return "muted";
+  }
+
+  function clientName(cid: string | null): string {
+    if (!cid) return "—";
+    return clients.find((c) => c.id === cid)?.name ?? "—";
+  }
+
+  function serviceName(sid: string): string {
+    return services.find((s) => s.id === sid)?.name ?? sid.slice(0, 8);
+  }
+
+  $: filteredServices = quote
+    ? services.filter(
+        (s) =>
+          s.is_active &&
+          (quote!.kind === "commercial" ? true : s.kind !== "labor"),
+      )
+    : [];
+
+  $: isDraft = quote?.status === "draft";
+  $: canCancel =
+    quote && quote.status !== "entregue" && quote.status !== "cancelado";
+
+  // Achata item × consumo numa lista só, ordenada por data — é assim que a
+  // reimpressão depois de falha fica visível como linha própria.
+  $: linhasConsumo = (quote?.items ?? [])
+    .flatMap((it) => (it.consumptions ?? []).map((c) => ({ peca: it.name, c })))
+    .sort((a, b) => a.c.consumed_at.localeCompare(b.c.consumed_at));
+  $: totalBaixas = linhasConsumo.length;
+  $: totalGramas = linhasConsumo.reduce((s, l) => s + Number(l.c.grams_used), 0);
+  // custo_total chega sem arredondar de propósito (o módulo contábil soma
+  // sem arredondar e só arredonda o agregado) — soma os valores crus e só
+  // formata no fim, pra não divergir do DRE por causa de centavos.
+  $: totalCusto = linhasConsumo.reduce((s, l) => s + Number(l.c.custo_total), 0);
+
   onMount(() => {
     if (requireAuth()) return;
-    loadRefs();
-    load();
+    refs.reload();
+    loadQuote();
   });
 </script>
 
@@ -712,7 +835,7 @@
   <header class="page-head">
     <div class="head-row">
       <div>
-        <span class="page-eyebrow">Orçamento · {quote.id.slice(0, 8)}</span>
+        <span class="page-eyebrow" title={quote.id}>Orçamento · {quoteNumber(quote.seq)}</span>
         <h1 class="page-title">
           {quote.kind === "commercial" ? "Comercial" : "Pessoal"}<em>.</em>
         </h1>
@@ -907,7 +1030,21 @@
                         <span class="badge pending">pendente</span>
                       {/if}
                     {:else}
-                      {it.gcode_meta?.material ?? "—"}{it.is_multi_color ? " · multicolor" : ""}
+                      {@const consumos = it.consumptions ?? []}
+                      {#if consumos.length > 0}
+                        {@const ultimo = consumos[consumos.length - 1]}
+                        <span title={ultimo.spool_label}>
+                          {ultimo.material_type}{ultimo.color ? ` · ${ultimo.color}` : ""}
+                        </span>
+                        {#if consumos.length > 1}
+                          <span class="badge" title="Houve mais de um ciclo de produção"
+                            >{consumos.length} baixas</span>
+                        {/if}
+                      {:else}
+                        {it.gcode_meta?.material ?? "—"}
+                        <span class="badge estimativa" title="Nenhuma baixa registrada ainda — este é o material do gcode, não a bobina usada.">estimativa</span>
+                      {/if}
+                      {it.is_multi_color ? " · multicolor" : ""}
                     {/if}
                   </td>
                   <td class="right mono">
@@ -1014,6 +1151,47 @@
           </table>
         </div>
       </section>
+
+      {#if totalBaixas > 0}
+        <section class="panel">
+          <div class="panel-head">
+            <h2 class="section-title">
+              Filamento consumido <span class="count">· {totalBaixas} {totalBaixas === 1 ? "baixa" : "baixas"}</span>
+            </h2>
+          </div>
+          <div class="table-wrap">
+            <table class="fil-table">
+              <thead>
+                <tr>
+                  <th>Peça</th><th>Bobina</th>
+                  <th class="right">Gramas</th><th class="right">Custo</th><th>Data</th>
+                </tr>
+              </thead>
+              <tbody>
+                {#each linhasConsumo as l}
+                  <tr>
+                    <td>{l.peca}</td>
+                    <td class="mono" title={l.c.spool_label}>
+                      {l.c.material_type}{l.c.color ? ` · ${l.c.color}` : ""}{l.c.manufacturer ? ` · ${l.c.manufacturer}` : ""}
+                    </td>
+                    <td class="right mono">{fmtNum(l.c.grams_used, 1)} g</td>
+                    <td class="right mono">{fmtMoney(l.c.custo_total)}</td>
+                    <td class="mono dim">{fmtDate(l.c.consumed_at)}</td>
+                  </tr>
+                {/each}
+              </tbody>
+              <tfoot>
+                <tr>
+                  <td colspan="2" class="mono">total</td>
+                  <td class="right mono">{fmtNum(totalGramas, 1)} g</td>
+                  <td class="right mono">{fmtMoney(totalCusto)}</td>
+                  <td></td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </section>
+      {/if}
 
       <section class="panel">
         <div class="panel-head">
@@ -1318,6 +1496,9 @@
           {/if}
 
           <button class="ghost" on:click={openPdf}>Baixar PDF</button>
+          <button class="ghost" on:click={clonar} disabled={$clonarAction.pending}>
+            {$clonarAction.pending ? "Clonando…" : "Clonar"}
+          </button>
 
           {#if canCancel}
             <button class="danger" on:click={() => transition("cancel")} disabled={transitioning === "cancel"}>
@@ -1551,17 +1732,7 @@
       grid-template-columns: 1fr;
     }
   }
-  .panel + .panel {
-    margin-top: 1.5rem;
-  }
-  .side-col .panel + .panel {
-    margin-top: 1.5rem;
-  }
-  .table-wrap {
-    border: 1px solid var(--line);
-    overflow-x: auto;
-    margin-top: 1rem;
-  }
+  /* .panel + .panel e .table-wrap agora vivem em app.css (mesmos valores) */
   table {
     width: 100%;
     border-collapse: collapse;
@@ -1589,16 +1760,35 @@
     font-family: var(--font-mono);
     font-size: 0.86rem;
   }
+  /* Override local: padding menor que o padrão global (mantém aparência
+     já existente nesta página) */
   .empty {
     padding: 1.5rem 1rem;
     text-align: center;
-    color: var(--muted);
     font-family: var(--font-mono);
     font-size: 0.74rem;
     letter-spacing: 0.16em;
     text-transform: uppercase;
   }
   tr.pending td { background: rgba(245, 158, 11, 0.08); }
+  tfoot td {
+    padding: 0.6rem 0.75rem;
+    border-top: 1px solid var(--line-strong);
+    font-weight: 600;
+  }
+  tfoot td.mono {
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    font-size: 0.72rem;
+    font-weight: 500;
+    color: var(--muted);
+  }
+  /* Selo "estimativa": mesma base de .badge (mono, borda) — sem cor de
+     alerta, é informativo (ainda não houve baixa de estoque), não um erro. */
+  .badge.estimativa {
+    margin-left: 0.3rem;
+    color: var(--muted);
+  }
   /* Inline-edit table cells — fixed widths so every row aligns vertically. */
   input.inline, select.inline {
     font: inherit;
@@ -1640,6 +1830,14 @@
   table th:nth-child(3), table td:nth-child(3),
   table th:nth-child(4), table td:nth-child(4) { width: 9rem; white-space: nowrap; }
   table th:nth-child(5), table td:nth-child(5) { width: 5.5rem; }
+  /* A 5ª coluna da tabela "Filamento consumido" é Data (carimbo do ciclo de
+     produção, ex. "23/09/26 14:32") — herda width: 5.5rem da regra genérica
+     acima mas, ao contrário das colunas 3/4, não herda nowrap, então quebra
+     em duas linhas. É o sinal principal do painel (quando cada baixa
+     aconteceu), então escopar a classe própria da tabela em vez de alargar
+     a regra genérica (que também vale pra Serviços e o modal de Produzir,
+     onde a 5ª coluna é outra coisa). */
+  .fil-table td:nth-child(5) { white-space: nowrap; }
   .retail-toggle {
     flex-direction: row !important;
     align-items: flex-start;
@@ -1655,13 +1853,18 @@
     font-size: 0.78rem;
     margin-top: 0.1rem;
   }
+  /* .badge.pending e .badge.weight nunca herdaram fonte mono nem borda do
+     .badge base (que não existia antes desta classe virar global) — cada
+     regra cancela essas duas propriedades pra manter a aparência de antes */
   .badge.pending {
     display: inline-block;
     margin-left: 0.4rem;
     padding: 0.05rem 0.4rem;
+    border: none;
     border-radius: 999px;
     background: #fef3c7;
     color: #92400e;
+    font-family: var(--font-sans);
     font-size: 0.7em;
     text-transform: uppercase;
     letter-spacing: 0.04em;
@@ -1681,9 +1884,11 @@
   .badge.weight {
     display: inline-block;
     padding: 0.05rem 0.4rem;
+    border: none;
     border-radius: 999px;
     background: #e0f2fe;
     color: #075985;
+    font-family: var(--font-sans);
     font-size: 0.66rem;
     text-transform: uppercase;
     letter-spacing: 0.04em;
@@ -1691,7 +1896,8 @@
     white-space: nowrap;
   }
   .hint.warn { color: #92400e; font-size: 0.85em; margin: 0.25rem 0 0; }
-  .hint { color: #6b7280; font-size: 0.85em; }
+  /* Override local: tamanho próprio (cor já vem de app.css, mesmo tom de #6b7280) */
+  .hint { font-size: 0.85em; }
   button.link {
     background: none;
     border: none;
@@ -1861,18 +2067,15 @@
     text-decoration: none;
     display: inline-block;
   }
+  /* Override local: sem o flex/gap/margem padrão de app.css — o espaçamento
+     entre título e contador aqui vem só do espaço no texto (mantém
+     aparência já existente antes desta classe virar global) */
   .section-title {
-    font-family: var(--font-mono);
-    font-size: 0.72rem;
-    letter-spacing: 0.22em;
-    text-transform: uppercase;
-    color: var(--ink);
+    display: block;
+    gap: 0;
     margin: 0;
   }
-  .section-title .count {
-    color: var(--muted);
-    font-weight: 400;
-  }  .num {
+  .num {
     width: 5.5rem;
     text-align: right;
   }

@@ -1,104 +1,101 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { api, errorMessage } from "$lib/api";
-  import { handleApiError, requireAuth } from "$lib/guard";
+  import { api } from "$lib/api";
+  import { requireAuth } from "$lib/guard";
+  import { resource, action } from "$lib/resource";
   import Table from "$lib/components/Table.svelte";
+  import SearchBar from "$lib/components/SearchBar.svelte";
   import Form from "$lib/components/Form.svelte";
+  import { countShown } from "$lib/table-search";
   import type { Client } from "$lib/types";
 
-  let rows: Client[] = [];
-  let loading = true;
-  let listError = "";
+  const clientsRes = resource(() => api<Client[]>("/clients"), {
+    initial: [], errorMessage: "Falha ao carregar clientes.", auto: false,
+  });
+  $: rows = $clientsRes.data ?? [];
+
+  // Nome e contato (telefone/e-mail) — já são colunas da tabela, então a
+  // busca padrão da Table já cobre os dois. `q` é só o texto do filtro.
+  let q = "";
+  const columns = [
+    { key: "name", label: "Nome", sortable: true },
+    { key: "phone", label: "Telefone", mono: true },
+    { key: "email", label: "E-mail", mono: true },
+    { key: "notes", label: "Notas" },
+  ];
+  $: mostrados = countShown(rows, q, columns);
+  const removeAction = action((id: string) => api(`/clients/${id}`, { method: "DELETE" }), {
+    errorMessage: "Falha ao remover cliente.",
+  });
+  // Um "Atualizar" bem-sucedido não pode deixar preso o erro de uma remoção
+  // que falhou antes — os dois dividem o mesmo alerta do painel.
+  $: listError = $clientsRes.error || $removeAction.error;
+  function reloadClients() {
+    removeAction.reset();
+    return clientsRes.reload();
+  }
 
   // create form
   let name = "";
   let phone = "";
   let email = "";
   let notes = "";
-  let submitting = false;
-  let formError = "";
+  const createAction = action(
+    (body: Record<string, unknown>) =>
+      api<Client>("/clients", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      }),
+    { errorMessage: "Não foi possível adicionar o cliente." },
+  );
 
   // edit modal
   let editing: Client | null = null;
-  let editError = "";
-  let editSubmitting = false;
-
-  async function load() {
-    loading = true;
-    listError = "";
-    try {
-      rows = await api<Client[]>("/clients");
-    } catch (err) {
-      handleApiError(err);
-      listError = errorMessage(err, "Falha ao carregar clientes.");
-    } finally {
-      loading = false;
-    }
-  }
+  const editAction = action(
+    (id: string, body: Record<string, unknown>) =>
+      api<Client>(`/clients/${id}`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      }),
+    { errorMessage: "Falha ao salvar alterações." },
+  );
 
   async function create() {
-    formError = "";
-    submitting = true;
-    try {
-      await api<Client>("/clients", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          name,
-          phone: phone || null,
-          email: email || null,
-          notes: notes || null,
-        }),
-      });
-      name = phone = email = notes = "";
-      await load();
-    } catch (err) {
-      handleApiError(err);
-      formError = errorMessage(err, "Não foi possível adicionar o cliente.");
-    } finally {
-      submitting = false;
-    }
+    const created = await createAction.run({
+      name,
+      phone: phone || null,
+      email: email || null,
+      notes: notes || null,
+    });
+    if (!created) return;
+    name = phone = email = notes = "";
+    await reloadClients();
   }
 
   async function saveEdit() {
     if (!editing) return;
-    editError = "";
-    editSubmitting = true;
-    try {
-      await api<Client>(`/clients/${editing.id}`, {
-        method: "PUT",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          name: editing.name,
-          phone: editing.phone || null,
-          email: editing.email || null,
-          notes: editing.notes || null,
-        }),
-      });
-      editing = null;
-      await load();
-    } catch (err) {
-      handleApiError(err);
-      editError = errorMessage(err, "Falha ao salvar alterações.");
-    } finally {
-      editSubmitting = false;
-    }
+    const updated = await editAction.run(editing.id, {
+      name: editing.name,
+      phone: editing.phone || null,
+      email: editing.email || null,
+      notes: editing.notes || null,
+    });
+    if (!updated) return;
+    editing = null;
+    await reloadClients();
   }
 
   async function remove(id: string) {
     if (!confirm("Remover este cliente?")) return;
-    try {
-      await api(`/clients/${id}`, { method: "DELETE" });
-      await load();
-    } catch (err) {
-      handleApiError(err);
-      listError = errorMessage(err, "Falha ao remover cliente.");
-    }
+    await removeAction.run(id);
+    if (!$removeAction.error) await clientsRes.reload();
   }
 
   onMount(() => {
     if (requireAuth()) return;
-    load();
+    reloadClients();
   });
 </script>
 
@@ -112,8 +109,8 @@
   eyebrow="Novo registro"
   title="Adicionar cliente"
   submitLabel="Adicionar"
-  {submitting}
-  error={formError}
+  submitting={$createAction.pending}
+  error={$createAction.error}
   on:submit={create}
 >
   <label class="field">
@@ -137,19 +134,21 @@
 <section class="panel list-panel">
   <div class="panel-head">
     <h2 class="section-title">Cadastros <span class="count">· {rows.length}</span></h2>
-    <button class="tiny ghost" on:click={load} disabled={loading}>
-      {loading ? "Carregando…" : "Atualizar"}
+    <button class="tiny ghost" on:click={reloadClients} disabled={$clientsRes.loading}>
+      {$clientsRes.loading ? "Carregando…" : "Atualizar"}
     </button>
   </div>
   {#if listError}<div class="alert">{listError}</div>{/if}
+  <SearchBar
+    bind:value={q}
+    total={rows.length}
+    shown={mostrados}
+    placeholder="buscar por nome, telefone ou e-mail…"
+  />
   <Table
-    columns={[
-      { key: "name", label: "Nome" },
-      { key: "phone", label: "Telefone", mono: true },
-      { key: "email", label: "E-mail", mono: true },
-      { key: "notes", label: "Notas" },
-    ]}
+    {columns}
     {rows}
+    searchText={q}
     empty="Nenhum cliente cadastrado"
   >
     <svelte:fragment slot="actions" let:row>
@@ -163,7 +162,7 @@
   <div class="modal-backdrop" on:click|self={() => (editing = null)}>
     <div class="modal">
       <h2>Editar cliente</h2>
-      {#if editError}<div class="alert">{editError}</div>{/if}
+      {#if $editAction.error}<div class="alert">{$editAction.error}</div>{/if}
       <form on:submit|preventDefault={saveEdit} class="form-grid">
         <label class="field">
           Nome
@@ -183,8 +182,8 @@
         </label>
         <div class="actions">
           <button type="button" class="ghost" on:click={() => (editing = null)}>Cancelar</button>
-          <button type="submit" disabled={editSubmitting}>
-            {editSubmitting ? "Salvando…" : "Salvar"}
+          <button type="submit" disabled={$editAction.pending}>
+            {$editAction.pending ? "Salvando…" : "Salvar"}
           </button>
         </div>
       </form>
@@ -198,6 +197,9 @@
   }
   .list-panel {
     margin-top: 2rem;
+  }
+  .list-panel :global(.searchbar) {
+    margin-bottom: 1rem;
   }
   .field.full {
     grid-column: 1 / -1;

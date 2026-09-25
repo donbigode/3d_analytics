@@ -1,19 +1,65 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { api, errorMessage } from "$lib/api";
-  import { handleApiError, requireAuth } from "$lib/guard";
+  import { goto } from "$app/navigation";
+  import { api } from "$lib/api";
+  import { requireAuth } from "$lib/guard";
+  import { resource, action } from "$lib/resource";
+  import { money as fmtMoney, dateTime as fmtDate } from "$lib/format";
+  import Table from "$lib/components/Table.svelte";
+  import SearchBar from "$lib/components/SearchBar.svelte";
+  import { countShown } from "$lib/table-search";
   import type { Client, Person, Quote, QuoteKind, QuoteStatus } from "$lib/types";
-
-  let rows: Quote[] = [];
-  let clients: Client[] = [];
-  let people: Person[] = [];
-  let loading = true;
-  let listError = "";
+  import { quoteNumber } from "$lib/quote-number";
 
   // filters
   let fStatus: QuoteStatus | "" = "";
   let fKind: QuoteKind | "" = "";
   let fClient = "";
+
+  $: quotesUrl = (() => {
+    const qs = new URLSearchParams();
+    if (fStatus) qs.set("status", fStatus);
+    if (fKind) qs.set("kind", fKind);
+    if (fClient) qs.set("client_id", fClient);
+    return `/quotes${qs.toString() ? `?${qs}` : ""}`;
+  })();
+  const rows = resource(() => api<Quote[]>(quotesUrl), {
+    initial: [], errorMessage: "Falha ao carregar orçamentos.", auto: false,
+  });
+  const clients = resource(() => api<Client[]>("/clients"), { initial: [], auto: false });
+  const people = resource(() => api<Person[]>("/people"), { initial: [], auto: false });
+  const togglePersonAction = action((quoteId: string, personIds: string[]) =>
+    api<Quote>(`/quotes/${quoteId}/people`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ person_ids: personIds }),
+    }),
+  );
+
+  // Clonar copia config comercial, peças (com gcode), fotos e pessoas — mas
+  // nunca status/timeline/consumo. Copiar arquivos (fotos, gcode) leva tempo
+  // perceptível: o `pending` do action() desabilita o botão enquanto a
+  // requisição está em voo, senão um segundo clique impaciente cria um
+  // segundo clone e a pessoa tem que caçar e apagar o duplicado.
+  const clonar = action(
+    (id: string) => api<Quote>(`/quotes/${id}/clone`, { method: "POST" }),
+    { errorMessage: "Falha ao clonar o orçamento." },
+  );
+
+  // A `action()` é compartilhada pela lista inteira — só uma clonagem por
+  // vez, de propósito. `cloningId` lembra qual linha disparou a que está em
+  // voo, pra distinguir "esta linha está clonando" (rótulo já muda sozinho)
+  // de "outra linha está clonando" (esta fica desabilitada sem nenhum sinal
+  // visível — numa lista longa/filtrada a linha em voo pode nem estar na
+  // tela — daí o `title` explicativo no botão das demais).
+  let cloningId: string | null = null;
+
+  async function clonarEAbrir(id: string) {
+    cloningId = id;
+    const novo = await clonar.run(id);
+    cloningId = null;
+    if (novo) await goto(`/quotes/${novo.id}`);
+  }
 
   const STATUS_OPTIONS: { value: QuoteStatus; label: string }[] = [
     { value: "draft", label: "Rascunho" },
@@ -44,7 +90,7 @@
 
   function clientName(id: string | null): string {
     if (!id) return "—";
-    return clients.find((c) => c.id === id)?.name ?? "—";
+    return ($clients.data ?? []).find((c) => c.id === id)?.name ?? "—";
   }
 
   function itemNames(q: Quote): string[] {
@@ -59,88 +105,95 @@
     return `${names.slice(0, 3).join(" · ")} +${names.length - 3}`;
   }
 
-  function fmtMoney(v: number | string): string {
-    const n = typeof v === "string" ? parseFloat(v) : v;
-    return n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
-  }
+  // Linhas que a Table efetivamente recebe: mesmo objeto Quote, mais dois
+  // campos derivados só pra virarem coluna — client_name (nome resolvido
+  // do cliente, pro texto exibido/buscado E pra ordenação alfabética
+  // correta; ordenar pela chave crua client_id ordenaria por UUID) e
+  // items_summary (o resumo "até 3 + N" que já existia, agora como coluna
+  // em vez de célula construída na mão). O resto dos campos do Quote
+  // (id, kind, person_ids…) segue disponível pro slot "cell" da Table e
+  // pro slot de ações.
+  type ViewRow = Quote & { client_name: string; items_summary: string };
+  $: viewRows = ($rows.data ?? []).map(
+    (r): ViewRow => ({
+      ...r,
+      client_name: clientName(r.client_id),
+      items_summary: itemsSummary(r),
+    }),
+  );
 
-  function fmtDate(s: string | null): string {
-    if (!s) return "—";
-    try {
-      return new Date(s).toLocaleString("pt-BR", {
-        day: "2-digit",
-        month: "2-digit",
-        year: "2-digit",
-        hour: "2-digit",
-        minute: "2-digit",
-      });
-    } catch {
-      return s;
-    }
-  }
-
-  async function load() {
-    loading = true;
-    listError = "";
-    try {
-      const qs = new URLSearchParams();
-      if (fStatus) qs.set("status", fStatus);
-      if (fKind) qs.set("kind", fKind);
-      if (fClient) qs.set("client_id", fClient);
-      const path = `/quotes${qs.toString() ? `?${qs}` : ""}`;
-      rows = await api<Quote[]>(path);
-    } catch (err) {
-      handleApiError(err);
-      listError = errorMessage(err, "Falha ao carregar orçamentos.");
-    } finally {
-      loading = false;
-    }
-  }
-
-  async function loadClients() {
-    try {
-      clients = await api<Client[]>("/clients");
-    } catch (err) {
-      handleApiError(err);
-    }
-  }
-
-  async function loadPeople() {
-    try {
-      people = await api<Person[]>("/people");
-    } catch (err) {
-      handleApiError(err);
-    }
-  }
+  let q = "";
+  // seq/items_summary/kind/status marcam `cell: true` — a Table ainda usa
+  // o `format` abaixo pra montar o texto de exibição/busca (é a base do
+  // haystack, ver table-logic.ts), mas a apresentação real destas quatro
+  // colunas vem do slot "cell" logo abaixo no template (tooltip com
+  // UUID/lista completa, tag colorida de Tipo/Status, chips de pessoa).
+  const columns = [
+    {
+      key: "seq",
+      label: "#",
+      mono: true,
+      sortable: true,
+      cell: true,
+      format: (v: unknown) => quoteNumber(v as number),
+    },
+    { key: "items_summary", label: "Itens", width: "22rem", cell: true },
+    {
+      key: "kind",
+      label: "Tipo",
+      sortable: true,
+      cell: true,
+      format: (v: unknown) => (v === "commercial" ? "comercial" : "pessoal"),
+    },
+    {
+      key: "status",
+      label: "Status",
+      sortable: true,
+      cell: true,
+      format: (v: unknown) => statusLabel(v as string),
+    },
+    { key: "client_name", label: "Cliente", sortable: true },
+    {
+      key: "total",
+      label: "Total",
+      mono: true,
+      align: "right" as const,
+      sortable: true,
+      format: (v: unknown) => fmtMoney(v as string | number),
+    },
+    {
+      key: "created_at",
+      label: "Criado",
+      mono: true,
+      sortable: true,
+      format: (v: unknown) => fmtDate(v as string),
+    },
+  ];
+  // Notas não é coluna — entra na busca via searchExtra, igual ao combinado
+  // no brief da tarefa.
+  const searchExtra = (row: Record<string, unknown>) => (row as Quote).notes ?? "";
+  $: mostrados = countShown(viewRows, q, columns, searchExtra);
 
   async function togglePerson(q: Quote, personId: string) {
     const current = new Set(q.person_ids ?? []);
     if (current.has(personId)) current.delete(personId);
     else current.add(personId);
-    try {
-      const updated = await api<Quote>(`/quotes/${q.id}/people`, {
-        method: "PUT",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ person_ids: [...current] }),
-      });
-      rows = rows.map((r) => (r.id === q.id ? updated : r));
-    } catch (err) {
-      handleApiError(err);
-    }
+    const updated = await togglePersonAction.run(q.id, [...current]);
+    if (updated) rows.set(($rows.data ?? []).map((r) => (r.id === q.id ? updated : r)));
   }
 
   function resetFilters() {
     fStatus = "";
     fKind = "";
     fClient = "";
-    load();
+    rows.reload();
   }
 
   onMount(() => {
     if (requireAuth()) return;
-    loadClients();
-    loadPeople();
-    load();
+    clients.reload();
+    people.reload();
+    rows.reload();
   });
 </script>
 
@@ -164,7 +217,7 @@
   <div class="form-grid filter-grid">
     <label class="field">
       Status
-      <select bind:value={fStatus} on:change={load}>
+      <select bind:value={fStatus} on:change={() => rows.reload()}>
         <option value="">todos</option>
         {#each STATUS_OPTIONS as o}
           <option value={o.value}>{o.label}</option>
@@ -173,7 +226,7 @@
     </label>
     <label class="field">
       Tipo
-      <select bind:value={fKind} on:change={load}>
+      <select bind:value={fKind} on:change={() => rows.reload()}>
         <option value="">todos</option>
         <option value="commercial">Comercial</option>
         <option value="personal">Pessoal</option>
@@ -181,9 +234,9 @@
     </label>
     <label class="field">
       Cliente
-      <select bind:value={fClient} on:change={load}>
+      <select bind:value={fClient} on:change={() => rows.reload()}>
         <option value="">todos</option>
-        {#each clients as c}
+        {#each $clients.data ?? [] as c}
           <option value={c.id}>{c.name}</option>
         {/each}
       </select>
@@ -196,70 +249,82 @@
 
 <section class="panel list-panel">
   <div class="panel-head">
-    <h2 class="section-title">Orçamentos <span class="count">· {rows.length}</span></h2>
-    <button class="tiny ghost" on:click={load} disabled={loading}>
-      {loading ? "Carregando…" : "Atualizar"}
+    <h2 class="section-title">Orçamentos <span class="count">· {($rows.data ?? []).length}</span></h2>
+    <button class="tiny ghost" on:click={() => rows.reload()} disabled={$rows.loading}>
+      {$rows.loading ? "Carregando…" : "Atualizar"}
     </button>
   </div>
-  {#if listError}<div class="alert">{listError}</div>{/if}
+  {#if $rows.error}<div class="alert">{$rows.error}</div>{/if}
+  {#if $clonar.error}<div class="alert">{$clonar.error}</div>{/if}
 
-  <div class="table-wrap">
-    <table>
-      <thead>
-        <tr>
-          <th>#</th>
-          <th>Itens</th>
-          <th>Tipo</th>
-          <th>Status</th>
-          <th>Cliente</th>
-          <th class="right">Total</th>
-          <th>Criado</th>
-          <th class="right">Ações</th>
-        </tr>
-      </thead>
-      <tbody>
-        {#each rows as q (q.id)}
-          <tr>
-            <td class="mono">{q.id.slice(0, 8)}</td>
-            <td class="items-cell" title={itemNames(q).join(", ")}>{itemsSummary(q)}</td>
-            <td>
-              <span class="tag {q.kind === 'commercial' ? 'brand' : 'muted'}">
-                {q.kind === "commercial" ? "comercial" : "pessoal"}
-              </span>
-              {#if q.kind === "personal" && people.length > 0}
-                <div class="people-chips">
-                  {#each people.filter((p) => p.active || (q.person_ids ?? []).includes(p.id)) as p (p.id)}
-                    <button
-                      type="button"
-                      class="chip"
-                      class:on={(q.person_ids ?? []).includes(p.id)}
-                      on:click={() => togglePerson(q, p.id)}
-                    >
-                      {p.name}
-                    </button>
-                  {/each}
-                </div>
-              {/if}
-            </td>
-            <td>
-              <span class="tag {statusClass(q.status)}">{statusLabel(q.status)}</span>
-            </td>
-            <td>{clientName(q.client_id)}</td>
-            <td class="right mono">{fmtMoney(q.total)}</td>
-            <td class="mono dim">{fmtDate(q.created_at)}</td>
-            <td class="right">
-              <a class="tiny ghost btn" href={`/quotes/${q.id}`}>abrir</a>
-            </td>
-          </tr>
-        {/each}
-        {#if rows.length === 0}
-          <tr>
-            <td colspan="8"><div class="empty">Nenhum orçamento encontrado</div></td>
-          </tr>
+  <SearchBar
+    bind:value={q}
+    total={($rows.data ?? []).length}
+    shown={mostrados}
+    placeholder="buscar por número, peça ou cliente…"
+  />
+
+  <Table
+    {columns}
+    rows={viewRows}
+    searchText={q}
+    {searchExtra}
+    empty="Nenhum orçamento encontrado"
+  >
+    <!-- Slot "cell": restaura o markup rico que a Table (texto puro via
+         format()) não conseguiria — tooltip com UUID/lista completa, tag
+         colorida de Tipo/Status, e os chips de atribuição de pessoa, que
+         precisam continuar dentro da célula Tipo pra manter o sentido de
+         "este orçamento é destas pessoas" (não um botão de ação solto).
+         `value` já é o mesmo texto formatado usado na busca (o format()
+         de columns, acima) — os ramos abaixo só decidem como DESENHAR
+         esse texto, nunca mudam o que a busca casa. Roda uma vez por
+         coluna marcada `cell: true`, tanto no desktop quanto no card
+         (é o mesmo slot da Table.svelte nos dois modos). -->
+    <svelte:fragment slot="cell" let:row let:col let:value>
+      {@const quote = row as ViewRow}
+      {#if col.key === "seq"}
+        <span title={quote.id}>{value}</span>
+      {:else if col.key === "items_summary"}
+        <span title={itemNames(quote).join(", ")}>{value}</span>
+      {:else if col.key === "kind"}
+        <span class="tag {quote.kind === 'commercial' ? 'brand' : 'muted'}">{value}</span>
+        {#if quote.kind === "personal" && ($people.data ?? []).length > 0}
+          <div class="people-chips">
+            {#each ($people.data ?? []).filter((p) => p.active || (quote.person_ids ?? []).includes(p.id)) as p (p.id)}
+              <button
+                type="button"
+                class="chip"
+                class:on={(quote.person_ids ?? []).includes(p.id)}
+                on:click={() => togglePerson(quote, p.id)}
+              >
+                {p.name}
+              </button>
+            {/each}
+          </div>
         {/if}
-      </tbody>
-    </table>
-  </div>
+      {:else if col.key === "status"}
+        <span class="tag {statusClass(quote.status)}">{value}</span>
+      {:else}
+        {value}
+      {/if}
+    </svelte:fragment>
+    <svelte:fragment slot="actions" let:row>
+      {@const quote = row as ViewRow}
+      <a class="tiny ghost btn" href={`/quotes/${quote.id}`}>abrir</a>
+      <button
+        type="button"
+        class="tiny ghost"
+        disabled={$clonar.pending}
+        title={$clonar.pending && cloningId !== quote.id
+          ? "Aguardando outra clonagem terminar…"
+          : undefined}
+        on:click={() => clonarEAbrir(quote.id)}
+      >
+        {$clonar.pending && cloningId === quote.id ? "clonando…" : "clonar"}
+      </button>
+    </svelte:fragment>
+  </Table>
 </section>
 
 <style>
@@ -284,13 +349,8 @@
     flex-direction: column;
     gap: 0.25rem;
   }
-  .table-wrap {
-    border: 1px solid var(--line);
-    overflow-x: auto;
-  }
-  .items-cell {
-    max-width: 22rem;
-    font-size: 0.9rem;
+  .list-panel :global(.searchbar) {
+    margin-bottom: 1rem;
   }
   .people-chips {
     display: flex;
@@ -298,65 +358,7 @@
     gap: 0.25rem;
     margin-top: 0.3rem;
   }
-  .chip {
-    font-size: 0.72rem;
-    padding: 0.05rem 0.45rem;
-    border: 1px solid var(--line-strong);
-    border-radius: 999px;
-    background: var(--paper);
-    color: var(--muted);
-    cursor: pointer;
-  }
-  .chip.on {
-    background: var(--brand);
-    border-color: var(--brand);
-    color: #fff;
-  }
-  table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 0.92rem;
-  }
-  thead th {
-    text-align: left;
-    padding: 0.7rem 0.85rem;
-    font-family: var(--font-mono);
-    font-weight: 500;
-    font-size: 0.68rem;
-    letter-spacing: 0.18em;
-    text-transform: uppercase;
-    color: var(--muted);
-    border-bottom: 1px solid var(--line-strong);
-    background: var(--paper);
-  }
-  thead th.right,
-  td.right {
-    text-align: right;
-  }
-  tbody td {
-    padding: 0.7rem 0.85rem;
-    border-bottom: 1px solid var(--line);
-    vertical-align: middle;
-  }
-  tbody tr:hover td {
-    background: rgba(26, 26, 29, 0.025);
-  }
-  td.mono {
-    font-family: var(--font-mono);
-    font-size: 0.86rem;
-  }
-  td.dim {
-    color: var(--muted);
-  }
-  .empty {
-    padding: 2rem 1rem;
-    text-align: center;
-    color: var(--muted);
-    font-family: var(--font-mono);
-    font-size: 0.74rem;
-    letter-spacing: 0.16em;
-    text-transform: uppercase;
-  }
+  /* .chip e .chip.on agora vivem em app.css (mesmos valores) */
   a.btn {
     text-decoration: none;
     display: inline-block;

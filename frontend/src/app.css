@@ -1,5 +1,13 @@
 @import url("https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap");
 
+/* Escala de breakpoints do app. Media query não aceita var(), então os
+   literais abaixo são a referência única — não inventar um quarto valor
+   numa página qualquer.
+     560px  telefone em pé
+     700px  limite do modo card das tabelas
+     880px  colapso da sidebar (já em uso)
+    1180px  largura máxima de main */
+
 :root {
   --brand: #111827;
   --bg: #fafaf7;
@@ -317,4 +325,152 @@ label.field .err {
   letter-spacing: 0.14em;
   text-transform: uppercase;
   border-top: 1px dashed var(--line);
+}
+
+/* ---------- Tabelas ---------- */
+
+.table-wrap {
+  border: 1px solid var(--line);
+  overflow-x: auto;
+  margin-top: 1rem;
+}
+
+/* ---------- Badge (etiqueta pequena, ex.: contadores) ---------- */
+
+.badge {
+  font-family: var(--font-mono);
+  font-size: 0.6rem;
+  padding: 0.05rem 0.4rem;
+  border: 1px solid var(--line-strong);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+/* ---------- Hint (texto auxiliar pequeno) ---------- */
+
+.hint {
+  color: var(--muted);
+}
+
+/* ---------- Chip (filtro clicável) ---------- */
+
+.chip {
+  font-size: 0.72rem;
+  padding: 0.05rem 0.45rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: var(--paper);
+  color: var(--muted);
+  cursor: pointer;
+}
+.chip.on {
+  background: var(--brand);
+  border-color: var(--brand);
+  color: #fff;
+}
+
+/* ---------- Toggle (label de checkbox) ---------- */
+
+.toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.66rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+  cursor: pointer;
+}
+.toggle input {
+  width: auto;
+  margin: 0;
+}
+
+/* ---------- Subtab (navegação secundária em abas) ---------- */
+
+.subtab {
+  flex: 1 1 0;
+  min-width: 130px;
+  background: transparent;
+  color: var(--muted);
+  border: 0;
+  border-right: 1px solid var(--line);
+  padding: 0.75rem 1rem;
+  font-family: var(--font-display);
+  font-size: 0.95rem;
+  letter-spacing: 0.02em;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  justify-content: flex-start;
+  transition:
+    background 120ms ease,
+    color 120ms ease;
+}
+.subtab:last-child {
+  border-right: 0;
+}
+.subtab:hover {
+  background: rgba(26, 26, 29, 0.04);
+  color: var(--ink);
+}
+.subtab.active {
+  background: var(--ink);
+  color: var(--paper);
+}
+.subtab.active:hover {
+  background: var(--ink);
+}
+.subtab .idx {
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.18em;
+  opacity: 0.55;
+}
+.subtab .badge {
+  margin-left: auto;
+  font-size: 0.64rem;
+  letter-spacing: 0.1em;
+  padding: 0.1rem 0.4rem;
+  border: 1px solid currentColor;
+  opacity: 0.8;
+}
+
+/* ---------- Alvos de toque (telefone) ----------
+   Abaixo de 700px a mão substitui o cursor: chip, tiny e checkbox de
+   linha crescem em área clicável (padding), nunca em tamanho de fonte —
+   a escala tipográfica do app não muda. Em telas largas a densidade
+   original (pensada pra mouse) permanece intacta. */
+@media (max-width: 700px) {
+  .chip {
+    min-height: 44px;
+    padding: 0.4rem 0.7rem;
+    display: inline-flex;
+    align-items: center;
+  }
+  button.tiny {
+    min-height: 44px;
+    padding: 0.55rem 0.8rem;
+  }
+  .toggle {
+    min-height: 44px;
+    padding-block: 0.4rem;
+  }
+  .toggle input {
+    width: 1.2em;
+    height: 1.2em;
+  }
+  /* Checkboxes de linha fora de .toggle (ex.: "vendido" em Contábil,
+     "multi-cor" no orçamento) — regra genérica por seletor de elemento,
+     única fonte que alcança todas as páginas sem duplicar CSS local. */
+  label:has(> input[type="checkbox"]) {
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+    padding-block: 0.4rem;
+  }
+  input[type="checkbox"] {
+    width: 1.2em;
+    height: 1.2em;
+  }
 }

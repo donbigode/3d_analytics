@@ -20,4 +20,14 @@ export default defineConfig({
       },
     },
   },
+  test: {
+    include: ["src/**/*.test.ts"],
+    environment: "node",
+    alias: {
+      // $app/* só existe no runtime do SvelteKit; os testes de lógica pura
+      // não tocam navegação, mas o grafo de imports passa por aqui.
+      "$app/navigation": new URL("./src/test/stubs/navigation.ts", import.meta.url).pathname,
+      "$app/stores": new URL("./src/test/stubs/stores.ts", import.meta.url).pathname,
+    },
+  },
 });

@@ -1,6 +1,7 @@
 {% extends "_base.html" %}
+{% from "_base.html" import moeda, numero %}
 {% block content %}
-<h1>{{ "Ficha de custo" if quote.kind == "personal" else "Orçamento" }} #{{ quote.id }}</h1>
+<h1>{{ "Ficha de custo" if quote.kind == "personal" else "Orçamento" }} {{ numero(quote.seq) }}</h1>
 {% if quote.client %}<p>Cliente: <strong>{{ quote.client }}</strong></p>{% endif %}
 <p>Status: {{ quote.status }}</p>
 
@@ -59,10 +60,10 @@
       {% if not retail_mode %}<td>{{ it.time_s }}</td>{% endif %}
       <td>{{ it.qty }}</td>
       {% if retail_mode %}
-        <td>{{ currency }} {{ "%.2f"|format(it.client_price_per_piece) }}</td>
-        <td>{{ currency }} {{ "%.2f"|format(it.client_price) }}</td>
+        <td>{{ moeda(it.client_price_per_piece, currency) }}</td>
+        <td>{{ moeda(it.client_price, currency) }}</td>
       {% else %}
-        <td>{{ currency }} {{ "%.2f"|format(it.subtotal) }}</td>
+        <td>{{ moeda(it.subtotal, currency) }}</td>
       {% endif %}
     </tr>
   {% endfor %}
@@ -89,7 +90,7 @@
   <thead><tr><th>Serviço</th><th>Quantidade</th><th>Taxa</th><th>Subtotal</th></tr></thead>
   <tbody>
   {% for s in services %}
-    <tr><td>{{ s.name }}</td><td>{{ s.qty }}</td><td>{{ currency }} {{ "%.2f"|format(s.rate) }}</td><td>{{ currency }} {{ "%.2f"|format(s.subtotal) }}</td></tr>
+    <tr><td>{{ s.name }}</td><td>{{ s.qty }}</td><td>{{ moeda(s.rate, currency) }}</td><td>{{ moeda(s.subtotal, currency) }}</td></tr>
   {% endfor %}
   </tbody>
 </table>
@@ -99,13 +100,13 @@
   {% if retail_mode %}
     <div>Quantidade total: <strong>{{ total_pieces }}</strong> peça{{ "s" if total_pieces != 1 else "" }}</div>
     {% if total_pieces > 1 %}
-      <div>Preço por peça: <strong>{{ currency }} {{ "%.2f"|format(price_per_piece) }}</strong></div>
+      <div>Preço por peça: <strong>{{ moeda(price_per_piece, currency) }}</strong></div>
     {% endif %}
-    <div class="grand">Total: {{ currency }} {{ "%.2f"|format(totals.total) }}</div>
+    <div class="grand">Total: {{ moeda(totals.total, currency) }}</div>
   {% elif quote.kind == "commercial" %}
-    <div class="grand">Total: {{ currency }} {{ "%.2f"|format(totals.total) }}</div>
+    <div class="grand">Total: {{ moeda(totals.total, currency) }}</div>
   {% else %}
-    <div class="grand">Custo total: {{ currency }} {{ "%.2f"|format(totals.cost) }}</div>
+    <div class="grand">Custo total: {{ moeda(totals.cost, currency) }}</div>
   {% endif %}
 </div>
 {% endblock %}

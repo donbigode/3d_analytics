@@ -21,7 +21,8 @@ async def _seed_commercial_quote() -> str:
 @pytest.mark.asyncio
 async def test_sales_listed_after_sync_and_patch(auth_client):
     await _seed_commercial_quote()
-    # GET dispara o sync e materializa a venda
+    # O sync agora é explícito — o GET é só leitura (Spec 2 §6.1).
+    await auth_client.post("/accounting/sync")
     r = await auth_client.get("/accounting/sales")
     assert r.status_code == 200, r.text
     rows = r.json()
@@ -39,21 +40,28 @@ async def test_sales_listed_after_sync_and_patch(auth_client):
 
 
 @pytest.mark.asyncio
-async def test_confirming_sale_backfills_revenue_and_date(auth_client):
-    """Confirmar a venda sem (ou com null explícito) receita/data preenche
-    defaults a partir de quote_total/hoje — nunca deixa venda vendida sem receita."""
+async def test_confirming_sale_requires_date_and_defaults_revenue(auth_client):
+    """A receita ainda ganha default de quote_total; a DATA passou a ser
+    obrigatória — antes era preenchida com hoje, escondido, e a venda caía
+    no mês errado do DRE. Ver Spec 2 §4.1."""
     await _seed_commercial_quote()
+    await auth_client.post("/accounting/sync")
     sale = (await auth_client.get("/accounting/sales")).json()[0]
     quote_total = sale["quote_total"]
 
     r = await auth_client.patch(f"/accounting/sales/{sale['id']}", json={
         "is_sold": True, "confirmed_revenue": None, "sold_at": None,
     })
+    assert r.status_code == 422, r.text
+
+    r = await auth_client.patch(f"/accounting/sales/{sale['id']}", json={
+        "is_sold": True, "confirmed_revenue": None, "sold_at": "2026-06-10",
+    })
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["is_sold"] is True
     assert body["confirmed_revenue"] == quote_total
-    assert body["sold_at"] is not None
+    assert body["sold_at"] == "2026-06-10"
 
 
 @pytest.mark.asyncio
@@ -149,6 +157,8 @@ async def test_sales_have_itens_label(auth_client):
         await s.commit()
         qid = str(q.id)
 
+    # O sync agora é explícito — o GET é só leitura (Spec 2 §6.1).
+    await auth_client.post("/accounting/sync")
     r = await auth_client.get("/accounting/sales")
     assert r.status_code == 200, r.text
     sale = next(x for x in r.json() if x["quote_id"] == qid)
@@ -181,6 +191,8 @@ async def test_sales_have_client_name(auth_client):
         s.add(q); await s.commit()
         qid = str(q.id)
 
+    # O sync agora é explícito — o GET é só leitura (Spec 2 §6.1).
+    await auth_client.post("/accounting/sync")
     r = await auth_client.get("/accounting/sales")
     assert r.status_code == 200, r.text
     sale = next(x for x in r.json() if x["quote_id"] == qid)

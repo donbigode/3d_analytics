@@ -1,7 +1,8 @@
 from datetime import datetime
 from decimal import Decimal
 from uuid import UUID, uuid4
-from sqlalchemy import Boolean, DateTime, ForeignKey, Numeric, String, Text, false, func
+import sqlalchemy as sa
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, Numeric, String, Text, false, func
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 from backend.infra.db.base import Base
@@ -12,6 +13,12 @@ class Quote(Base):
     __tablename__ = "quotes"
 
     id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    # Número humano do orçamento (#0042). Preenchido pelo banco via sequence;
+    # nunca passado pela aplicação. O id (UUID) segue sendo a chave.
+    seq: Mapped[int] = mapped_column(
+        Integer, nullable=False, unique=True,
+        server_default=sa.text("nextval('quote_seq')"),
+    )
     kind: Mapped[QuoteKind] = mapped_column(String(20), nullable=False)
     client_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("clients.id"))
     user_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)

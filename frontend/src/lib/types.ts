@@ -111,6 +111,20 @@ export type QuotePhoto = {
   sort_order: number;
 };
 
+// Uma baixa de material: qual bobina, quantas gramas, a que custo e quando.
+// Reimpressão depois de falha aparece como entrada adicional, com data própria.
+export type Consumption = {
+  spool_id: string;
+  spool_label: string;
+  material_type: string;
+  color: string | null;
+  manufacturer: string | null;
+  grams_used: string;
+  unit_cost_snapshot: string;
+  custo_total: string;
+  consumed_at: string;
+};
+
 export type QuoteItem = {
   id: string;
   name: string;
@@ -132,6 +146,7 @@ export type QuoteItem = {
   model_source_author?: string | null;
   model_source_license?: string | null;
   photos?: QuotePhoto[];
+  consumptions?: Consumption[];
 };
 
 export type QuoteServiceLine = {
@@ -144,6 +159,7 @@ export type QuoteServiceLine = {
 
 export type Quote = {
   id: string;
+  seq: number;
   kind: QuoteKind;
   client_id: string | null;
   status: QuoteStatus;
@@ -227,11 +243,11 @@ export type DashboardOut = {
     receita_vs_despesa: Array<{ period: string; receita: number; despesa: number }>;
     funil: { orcado: number; aprovado: number; produzido: number; entregue: number };
     despesa_categorias: Record<string, number>;
-    orcado_vs_real: Array<{ quote_id: string; orcado: number; real: number; variancia_pct: number }>;
+    orcado_vs_real: Array<{ quote_id: string; seq: number; orcado: number; real: number; variancia_pct: number }>;
   };
   lists: {
-    ultimos_orcamentos: Array<{ id: string; kind: string; status: string; created_at: string | null }>;
-    parados: Array<{ id: string; approved_at: string | null }>;
+    ultimos_orcamentos: Array<{ id: string; seq: number; kind: string; status: string; created_at: string | null }>;
+    parados: Array<{ id: string; seq: number; approved_at: string | null }>;
     spools_baixos: Array<{ id: string; material_type: string; remaining_grams: number }>;
     inbox: Array<{ id: string; original_path: string; parsed_meta: unknown }>;
   };
@@ -437,13 +453,21 @@ export type RankingRow = {
 export type Sale = {
   id: string;
   quote_id: string;
+  quote_seq: number;
   quote_kind: string;
+  produced_on: string | null;
+  // Critério de perda operacional do DRE (produced_on OU sale.created_at,
+  // ver backend/api/routes/accounting.py:_loss_on) — nunca null pra uma
+  // linha existente. É o campo certo pra filtrar "isso pesa na perda desse
+  // período?"; produced_on é só a data de produção de fato (pode ser null).
+  loss_on: string;
   quote_status: string;
   quote_total: string;
   cpv_calc: string;
   itens_label: string;
   client_id: string | null;
   client_name: string | null;
+  people: string[];
   is_stale: boolean;
   is_sold: boolean;
   confirmed_revenue: string | null;

@@ -1,10 +1,13 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { api, errorMessage } from "$lib/api";
-  import { handleApiError, requireAuth } from "$lib/guard";
+  import { api } from "$lib/api";
+  import { requireAuth } from "$lib/guard";
+  import { resource, action } from "$lib/resource";
   import { appSettings } from "$lib/stores/settings";
   import Table from "$lib/components/Table.svelte";
+  import SearchBar from "$lib/components/SearchBar.svelte";
   import Form from "$lib/components/Form.svelte";
+  import { countShown } from "$lib/table-search";
   import type { Spool, SpoolStatus, Material } from "$lib/types";
 
   const STATUS: { value: SpoolStatus; label: string }[] = [
@@ -13,10 +16,72 @@
     { value: "discarded", label: "Descartado" },
   ];
 
-  let rows: Spool[] = [];
-  let materials: Material[] = [];
-  let loading = true;
-  let listError = "";
+  type SpoolsData = { spools: Spool[]; materials: Material[] };
+  const dataRes = resource<SpoolsData>(
+    async () => {
+      const [s, m] = await Promise.all([api<Spool[]>("/spools"), api<Material[]>("/materials")]);
+      return { spools: s, materials: m };
+    },
+    { initial: { spools: [], materials: [] }, errorMessage: "Falha ao carregar bobinas.", auto: false },
+  );
+  $: rows = $dataRes.data?.spools ?? [];
+  $: materials = $dataRes.data?.materials ?? [];
+
+  // Busca cobre material, cor e fabricante — fabricante entra pela própria
+  // formatação da coluna "Material" (junto do tipo), então não precisa de
+  // searchExtra.
+  let q = "";
+  const columns = [
+    {
+      key: "material_type",
+      label: "Material",
+      mono: true,
+      sortable: true,
+      format: (_v: unknown, row: Record<string, unknown>) =>
+        `${row.material_type}${row.manufacturer ? ` · ${row.manufacturer}` : ""}`,
+    },
+    { key: "color", label: "Cor" },
+    {
+      key: "remaining_grams",
+      label: "Restante (g)",
+      mono: true,
+      align: "right" as const,
+      sortable: true,
+      format: (v: unknown) => String(v),
+    },
+    {
+      key: "initial_grams",
+      label: "Inicial (g)",
+      mono: true,
+      align: "right" as const,
+      sortable: true,
+      format: (v: unknown) => String(v),
+    },
+    {
+      key: "status",
+      label: "Status",
+      align: "center" as const,
+      sortable: true,
+      format: (v: unknown) => statusLabel(v as string),
+    },
+  ];
+  $: mostrados = countShown(rows, q, columns);
+  // Pré-seleciona o primeiro material do catálogo no formulário de criação
+  // assim que a carga chegar — mesmo efeito que o load() fazia antes.
+  $: if (!material_id && materials[0]) material_id = materials[0].id;
+
+  const deleteAction = action((id: string) => api(`/spools/${id}`, { method: "DELETE" }), {
+    errorMessage: "Não foi possível excluir a bobina.",
+  });
+  // O alerta da lista e o alerta do modal de edição dividem o erro de
+  // exclusão (a exclusão pode ser disparada da linha OU de dentro do modal
+  // aberto) — mostra em só um lugar por vez, igual ao if/else original.
+  $: listError = $dataRes.error || (editing ? "" : $deleteAction.error);
+  $: busy = $editAction.pending || $deleteAction.pending;
+  function reloadSpools() {
+    deleteAction.reset();
+    return dataRes.reload();
+  }
 
   let material_id = "";
   let purchased_from = "";
@@ -27,17 +92,32 @@
   let remaining_grams = "";
   let status: SpoolStatus = "open";
   let notes = "";
-  let submitting = false;
-  let formError = "";
+  const createAction = action(
+    (body: Record<string, unknown>) =>
+      api<Spool>("/spools", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      }),
+    { errorMessage: "Não foi possível registrar a bobina." },
+  );
 
   let editing: Spool | null = null;
   let editMaterialId = "";
-  let editError = "";
-  let editSubmitting = false;
+  const editAction = action(
+    (id: string, body: Record<string, unknown>) =>
+      api<Spool>(`/spools/${id}`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      }),
+    { errorMessage: "Falha ao salvar bobina." },
+  );
 
   function openEdit(row: Spool) {
     editing = { ...row };
-    editError = "";
+    editAction.reset();
+    deleteAction.reset();
     // Pre-select the catalog material that best matches this spool's snapshot
     // (type + color + manufacturer), so editing carries the full identity.
     const exact = materials.find(
@@ -60,108 +140,54 @@
 
   $: lowThreshold = Number($appSettings?.low_spool_threshold_g ?? 0);
 
-  async function load() {
-    loading = true;
-    listError = "";
-    try {
-      const [s, m] = await Promise.all([
-        api<Spool[]>("/spools"),
-        api<Material[]>("/materials"),
-      ]);
-      rows = s;
-      materials = m;
-      if (!material_id && materials[0]) material_id = materials[0].id;
-    } catch (err) {
-      handleApiError(err);
-      listError = errorMessage(err, "Falha ao carregar bobinas.");
-    } finally {
-      loading = false;
-    }
-  }
-
   async function create() {
-    formError = "";
-    submitting = true;
-    try {
-      const mat = materials.find((m) => m.id === material_id);
-      await api<Spool>("/spools", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          material_type: mat?.material_type ?? "",
-          color: mat?.color ?? null,
-          manufacturer: mat?.manufacturer ?? null,
-          purchased_from: purchased_from || null,
-          purchase_url: purchase_url || null,
-          purchased_at: new Date(purchased_at).toISOString(),
-          purchased_price,
-          initial_grams,
-          remaining_grams: remaining_grams || initial_grams,
-          status,
-          notes: notes || null,
-        }),
-      });
-      purchased_from = purchase_url = purchased_price = initial_grams = remaining_grams = notes = "";
-      status = "open";
-      purchased_at = new Date().toISOString().slice(0, 10);
-      await load();
-    } catch (err) {
-      handleApiError(err);
-      formError = errorMessage(err, "Não foi possível registrar a bobina.");
-    } finally {
-      submitting = false;
-    }
+    const mat = materials.find((m) => m.id === material_id);
+    const created = await createAction.run({
+      material_type: mat?.material_type ?? "",
+      color: mat?.color ?? null,
+      manufacturer: mat?.manufacturer ?? null,
+      purchased_from: purchased_from || null,
+      purchase_url: purchase_url || null,
+      purchased_at: new Date(purchased_at).toISOString(),
+      purchased_price,
+      initial_grams,
+      remaining_grams: remaining_grams || initial_grams,
+      status,
+      notes: notes || null,
+    });
+    if (!created) return;
+    purchased_from = purchase_url = purchased_price = initial_grams = remaining_grams = notes = "";
+    status = "open";
+    purchased_at = new Date().toISOString().slice(0, 10);
+    await reloadSpools();
   }
 
   async function saveEdit() {
     if (!editing) return;
-    editError = "";
-    editSubmitting = true;
-    try {
-      await api<Spool>(`/spools/${editing.id}`, {
-        method: "PUT",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          material_type: editing.material_type,
-          color: editing.color || null,
-          manufacturer: editing.manufacturer || null,
-          purchased_from: editing.purchased_from || null,
-          purchase_url: editing.purchase_url || null,
-          purchased_at: editing.purchased_at,
-          purchased_price: editing.purchased_price,
-          initial_grams: editing.initial_grams,
-          remaining_grams: editing.remaining_grams,
-          status: editing.status,
-          notes: editing.notes || null,
-        }),
-      });
-      editing = null;
-      await load();
-    } catch (err) {
-      handleApiError(err);
-      editError = errorMessage(err, "Falha ao salvar bobina.");
-    } finally {
-      editSubmitting = false;
-    }
+    const updated = await editAction.run(editing.id, {
+      material_type: editing.material_type,
+      color: editing.color || null,
+      manufacturer: editing.manufacturer || null,
+      purchased_from: editing.purchased_from || null,
+      purchase_url: editing.purchase_url || null,
+      purchased_at: editing.purchased_at,
+      purchased_price: editing.purchased_price,
+      initial_grams: editing.initial_grams,
+      remaining_grams: editing.remaining_grams,
+      status: editing.status,
+      notes: editing.notes || null,
+    });
+    if (!updated) return;
+    editing = null;
+    await reloadSpools();
   }
 
   async function deleteSpool(sp: Spool) {
     if (!confirm("Excluir esta bobina? Se ela já foi consumida em uma produção, prefira marcá-la como Descartada.")) return;
-    editError = "";
-    listError = "";
-    editSubmitting = true;
-    try {
-      await api(`/spools/${sp.id}`, { method: "DELETE" });
-      if (editing?.id === sp.id) editing = null;
-      await load();
-    } catch (err) {
-      handleApiError(err);
-      const msg = errorMessage(err, "Não foi possível excluir a bobina.");
-      if (editing) editError = msg;
-      else listError = msg;
-    } finally {
-      editSubmitting = false;
-    }
+    await deleteAction.run(sp.id);
+    if ($deleteAction.error) return;
+    if (editing?.id === sp.id) editing = null;
+    await dataRes.reload();
   }
 
   function pctRemaining(r: Spool): number {
@@ -176,7 +202,7 @@
 
   onMount(() => {
     if (requireAuth()) return;
-    load();
+    reloadSpools();
   });
 </script>
 
@@ -193,8 +219,8 @@
   eyebrow="Nova bobina"
   title="Registrar bobina"
   submitLabel="Adicionar"
-  {submitting}
-  error={formError}
+  submitting={$createAction.pending}
+  error={$createAction.error}
   allowSubmit={materials.length > 0}
   on:submit={create}
 >
@@ -257,43 +283,26 @@
         <span class="threshold mono">limiar: {lowThreshold}g</span>
       {/if}
     </h2>
-    <button class="tiny ghost" on:click={load} disabled={loading}>
-      {loading ? "Carregando…" : "Atualizar"}
+    <button class="tiny ghost" on:click={reloadSpools} disabled={$dataRes.loading}>
+      {$dataRes.loading ? "Carregando…" : "Atualizar"}
     </button>
   </div>
   {#if listError}<div class="alert">{listError}</div>{/if}
+  <SearchBar
+    bind:value={q}
+    total={rows.length}
+    shown={mostrados}
+    placeholder="buscar por material, cor ou fabricante…"
+  />
   <Table
-    columns={[
-      {
-        key: "material_type",
-        label: "Material",
-        mono: true,
-        format: (_v, row) =>
-          `${row.material_type}${row.manufacturer ? ` · ${row.manufacturer}` : ""}`,
-      },
-      { key: "color", label: "Cor" },
-      {
-        key: "remaining_grams",
-        label: "Restante (g)",
-        mono: true,
-        align: "right",
-        format: (v) => String(v),
-      },
-      {
-        key: "initial_grams",
-        label: "Inicial (g)",
-        mono: true,
-        align: "right",
-        format: (v) => String(v),
-      },
-      { key: "status", label: "Status", align: "center", format: (v) => statusLabel(v as string) },
-    ]}
+    {columns}
     {rows}
+    searchText={q}
     empty="Nenhuma bobina registrada"
   >
     <svelte:fragment slot="actions" let:row>
       <button class="tiny ghost" on:click={() => openEdit(row as Spool)}>Ajustar</button>
-      <button class="tiny danger" on:click={() => deleteSpool(row as Spool)} disabled={editSubmitting}>Excluir</button>
+      <button class="tiny danger" on:click={() => deleteSpool(row as Spool)} disabled={busy}>Excluir</button>
     </svelte:fragment>
   </Table>
 
@@ -321,7 +330,7 @@
   <div class="modal-backdrop" on:click|self={() => (editing = null)}>
     <div class="modal">
       <h2>Ajustar bobina</h2>
-      {#if editError}<div class="alert">{editError}</div>{/if}
+      {#if $editAction.error || $deleteAction.error}<div class="alert">{$editAction.error || $deleteAction.error}</div>{/if}
       <form on:submit|preventDefault={saveEdit} class="form-grid">
         <label class="field">
           Material
@@ -372,13 +381,13 @@
           <input bind:value={editing.notes} />
         </label>
         <div class="actions">
-          <button type="button" class="danger" on:click={() => editing && deleteSpool(editing)} disabled={editSubmitting}>
+          <button type="button" class="danger" on:click={() => editing && deleteSpool(editing)} disabled={busy}>
             Excluir
           </button>
           <span class="spacer"></span>
           <button type="button" class="ghost" on:click={() => (editing = null)}>Cancelar</button>
-          <button type="submit" disabled={editSubmitting}>
-            {editSubmitting ? "Salvando…" : "Salvar"}
+          <button type="submit" disabled={busy}>
+            {busy ? "Salvando…" : "Salvar"}
           </button>
         </div>
       </form>
@@ -392,6 +401,9 @@
   }
   .list-panel {
     margin-top: 2rem;
+  }
+  .list-panel :global(.searchbar) {
+    margin-bottom: 1rem;
   }
   .field.full {
     grid-column: 1 / -1;
@@ -415,6 +427,19 @@
     grid-template-columns: minmax(180px, 1fr) minmax(120px, 2fr) auto;
     gap: 0.75rem;
     align-items: center;
+  }
+  /* Abaixo de 700px (mesmo corte do modo card do Table) os dois `minmax`
+     somados (180px + 120px + gap) não cabem em 390px — é o que estourava
+     76px na tela do celular (ver tests/e2e/mobile.spec.ts). Empilha em vez
+     de espremer a barra num track ilegível. */
+  @media (max-width: 700px) {
+    .bar-row {
+      grid-template-columns: 1fr;
+      gap: 0.3rem;
+    }
+    .bar-value {
+      text-align: left;
+    }
   }
   .bar-label {
     font-size: 0.85rem;

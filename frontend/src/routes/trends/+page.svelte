@@ -1,7 +1,9 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { api, errorMessage } from "$lib/api";
-  import { handleApiError, requireAuth } from "$lib/guard";
+  import { api } from "$lib/api";
+  import { requireAuth } from "$lib/guard";
+  import { resource, action } from "$lib/resource";
+  import { num as fmtNum, money as fmtMoney } from "$lib/format";
   import type {
     KeywordIdea,
     LLMSuggestion,
@@ -11,17 +13,56 @@
     SparkPoint,
   } from "$lib/types";
 
-  let ideas: KeywordIdea[] = [];
-  let ranking: RankingRow[] = [];
-  let sources: SourceMetric[] = [];
-  let suggestions: LLMSuggestion[] = [];
-  let loading = true;
-  let listError = "";
+  type TrendsData = {
+    ideas: KeywordIdea[];
+    ranking: RankingRow[];
+    sources: SourceMetric[];
+    suggestions: LLMSuggestion[];
+  };
+  const data = resource<TrendsData>(
+    async () => {
+      const [i, r, s, su] = await Promise.all([
+        api<KeywordIdea[]>("/trends/ideas"),
+        api<RankingRow[]>("/trends/ranking"),
+        api<SourceMetricsOut>("/trends/sources"),
+        api<LLMSuggestion[]>("/trends/suggestions?status=pending"),
+      ]);
+      return { ideas: i, ranking: r, sources: s.sources, suggestions: su };
+    },
+    {
+      initial: { ideas: [], ranking: [], sources: [], suggestions: [] },
+      errorMessage: "Falha ao carregar tendências.",
+      auto: false,
+    },
+  );
+  $: ideas = $data.data?.ideas ?? [];
+  $: ranking = $data.data?.ranking ?? [];
+  $: sources = $data.data?.sources ?? [];
+  $: suggestions = $data.data?.suggestions ?? [];
 
-  let llmRefreshing = false;
-  let llmBanner = "";
+  const removeIdeaAction = action((id: string) => api(`/trends/ideas/${id}`, { method: "DELETE" }), {
+    errorMessage: "Falha ao remover.",
+  });
+  const promoteSuggestionAction = action(
+    (id: string) => api(`/trends/suggestions/${id}/promote`, { method: "POST" }),
+    { errorMessage: "Falha ao promover sugestão." },
+  );
+  const dismissSuggestionAction = action(
+    (id: string) => api(`/trends/suggestions/${id}/dismiss`, { method: "POST" }),
+    { errorMessage: "Falha ao descartar sugestão." },
+  );
+  // Painel de ranking/inbox: erro de carga e das três mutações pontuais
+  // (remover termo, promover sugestão, descartar sugestão) dividem um único
+  // alerta — um reload() bem-sucedido precisa limpar o erro velho das outras.
+  $: listError = $data.error || $removeIdeaAction.error || $promoteSuggestionAction.error || $dismissSuggestionAction.error;
+  function reloadData() {
+    removeIdeaAction.reset();
+    promoteSuggestionAction.reset();
+    dismissSuggestionAction.reset();
+    return data.reload();
+  }
+
   let actingSuggestion: string | null = null;
-  let promotingAll = false;
 
   type Window = "day" | "week" | "month" | "all";
   let activeWindow: Window = "all";
@@ -29,152 +70,105 @@
   // create form
   let newTerm = "";
   let newNotes = "";
-  let submitting = false;
-  let formError = "";
+  const addIdeaAction = action(
+    (term: string, notes: string | null) =>
+      api<KeywordIdea>("/trends/ideas", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ term, notes }),
+      }),
+    { errorMessage: "Falha ao adicionar termo." },
+  );
 
-  // refresh
-  let refreshing = false;
+  // refresh (coleta Google Trends + Mercado Livre)
   let refreshBanner = "";
+  const refreshAction = action(
+    () => api<{ observations_created: number }>("/trends/refresh", { method: "POST" }),
+    { errorMessage: "Falha ao atualizar tendências." },
+  );
+
+  // coleta LLM + promover-todas: dividem o mesmo banner, mas cada função já
+  // limpa e resolve o próprio valor de ponta a ponta (sem combinar stores),
+  // então não há erro velho a vazar de uma pra outra.
+  let llmBanner = "";
+  const llmRefreshAction = action(
+    () =>
+      api<{ status: string; items_created: number; error: string | null }>("/trends/llm-refresh", {
+        method: "POST",
+      }),
+    { errorMessage: "Falha na coleta LLM." },
+  );
+  const promoteAllAction = action(
+    () => api<{ promoted: number }>("/trends/suggestions/promote-all", { method: "POST" }),
+    { errorMessage: "Falha ao promover sugestões." },
+  );
 
   let expanded: string | null = null;
 
-  async function load() {
-    loading = true;
-    listError = "";
-    try {
-      const [i, r, s, su] = await Promise.all([
-        api<KeywordIdea[]>("/trends/ideas"),
-        api<RankingRow[]>("/trends/ranking"),
-        api<SourceMetricsOut>("/trends/sources"),
-        api<LLMSuggestion[]>("/trends/suggestions?status=pending"),
-      ]);
-      ideas = i;
-      ranking = r;
-      sources = s.sources;
-      suggestions = su;
-    } catch (err) {
-      handleApiError(err);
-      listError = errorMessage(err, "Falha ao carregar tendências.");
-    } finally {
-      loading = false;
-    }
-  }
-
   async function addIdea() {
     if (!newTerm.trim()) return;
-    formError = "";
-    submitting = true;
-    try {
-      await api<KeywordIdea>("/trends/ideas", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          term: newTerm.trim(),
-          notes: newNotes.trim() || null,
-        }),
-      });
-      newTerm = "";
-      newNotes = "";
-      await load();
-    } catch (err) {
-      handleApiError(err);
-      formError = errorMessage(err, "Falha ao adicionar termo.");
-    } finally {
-      submitting = false;
-    }
+    const created = await addIdeaAction.run(newTerm.trim(), newNotes.trim() || null);
+    if (!created) return;
+    newTerm = "";
+    newNotes = "";
+    await reloadData();
   }
 
   async function removeIdea(id: string) {
     if (!confirm("Remover este termo? As observações também vão embora.")) return;
-    try {
-      await api(`/trends/ideas/${id}`, { method: "DELETE" });
-      await load();
-    } catch (err) {
-      handleApiError(err);
-      listError = errorMessage(err, "Falha ao remover.");
-    }
+    await removeIdeaAction.run(id);
+    if (!$removeIdeaAction.error) await reloadData();
   }
 
   async function refreshNow() {
-    refreshing = true;
     refreshBanner = "";
-    try {
-      const res = await api<{ observations_created: number }>("/trends/refresh", {
-        method: "POST",
-      });
-      refreshBanner = `Coleta concluída · ${res.observations_created} observações novas.`;
-      await load();
-    } catch (err) {
-      handleApiError(err);
-      refreshBanner = errorMessage(err, "Falha ao atualizar tendências.");
-    } finally {
-      refreshing = false;
+    const res = await refreshAction.run();
+    if (!res) {
+      refreshBanner = $refreshAction.error;
+      return;
     }
+    refreshBanner = `Coleta concluída · ${res.observations_created} observações novas.`;
+    await reloadData();
   }
 
   async function llmRefreshNow() {
-    llmRefreshing = true;
     llmBanner = "";
-    try {
-      const res = await api<{ status: string; items_created: number; error: string | null }>(
-        "/trends/llm-refresh",
-        { method: "POST" },
-      );
-      llmBanner = res.status === "error"
-        ? `Falhou: ${res.error}`
-        : `LLM gerou ${res.items_created} sugest${res.items_created === 1 ? "ão" : "ões"}.`;
-      await load();
-    } catch (err) {
-      handleApiError(err);
-      llmBanner = errorMessage(err, "Falha na coleta LLM.");
-    } finally {
-      llmRefreshing = false;
+    const res = await llmRefreshAction.run();
+    if (!res) {
+      llmBanner = $llmRefreshAction.error;
+      return;
     }
+    llmBanner = res.status === "error"
+      ? `Falhou: ${res.error}`
+      : `LLM gerou ${res.items_created} sugest${res.items_created === 1 ? "ão" : "ões"}.`;
+    await reloadData();
   }
 
   async function promoteSuggestion(id: string) {
     actingSuggestion = id;
-    try {
-      await api(`/trends/suggestions/${id}/promote`, { method: "POST" });
-      await load();
-    } catch (err) {
-      handleApiError(err);
-      listError = errorMessage(err, "Falha ao promover sugestão.");
-    } finally {
-      actingSuggestion = null;
-    }
+    await promoteSuggestionAction.run(id);
+    actingSuggestion = null;
+    if (!$promoteSuggestionAction.error) await reloadData();
   }
 
   async function promoteAllSuggestions() {
     if (suggestions.length === 0) return;
     if (!confirm(`Promover todas as ${suggestions.length} sugestões pendentes?`)) return;
-    promotingAll = true;
     llmBanner = "";
-    try {
-      const res = await api<{ promoted: number }>("/trends/suggestions/promote-all", {
-        method: "POST",
-      });
-      llmBanner = `${res.promoted} sugest${res.promoted === 1 ? "ão promovida" : "ões promovidas"}.`;
-      await load();
-    } catch (err) {
-      handleApiError(err);
-      llmBanner = errorMessage(err, "Falha ao promover sugestões.");
-    } finally {
-      promotingAll = false;
+    const res = await promoteAllAction.run();
+    if (!res) {
+      llmBanner = $promoteAllAction.error;
+      return;
     }
+    llmBanner = `${res.promoted} sugest${res.promoted === 1 ? "ão promovida" : "ões promovidas"}.`;
+    await reloadData();
   }
 
   async function dismissSuggestion(id: string) {
     actingSuggestion = id;
-    try {
-      await api(`/trends/suggestions/${id}/dismiss`, { method: "POST" });
-      await load();
-    } catch (err) {
-      handleApiError(err);
-      listError = errorMessage(err, "Falha ao descartar sugestão.");
-    } finally {
-      actingSuggestion = null;
-    }
+    await dismissSuggestionAction.run(id);
+    actingSuggestion = null;
+    if (!$dismissSuggestionAction.error) await reloadData();
   }
 
   function fmtRelative(s: string | null): string {
@@ -201,27 +195,17 @@
     } as Record<string, string>)[s] || s;
   }
 
-  function num(v: number | string | null | undefined): number | null {
+  // Parser numérico puro (não formata pra exibição) — usado só pela
+  // geometria do sparkline, que precisa dos valores brutos.
+  function toNum(v: number | string | null | undefined): number | null {
     if (v === null || v === undefined) return null;
     const n = typeof v === "string" ? parseFloat(v) : v;
     return Number.isFinite(n) ? n : null;
   }
 
-  function fmtNum(v: number | string | null | undefined, dec = 2): string {
-    const n = num(v);
-    if (n === null) return "—";
-    return n.toLocaleString("pt-BR", { maximumFractionDigits: dec });
-  }
-
-  function fmtMoney(v: number | string | null | undefined): string {
-    const n = num(v);
-    if (n === null) return "—";
-    return n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
-  }
-
   function sparkPath(points: SparkPoint[], w = 120, h = 32): string {
     if (!points || points.length < 2) return "";
-    const values = points.map((p) => num(p.value) ?? 0);
+    const values = points.map((p) => toNum(p.value) ?? 0);
     const min = Math.min(...values);
     const max = Math.max(...values);
     const range = max - min || 1;
@@ -264,7 +248,7 @@
 
   onMount(() => {
     if (requireAuth()) return;
-    load();
+    reloadData();
   });
 </script>
 
@@ -290,31 +274,31 @@
     </div>
   </div>
   <div class="action-grid">
-    <button class="big-action llm" on:click={llmRefreshNow} disabled={llmRefreshing}>
+    <button class="big-action llm" on:click={llmRefreshNow} disabled={$llmRefreshAction.pending}>
       <span class="big-action-eyebrow">LLM</span>
       <span class="big-action-title">Buscar tendências com IA</span>
       <span class="big-action-hint">
-        {llmRefreshing ? "Coletando…" : "Pede 10 candidatos (Claude ou Gemini) com janela dia/semana/mês"}
+        {$llmRefreshAction.pending ? "Coletando…" : "Pede 10 candidatos (Claude ou Gemini) com janela dia/semana/mês"}
       </span>
     </button>
-    <button class="big-action coll" on:click={refreshNow} disabled={refreshing}>
+    <button class="big-action coll" on:click={refreshNow} disabled={$refreshAction.pending}>
       <span class="big-action-eyebrow">Coleta</span>
       <span class="big-action-title">Google Trends + Mercado Livre</span>
       <span class="big-action-hint">
-        {refreshing ? "Coletando…" : "Refaz observações de TODOS os termos cadastrados"}
+        {$refreshAction.pending ? "Coletando…" : "Refaz observações de TODOS os termos cadastrados"}
       </span>
     </button>
     <button
       class="big-action promote"
       on:click={promoteAllSuggestions}
-      disabled={promotingAll || suggestions.length === 0}
+      disabled={$promoteAllAction.pending || suggestions.length === 0}
     >
       <span class="big-action-eyebrow">Inbox</span>
       <span class="big-action-title">
         Adicionar {suggestions.length} sugest{suggestions.length === 1 ? "ão" : "ões"} ao radar
       </span>
       <span class="big-action-hint">
-        {promotingAll
+        {$promoteAllAction.pending
           ? "Promovendo…"
           : suggestions.length === 0
             ? "Nenhuma sugestão pendente"
@@ -367,8 +351,8 @@
         <span class="page-eyebrow">Inbox de sugestões</span>
         <h2 class="form-title">Sugestões do LLM ({suggestions.length} pendentes)</h2>
       </div>
-      <button class="tiny ghost" on:click={llmRefreshNow} disabled={llmRefreshing}>
-        {llmRefreshing ? "Coletando…" : "Coletar agora"}
+      <button class="tiny ghost" on:click={llmRefreshNow} disabled={$llmRefreshAction.pending}>
+        {$llmRefreshAction.pending ? "Coletando…" : "Coletar agora"}
       </button>
     </div>
     {#if suggestions.length === 0}
@@ -411,8 +395,8 @@
       <span class="page-eyebrow">Novo termo</span>
       <h2 class="form-title">Cadastrar palavra-chave</h2>
     </div>
-    <button class="tiny ghost" on:click={refreshNow} disabled={refreshing || ideas.length === 0}>
-      {refreshing ? "Coletando…" : "Atualizar agora"}
+    <button class="tiny ghost" on:click={refreshNow} disabled={$refreshAction.pending || ideas.length === 0}>
+      {$refreshAction.pending ? "Coletando…" : "Atualizar agora"}
     </button>
   </div>
   <form class="form-grid" on:submit|preventDefault={addIdea}>
@@ -425,12 +409,12 @@
       <input bind:value={newNotes} placeholder="contexto livre" />
     </label>
     <div class="actions">
-      <button type="submit" disabled={submitting || !newTerm.trim()}>
-        {submitting ? "Adicionando…" : "Adicionar"}
+      <button type="submit" disabled={$addIdeaAction.pending || !newTerm.trim()}>
+        {$addIdeaAction.pending ? "Adicionando…" : "Adicionar"}
       </button>
     </div>
   </form>
-  {#if formError}<div class="banner alert inline">{formError}</div>{/if}
+  {#if $addIdeaAction.error}<div class="banner alert inline">{$addIdeaAction.error}</div>{/if}
 </section>
 
 <section class="panel">
@@ -452,7 +436,7 @@
     </div>
   </div>
 
-  {#if loading && ranking.length === 0}
+  {#if $data.loading && ranking.length === 0}
     <p class="empty">Carregando ranking…</p>
   {:else if ranking.length === 0}
     <div class="empty-state">
@@ -565,9 +549,11 @@
     letter-spacing: -0.01em;
   }
   .heading { display: flex; flex-direction: column; gap: 0.25rem; }
+  /* Override local: sem centralização e com letter-spacing/padding menores
+     que o padrão global (mantém aparência já existente nesta página) */
   .empty {
     padding: 1.5rem 1rem;
-    color: var(--muted);
+    text-align: left;
     font-family: var(--font-mono);
     font-size: 0.78rem;
     letter-spacing: 0.12em;
@@ -889,14 +875,7 @@
     margin-top: 0.2rem;
   }
   .suggestion-tags { display: inline-flex; gap: 0.35rem; }
-  .badge {
-    font-family: var(--font-mono);
-    font-size: 0.6rem;
-    padding: 0.05rem 0.4rem;
-    border: 1px solid var(--line-strong);
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
-  }
+  /* Base de .badge agora vive em app.css; aqui ficam só as variações de cor */
   .badge.window.day { color: var(--danger); border-color: var(--danger); }
   .badge.window.week { color: var(--brand); border-color: var(--brand); }
   .badge.window.month { color: var(--ok); border-color: var(--ok); }

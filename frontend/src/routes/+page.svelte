@@ -4,6 +4,7 @@
   import { handleApiError, requireAuth } from "$lib/guard";
   import { user } from "$lib/stores/user";
   import type { DashboardOut, DigestOut } from "$lib/types";
+  import { quoteNumber } from "$lib/quote-number";
   import Card from "$lib/components/Card.svelte";
   import Funnel from "$lib/components/Funnel.svelte";
   import Pie from "$lib/components/Pie.svelte";
@@ -329,7 +330,7 @@
               <tbody>
                 {#each orcadoVsReal as row}
                   <tr>
-                    <td><a href={`/quotes/${row.quote_id}`} class="mono">{String(row.quote_id).slice(0, 8)}</a></td>
+                    <td><a href={`/quotes/${row.quote_id}`} class="mono">{quoteNumber(row.seq)}</a></td>
                     <td class="right mono">{fmtMoney(row.orcado)}</td>
                     <td class="right mono">{fmtMoney(row.real)}</td>
                     <td class="right mono" class:over={row.variancia_pct > 0} class:under={row.variancia_pct < 0}>
@@ -356,7 +357,7 @@
             {#each data.lists.ultimos_orcamentos as q}
               <li>
                 <a class="row-link" href={`/quotes/${q.id}`}>
-                  <span class="mono">{q.id.slice(0, 8)}</span>
+                  <span class="mono">{quoteNumber(q.seq)}</span>
                   <span class="tag {q.kind === 'commercial' ? 'brand' : 'muted'}">{q.kind}</span>
                   <span class="tag muted">{statusLabel(q.status)}</span>
                   <span class="mono dim">{fmtDate(q.created_at)}</span>
@@ -378,7 +379,7 @@
             {#each data.lists.parados as p}
               <li>
                 <a class="row-link" href={`/quotes/${p.id}`}>
-                  <span class="mono">{p.id.slice(0, 8)}</span>
+                  <span class="mono">{quoteNumber(p.seq)}</span>
                   <span class="mono dim">aprovado em {fmtDate(p.approved_at)}</span>
                 </a>
               </li>
