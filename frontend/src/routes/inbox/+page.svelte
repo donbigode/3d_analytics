@@ -5,6 +5,7 @@
   import { requireAuth } from "$lib/guard";
   import { resource, action } from "$lib/resource";
   import { dateTime as fmtDate, num as fmtNum, dur as fmtDur } from "$lib/format";
+  import { quoteNumber } from "$lib/quote-number";
   import type {
     AutoNameOut,
     Client,
@@ -294,7 +295,7 @@
           <select bind:value={aQuote}>
             <option value="">— escolha —</option>
             {#each $quotes.data ?? [] as q}
-              <option value={q.id}>{q.id.slice(0, 8)} · {q.kind} · {q.status}</option>
+              <option value={q.id}>{quoteNumber(q.seq)} · {q.kind} · {q.status}</option>
             {/each}
           </select>
         </label>

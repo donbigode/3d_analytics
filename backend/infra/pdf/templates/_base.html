@@ -1,3 +1,15 @@
+{# Macros compartilhadas pelos templates de PDF — Spec 0 §6. A formatação de
+   moeda estava duplicada inline em quote.html; o valor do currency segue
+   vindo do contexto de chamada (settings), então é passado como parâmetro
+   em vez de depender de import "with context". #}
+{% macro moeda(v, currency) %}{{ currency }} {{ "%.2f"|format(v) }}{% endmacro %}
+{# numero() tolera seq ausente/Undefined: um PDF que vai pro cliente não
+   pode falhar de renderizar por causa de um número de exibição — melhor
+   sair sem o "#0042" do que não sair PDF nenhum. `is defined` cobre o caso
+   comum (contexto sem a chave "seq"); `is not none` cobre um seq explícito
+   None. Não testamos falsy puro porque seq=0 (se um dia existir) é um
+   valor válido, não ausência de valor. #}
+{% macro numero(seq) %}{% if seq is defined and seq is not none %}#{{ "%04d"|format(seq) }}{% endif %}{% endmacro %}
 <!DOCTYPE html>
 <html>
 <head>

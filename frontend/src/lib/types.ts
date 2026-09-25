@@ -243,11 +243,11 @@ export type DashboardOut = {
     receita_vs_despesa: Array<{ period: string; receita: number; despesa: number }>;
     funil: { orcado: number; aprovado: number; produzido: number; entregue: number };
     despesa_categorias: Record<string, number>;
-    orcado_vs_real: Array<{ quote_id: string; orcado: number; real: number; variancia_pct: number }>;
+    orcado_vs_real: Array<{ quote_id: string; seq: number; orcado: number; real: number; variancia_pct: number }>;
   };
   lists: {
-    ultimos_orcamentos: Array<{ id: string; kind: string; status: string; created_at: string | null }>;
-    parados: Array<{ id: string; approved_at: string | null }>;
+    ultimos_orcamentos: Array<{ id: string; seq: number; kind: string; status: string; created_at: string | null }>;
+    parados: Array<{ id: string; seq: number; approved_at: string | null }>;
     spools_baixos: Array<{ id: string; material_type: string; remaining_grams: number }>;
     inbox: Array<{ id: string; original_path: string; parsed_meta: unknown }>;
   };

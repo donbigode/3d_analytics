@@ -6,6 +6,7 @@
   import { requireAuth } from "$lib/guard";
   import { resource, action } from "$lib/resource";
   import { money as fmtMoney, num as fmtNum, dur as fmtDur, dateTime as fmtDate } from "$lib/format";
+  import { quoteNumber } from "$lib/quote-number";
   import type {
     Client,
     Material,
@@ -787,6 +788,18 @@
   $: canCancel =
     quote && quote.status !== "entregue" && quote.status !== "cancelado";
 
+  // Achata item × consumo numa lista só, ordenada por data — é assim que a
+  // reimpressão depois de falha fica visível como linha própria.
+  $: linhasConsumo = (quote?.items ?? [])
+    .flatMap((it) => (it.consumptions ?? []).map((c) => ({ peca: it.name, c })))
+    .sort((a, b) => a.c.consumed_at.localeCompare(b.c.consumed_at));
+  $: totalBaixas = linhasConsumo.length;
+  $: totalGramas = linhasConsumo.reduce((s, l) => s + Number(l.c.grams_used), 0);
+  // custo_total chega sem arredondar de propósito (o módulo contábil soma
+  // sem arredondar e só arredonda o agregado) — soma os valores crus e só
+  // formata no fim, pra não divergir do DRE por causa de centavos.
+  $: totalCusto = linhasConsumo.reduce((s, l) => s + Number(l.c.custo_total), 0);
+
   onMount(() => {
     if (requireAuth()) return;
     refs.reload();
@@ -803,7 +816,7 @@
   <header class="page-head">
     <div class="head-row">
       <div>
-        <span class="page-eyebrow">Orçamento · {quote.id.slice(0, 8)}</span>
+        <span class="page-eyebrow" title={quote.id}>Orçamento · {quoteNumber(quote.seq)}</span>
         <h1 class="page-title">
           {quote.kind === "commercial" ? "Comercial" : "Pessoal"}<em>.</em>
         </h1>
@@ -998,7 +1011,21 @@
                         <span class="badge pending">pendente</span>
                       {/if}
                     {:else}
-                      {it.gcode_meta?.material ?? "—"}{it.is_multi_color ? " · multicolor" : ""}
+                      {@const consumos = it.consumptions ?? []}
+                      {#if consumos.length > 0}
+                        {@const ultimo = consumos[consumos.length - 1]}
+                        <span title={ultimo.spool_label}>
+                          {ultimo.material_type}{ultimo.color ? ` · ${ultimo.color}` : ""}
+                        </span>
+                        {#if consumos.length > 1}
+                          <span class="badge" title="Houve mais de um ciclo de produção"
+                            >{consumos.length} baixas</span>
+                        {/if}
+                      {:else}
+                        {it.gcode_meta?.material ?? "—"}
+                        <span class="badge estimativa" title="Nenhuma baixa registrada ainda — este é o material do gcode, não a bobina usada.">estimativa</span>
+                      {/if}
+                      {it.is_multi_color ? " · multicolor" : ""}
                     {/if}
                   </td>
                   <td class="right mono">
@@ -1105,6 +1132,47 @@
           </table>
         </div>
       </section>
+
+      {#if totalBaixas > 0}
+        <section class="panel">
+          <div class="panel-head">
+            <h2 class="section-title">
+              Filamento consumido <span class="count">· {totalBaixas} {totalBaixas === 1 ? "baixa" : "baixas"}</span>
+            </h2>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Peça</th><th>Bobina</th>
+                  <th class="right">Gramas</th><th class="right">Custo</th><th>Data</th>
+                </tr>
+              </thead>
+              <tbody>
+                {#each linhasConsumo as l}
+                  <tr>
+                    <td>{l.peca}</td>
+                    <td class="mono" title={l.c.spool_label}>
+                      {l.c.material_type}{l.c.color ? ` · ${l.c.color}` : ""}{l.c.manufacturer ? ` · ${l.c.manufacturer}` : ""}
+                    </td>
+                    <td class="right mono">{fmtNum(l.c.grams_used, 1)} g</td>
+                    <td class="right mono">{fmtMoney(l.c.custo_total)}</td>
+                    <td class="mono dim">{fmtDate(l.c.consumed_at)}</td>
+                  </tr>
+                {/each}
+              </tbody>
+              <tfoot>
+                <tr>
+                  <td colspan="2" class="mono">total</td>
+                  <td class="right mono">{fmtNum(totalGramas, 1)} g</td>
+                  <td class="right mono">{fmtMoney(totalCusto)}</td>
+                  <td></td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </section>
+      {/if}
 
       <section class="panel">
         <div class="panel-head">
@@ -1681,6 +1749,24 @@
     text-transform: uppercase;
   }
   tr.pending td { background: rgba(245, 158, 11, 0.08); }
+  tfoot td {
+    padding: 0.6rem 0.75rem;
+    border-top: 1px solid var(--line-strong);
+    font-weight: 600;
+  }
+  tfoot td.mono {
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    font-size: 0.72rem;
+    font-weight: 500;
+    color: var(--muted);
+  }
+  /* Selo "estimativa": mesma base de .badge (mono, borda) — sem cor de
+     alerta, é informativo (ainda não houve baixa de estoque), não um erro. */
+  .badge.estimativa {
+    margin-left: 0.3rem;
+    color: var(--muted);
+  }
   /* Inline-edit table cells — fixed widths so every row aligns vertically. */
   input.inline, select.inline {
     font: inherit;
