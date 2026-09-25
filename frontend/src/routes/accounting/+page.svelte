@@ -434,9 +434,19 @@
   function isLossRow(s: Sale): boolean {
     return !s.is_sold && !s.is_stale && s.loss_on >= from && s.loss_on <= to;
   }
-  $: perdaPeriodo = ($personal.data ?? [])
-    .filter(isLossRow)
-    .reduce((acc, s) => acc + Number(s.cpv_override ?? s.cpv_calc), 0);
+  // Mesmo bug dos chips de Vendas (ver vendasFiltradas acima): `isLossRow`
+  // fecha sobre `from`/`to` por closure, e o Svelte só rastreia dependência
+  // reativa em identificador citado no próprio bloco `$:` — sem citar os
+  // dois aqui, arrastar as datas em Uso pessoal trocava o rótulo do período
+  // (reativo direto no template) mas não o valor da perda operacional, que
+  // ficava congelado no período anterior.
+  $: perdaPeriodo = (
+    from,
+    to,
+    ($personal.data ?? [])
+      .filter(isLossRow)
+      .reduce((acc, s) => acc + Number(s.cpv_override ?? s.cpv_calc), 0)
+  );
   // Erro combinado do painel Uso pessoal: mesma lógica de expError acima —
   // saveSale é action() compartilhada com Vendas.
   $: personalError = $personal.error || $saveSale.error;
