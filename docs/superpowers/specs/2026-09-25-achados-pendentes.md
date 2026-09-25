@@ -83,6 +83,76 @@ bloco `$:`. Mesma classe dos dois bugs corrigidos no contábil (chips de status
 e total de perda operacional), impacto menor porque clientes e orçamentos
 costumam carregar juntos. Pré-existente.
 
+## Pedido novo — multicor com mais de um filamento por peça
+
+**Pedido do Otavio, 2026-09-25.** Precisa de spec própria: mexe no cálculo de
+custo e no fluxo de produzir, não é conserto.
+
+### O que existe hoje
+
+Uma peça tem **um** material (`QuoteItem.material_version_id`) e uma flag
+`is_multi_color`, que hoje só faz o cálculo aplicar o
+`multi_color_waste_pct` do material em vez do `single_color_waste_pct` — ou
+seja, ela encarece o refugo de purga e nada mais. O gcode traz **um** `time_s`
+e **uma** metragem para a peça inteira.
+
+Na produção, `material_consumptions` já aceita várias linhas por peça — é assim
+que reimpressão após falha aparece. Mas elas representam **ciclos diferentes**,
+não cores do mesmo ciclo.
+
+### O que o pedido quer
+
+Poder acrescentar outra linha de filamento no orçamento, **atrelada à mesma
+peça produzida**, para a segunda (terceira, …) cor — cada linha com sua bobina
+e suas gramas.
+
+E a regra que define o cálculo: **tempo de produção e quantidade de itens são
+compartilhados entre as linhas de cor, não somados.** Uma peça de duas cores
+leva o tempo dela, não o dobro; e continua sendo a mesma quantidade de peças.
+
+### A armadilha, que é o ponto central
+
+Em `backend/core/accounting/cost.py` (~linhas 74-85) o laço acumula, por peça:
+
+```
+grams         = grams_unit * quantity     -> some por linha de cor
+energy       += energy_cost(time_s, ...)  -> NÃO pode somar por linha de cor
+depreciation += depreciation_cost(time_s) -> NÃO pode somar por linha de cor
+```
+
+Se a linha de cor extra for modelada como "mais uma peça", o custo de energia e
+de depreciação dobra e o orçamento sai caro sem razão física. O filamento soma;
+o tempo e a quantidade são atributos da **peça**, não da linha de cor.
+
+O mesmo vale no painel "Filamento consumido": as linhas de cor do mesmo ciclo
+precisam somar gramas e custo de material sem sugerir dois ciclos de produção —
+hoje a coluna Data é justamente o que distingue ciclos, e duas cores do mesmo
+ciclo compartilham a data.
+
+### Perguntas a decidir na spec
+
+1. **Onde a segunda cor vive?** Uma tabela de linhas de filamento por item, ou
+   uma lista no próprio `QuoteItem`? A primeira é mais limpa e já é a forma que
+   `material_consumptions` usa na produção.
+2. **A metragem por cor vem do gcode ou é digitada?** Slicers multicor reportam
+   consumo por extrusora/ferramenta; o parser atual lê um total. Se o gcode
+   trouxer por ferramenta, vale ler; se não, é entrada manual como já acontece
+   com peça sem gcode.
+3. **O `is_multi_color` continua existindo?** Com linhas de cor explícitas, o
+   refugo de purga pode ser calculado por linha em vez de por flag — ou a flag
+   vira derivada ("tem mais de uma linha de cor").
+4. **Produzir com N cores baixa N bobinas** — o modal de produzir hoje pede uma
+   bobina por peça. Passa a pedir uma por linha de cor.
+
+### Observação que apareceu ao ler o cálculo, e que precisa ser confirmada antes
+
+No laço de custo, `grams` multiplica por `quantity` mas `energy` e
+`depreciation` **não**. Isso está certo se o `time_s` do gcode já cobre a placa
+inteira com todas as cópias, e errado se o `time_s` é por unidade. Não
+investiguei — mas quem escrever a spec de multicor precisa saber a resposta,
+porque a regra "tempo é compartilhado" depende dela.
+
+
 ## Decisões de produto, não defeitos
 
 **10. Não existe indicador de "dado desatualizado" em lugar nenhum.**
