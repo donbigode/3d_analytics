@@ -96,8 +96,8 @@
     { value: "vendidos", label: "vendidos" },
     { value: "arquivados", label: "arquivados" },
   ];
-  function passaStatus(s: Sale): boolean {
-    switch (statusFiltro) {
+  function passaStatus(s: Sale, filtro: StatusFiltro): boolean {
+    switch (filtro) {
       case "vendidos":
         return s.is_sold;
       case "arquivados":
@@ -115,20 +115,19 @@
   // Linha sem sold_at (ainda não vendida) passa sempre: se o período
   // derrubasse essas linhas, o chip "a confirmar" — que é só isso —
   // ficaria sempre vazio, o oposto do que a busca deveria resolver.
-  function passaPeriodo(s: Sale): boolean {
-    return !s.sold_at || (s.sold_at >= from && s.sold_at <= to);
+  function passaPeriodo(s: Sale, de: string, ate: string): boolean {
+    return !s.sold_at || (s.sold_at >= de && s.sold_at <= ate);
   }
-  // `passaStatus`/`passaPeriodo` leem `statusFiltro`/`from`/`to` por closure,
-  // não como argumento — o Svelte só enxerga dependência reativa em
-  // identificador citado no próprio bloco `$:`, não nas variáveis lidas
-  // dentro de uma função externa que ele chama. Sem citar as três aqui, o
-  // clique nos chips de status (e a troca de período) reordenava a classe
-  // "on" do botão mas nunca refiltrava a tabela — os e2e pegaram isso.
-  $: vendasFiltradas = (
-    statusFiltro,
-    from,
-    to,
-    ($sales.data ?? []).filter((s) => passaStatus(s) && passaPeriodo(s))
+  // `statusFiltro`/`from`/`to` entram como argumento (não por closure) pra
+  // aparecer textualmente no bloco `$:` — o Svelte só rastreia dependência
+  // reativa em identificador citado no próprio bloco, não em variável lida
+  // de dentro de uma função externa que ele chama. Mesmo padrão que
+  // `vendasMostradas`/`despesasMostradas` já usavam (argumento direto, sem
+  // vírgula pendurada). Sem isso, o clique nos chips de status (e a troca de
+  // período) trocava a classe "on" do botão mas nunca refiltrava a tabela —
+  // os e2e pegaram isso.
+  $: vendasFiltradas = ($sales.data ?? []).filter(
+    (s) => passaStatus(s, statusFiltro) && passaPeriodo(s, from, to),
   );
 
   // Colunas extraídas pra variável (em vez de literal no template) porque
@@ -431,22 +430,17 @@
   // backend/tests/api/test_perda_vs_aba_pessoal.py. Comparação lexicográfica
   // de datas ISO (YYYY-MM-DD) é comparação cronológica, então dá pra comparar
   // as strings direto sem parsear.
-  function isLossRow(s: Sale): boolean {
-    return !s.is_sold && !s.is_stale && s.loss_on >= from && s.loss_on <= to;
+  function isLossRow(s: Sale, de: string, ate: string): boolean {
+    return !s.is_sold && !s.is_stale && s.loss_on >= de && s.loss_on <= ate;
   }
-  // Mesmo bug dos chips de Vendas (ver vendasFiltradas acima): `isLossRow`
-  // fecha sobre `from`/`to` por closure, e o Svelte só rastreia dependência
-  // reativa em identificador citado no próprio bloco `$:` — sem citar os
-  // dois aqui, arrastar as datas em Uso pessoal trocava o rótulo do período
-  // (reativo direto no template) mas não o valor da perda operacional, que
-  // ficava congelado no período anterior.
-  $: perdaPeriodo = (
-    from,
-    to,
-    ($personal.data ?? [])
-      .filter(isLossRow)
-      .reduce((acc, s) => acc + Number(s.cpv_override ?? s.cpv_calc), 0)
-  );
+  // Mesmo bug dos chips de Vendas (ver vendasFiltradas acima) — `from`/`to`
+  // entram como argumento, não por closure, pra aparecer textualmente no
+  // bloco `$:` e serem de fato usados. Sem isso, arrastar as datas em Uso
+  // pessoal trocava o rótulo do período (reativo direto no template) mas não
+  // o valor da perda operacional, que ficava congelado no período anterior.
+  $: perdaPeriodo = ($personal.data ?? [])
+    .filter((s) => isLossRow(s, from, to))
+    .reduce((acc, s) => acc + Number(s.cpv_override ?? s.cpv_calc), 0);
   // Erro combinado do painel Uso pessoal: mesma lógica de expError acima —
   // saveSale é action() compartilhada com Vendas.
   $: personalError = $personal.error || $saveSale.error;
