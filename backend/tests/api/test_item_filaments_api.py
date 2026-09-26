@@ -185,6 +185,52 @@ async def test_resolver_material_pendente_cria_a_linha(auth_client):
 
 
 @pytest.mark.asyncio
+async def test_material_pending_segue_a_linha_nao_o_material_version_id(auth_client):
+    """`material_pending` e o custo têm que usar O MESMO critério: ter linha.
+
+    Item com `material_version_id` preenchido e nenhuma linha é o estado que o
+    caminho de escrita da Task 7 pode produzir (apagar a última linha). Se a
+    tela continuasse lendo `material_version_id`, ela mostraria a peça como
+    resolvida enquanto `_build_item_input` devolvia None e o subtotal ia a zero
+    em silêncio — os dois critérios divergindo sem ninguém perceber.
+    """
+    await _settings()
+    mv = await _material("PLA Preto", "100", "Preto")
+
+    async with session_module.SessionFactory() as s:
+        u = (await s.execute(sa.select(User))).scalars().first()
+        q = Quote(kind=QuoteKind.COMMERCIAL.value, user_id=u.id,
+                  status=QuoteStatus.DRAFT.value, markup_pct=Decimal("0"),
+                  min_charge=Decimal("0"))
+        s.add(q)
+        await s.flush()
+        s.add(QuoteItem(quote_id=q.id, name="peça sem linha",
+                        gcode_meta={"filament_m": 10, "time_s": 3600, "material": "PLA"},
+                        material_version_id=mv.id, quantity=1))
+        await s.commit()
+        qid = str(q.id)
+
+    r = await auth_client.get(f"/quotes/{qid}")
+    assert r.status_code == 200, r.text
+    corpo = r.json()
+    item = corpo["items"][0]
+
+    # material_id segue preenchido (é o derivado), mas pendente é quem não tem linha
+    assert item["material_id"] == str(mv.id)
+    assert item["filaments"] == []
+    assert item["material_pending"] is True, (
+        "material_pending ainda está lendo material_version_id — divergiu do custo"
+    )
+    assert item["pending_material_code"] == "PLA"
+    assert Decimal(item["subtotal"]) == 0
+    assert corpo["pending_items"] == 1
+
+    # E o mesmo critério barra o finalize
+    r = await auth_client.post(f"/quotes/{qid}/transitions/finalize")
+    assert r.status_code == 409, r.text
+
+
+@pytest.mark.asyncio
 async def test_trocar_material_reaproveita_a_linha_1(auth_client):
     """Trocar o material não duplica a linha 1 — atualiza a existente."""
     await _settings()
@@ -309,9 +355,12 @@ async def test_queries_nao_crescem_com_itens_e_linhas(auth_client):
     Buscar as linhas dentro do laço de custo reintroduziria o N+1 que a Spec 2
     tirou do contábil, e aqui seria pior: o cálculo percorre todos os itens.
 
-    Medido nesta configuração: 1 item/1 linha = 9 queries, 3 itens/2 linhas = 9
-    queries — nenhum crescimento. Teto = poucas + 2 (folga pequena). Uma volta
-    ao `_filaments_map(session, [it.id])` por item estouraria de sobra.
+    Medido: 1 item/1 linha = 9 queries, 3 itens/2 linhas = 9 queries. Igualdade
+    exata, não teto com folga, de propósito: o diferencial de um N+1 aqui é 2
+    queries (o orçamento pequeno ganharia 1, o grande 3), então qualquer folga
+    de 2 esconderia exatamente o bug que o teste existe para pegar — era o caso
+    do `teto = poucas + 2` copiado de test_sales_query_count.py, onde a folga
+    discrimina só porque o diferencial de linhas de lá é muito maior.
     """
     await _settings()
     mv_a = await _material("PLA Preto", "100", "Preto")
@@ -323,8 +372,7 @@ async def test_queries_nao_crescem_com_itens_e_linhas(auth_client):
     poucas = await _contar_queries(auth_client, f"/quotes/{pequeno.id}")
     muitas = await _contar_queries(auth_client, f"/quotes/{grande.id}")
 
-    teto = poucas + 2
-    assert muitas <= teto, (
+    assert muitas == poucas, (
         f"GET /quotes passou de {poucas} para {muitas} queries ao ir de 1 item/1 linha "
-        f"para 3 itens/2 linhas (teto {teto}) — provável busca de linhas por item"
+        f"para 3 itens/2 linhas — as linhas voltaram a ser buscadas por item"
     )

@@ -278,6 +278,13 @@ async def _quote_out(session: AsyncSession, q: Quote) -> QuoteOut:
 
     consumptions_by_item = await _consumptions_map(session, [it.id for it in items])
 
+    # "Pendente" tem UM critério: não tem linha de filamento. É o mesmo que faz
+    # `_build_item_input` devolver None e o mesmo que `_assert_materials_resolved`
+    # usa. Derivar de `material_version_id` aqui deixaria a tela discordar do
+    # custo no instante em que as duas condições divergissem — e a Task 7 traz
+    # um caminho de escrita que apaga linhas, o que torna isso alcançável.
+    pendentes = {it.id for it in items if not filaments_by_item.get(it.id)}
+
     items_out = [
         QuoteItemOut(
             id=str(it.id),
@@ -288,9 +295,9 @@ async def _quote_out(session: AsyncSession, q: Quote) -> QuoteOut:
             subtotal=item_subtotals[idx].quantize(Decimal("0.01")),
             material_id=str(it.material_version_id) if it.material_version_id else None,
             is_multi_color=bool(it.is_multi_color),
-            material_pending=(it.material_version_id is None),
+            material_pending=(it.id in pendentes),
             pending_material_code=(
-                (it.gcode_meta.get("material") if it.material_version_id is None else None)
+                (it.gcode_meta or {}).get("material") if it.id in pendentes else None
             ),
             model_source_url=it.model_source_url,
             model_source_author=it.model_source_author,
