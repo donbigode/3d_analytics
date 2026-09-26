@@ -220,6 +220,11 @@ async def _consumptions_map(
                 # O arredondamento é responsabilidade de quem exibe.
                 custo_total=cons.grams_used * cons.unit_cost_snapshot,
                 consumed_at=cons.consumed_at,
+                filament_id=(
+                    str(cons.quote_item_filament_id)
+                    if cons.quote_item_filament_id
+                    else None
+                ),
             )
         )
     return out

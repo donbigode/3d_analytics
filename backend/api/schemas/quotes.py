@@ -171,6 +171,10 @@ class QuotePeopleUpdate(BaseModel):
 class ConsumptionAssignment(BaseModel):
     quote_item_id: str
     spool_id: str
+    # Qual linha de filamento esta baixa representa. Obrigatório quando o item
+    # tem mais de uma linha: sem isso o fallback calcularia as gramas do item
+    # INTEIRO para cada linha, debitando N× o item.
+    quote_item_filament_id: str | None = None
     # Overrides informados na hora de produzir (quando o gcode não trouxe a
     # metragem). `grams` = total a debitar para a linha; tem precedência.
     # `filament_m` = metragem por unidade; calcula as gramas e é persistida
