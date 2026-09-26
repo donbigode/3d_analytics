@@ -8,7 +8,7 @@ from pathlib import Path
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.api.deps import db_session, require_user
@@ -16,7 +16,15 @@ from backend.api.schemas.quotes import QuoteItemUpdate, QuoteOut
 from backend.api.routes.quotes._shared import _quote_out
 from backend.core.gcode.parser import GcodeMeta, parse_gcode_metadata
 from backend.core.models import QuoteStatus
-from backend.infra.db.models import Quote, QuoteItem, QuoteItemFilament, QuotePhoto, User
+from backend.core.quotes.filaments import validate_lines
+from backend.infra.db.models import (
+    MaterialVersion,
+    Quote,
+    QuoteItem,
+    QuoteItemFilament,
+    QuotePhoto,
+    User,
+)
 from backend.infra.db.repos import material as material_repo
 from backend.infra.storage import quote_photos as photo_storage
 from backend.infra.storage.gcodes import save_gcode
@@ -153,6 +161,49 @@ async def update_item(
         if payload.quantity < 1:
             raise HTTPException(400, "quantity must be >= 1")
         it.quantity = payload.quantity
+
+    if payload.filaments is not None and payload.material_id is not None:
+        raise HTTPException(
+            400,
+            "envie material_id OU filaments, não os dois — material_id é o "
+            "atalho para um item de uma cor e reescreve a linha 1",
+        )
+
+    if payload.filaments is not None:
+        novas = []
+        for pos, linha in enumerate(payload.filaments, start=1):
+            try:
+                mv_id = UUID(linha.material_id)
+            except ValueError:
+                raise HTTPException(400, "material_id must be a valid UUID")
+            mv = await session.get(MaterialVersion, mv_id)
+            if mv is None:
+                raise HTTPException(400, f"material {linha.material_id} não existe")
+            novas.append(
+                QuoteItemFilament(
+                    quote_item_id=it.id,
+                    material_version_id=mv.id,
+                    grams_unit=linha.grams_unit,
+                    position=pos,
+                )
+            )
+        try:
+            validate_lines(novas)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+
+        # Apagar e recriar, não fazer diff: a UNIQUE (quote_item_id, position)
+        # faz um update em ordem colidir consigo mesmo no meio do caminho, e a
+        # substituição é o contrato declarado.
+        await session.execute(
+            delete(QuoteItemFilament).where(QuoteItemFilament.quote_item_id == it.id)
+        )
+        await session.flush()
+        session.add_all(novas)
+        await session.flush()
+        # Derivado (invariante 2)
+        it.material_version_id = novas[0].material_version_id
+
     if payload.material_id is not None:
         try:
             mv = await material_repo.get_by_id(session, UUID(payload.material_id))

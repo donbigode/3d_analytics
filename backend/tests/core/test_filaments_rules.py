@@ -80,6 +80,13 @@ def test_uma_linha_sem_gramas_passa():
     validate_lines([Linha(None, 1)])
 
 
+def test_gramas_zero_sao_rejeitadas():
+    # `None` já significa "não informado" (deriva do gcode); um `0` explícito
+    # zeraria o custo da linha em silêncio, sem cair no fallback do gcode.
+    with pytest.raises(ValueError, match="maiores que zero"):
+        validate_lines([Linha(Decimal("0"), 1)])
+
+
 def test_posicoes_nao_contiguas_sao_rejeitadas():
     with pytest.raises(ValueError, match="posição"):
         validate_lines([Linha(Decimal("10"), 1), Linha(Decimal("5"), 3)])

@@ -376,3 +376,187 @@ async def test_queries_nao_crescem_com_itens_e_linhas(auth_client):
         f"GET /quotes passou de {poucas} para {muitas} queries ao ir de 1 item/1 linha "
         f"para 3 itens/2 linhas — as linhas voltaram a ser buscadas por item"
     )
+
+
+@pytest.mark.asyncio
+async def test_filaments_e_material_id_no_mesmo_patch_e_400(auth_client):
+    mv_a = await _material("PLA A", "100", "A-400")
+    mv_b = await _material("PLA B", "100", "B-400")
+    q = await _quote_com_item_multicor(mv_a, mv_b, quantity=1)
+    r0 = await auth_client.get(f"/quotes/{q.id}")
+    item_id = r0.json()["items"][0]["id"]
+
+    r = await auth_client.put(
+        f"/quotes/{q.id}/items/{item_id}",
+        json={"material_id": str(mv_b.id),
+              "filaments": [{"material_id": str(mv_a.id), "grams_unit": "10"}]},
+    )
+    assert r.status_code == 400
+    assert "material_id" in r.text
+
+    # As linhas originais continuam intactas — a rejeição não deve ter escrito nada.
+    r2 = await auth_client.get(f"/quotes/{q.id}")
+    item = r2.json()["items"][0]
+    assert [f["material_id"] for f in item["filaments"]] == [str(mv_a.id), str(mv_b.id)]
+    assert [f["grams_unit"] for f in item["filaments"]] == ["12.00", "8.00"]
+
+
+@pytest.mark.asyncio
+async def test_patch_sem_filaments_preserva_as_linhas(auth_client):
+    """A regressão óbvia é tratar None como lista vazia e apagar tudo."""
+    mv_a = await _material("PLA A", "100", "A-401")
+    mv_b = await _material("PLA B", "100", "B-401")
+    q = await _quote_com_item_multicor(mv_a, mv_b, quantity=1)
+    r0 = await auth_client.get(f"/quotes/{q.id}")
+    item_id = r0.json()["items"][0]["id"]
+
+    r = await auth_client.put(f"/quotes/{q.id}/items/{item_id}", json={"name": "novo nome"})
+    assert r.status_code == 200
+    item = [i for i in r.json()["items"] if i["id"] == item_id][0]
+    assert item["name"] == "novo nome"
+    assert len(item["filaments"]) == 2, "o PATCH apagou as linhas"
+    assert [f["material_id"] for f in item["filaments"]] == [str(mv_a.id), str(mv_b.id)]
+
+
+@pytest.mark.asyncio
+async def test_material_id_sozinho_reescreve_a_linha_1_sem_duplicar(auth_client):
+    mv_a = await _material("PLA A", "100", "A-402")
+    mv_b = await _material("PLA B", "100", "B-402")
+    q = await _quote_com_item_multicor(mv_a, mv_b, quantity=1)
+    r0 = await auth_client.get(f"/quotes/{q.id}")
+    item_id = r0.json()["items"][0]["id"]
+    mv_c = await _material("PLA C", "100", "C-402")
+
+    r = await auth_client.put(f"/quotes/{q.id}/items/{item_id}",
+                              json={"material_id": str(mv_c.id)})
+    assert r.status_code == 200
+    item = [i for i in r.json()["items"] if i["id"] == item_id][0]
+    assert len(item["filaments"]) == 2
+    assert item["filaments"][0]["material_id"] == str(mv_c.id)
+    assert item["material_id"] == str(mv_c.id), "o derivado não acompanhou a linha 1"
+
+
+@pytest.mark.asyncio
+async def test_lista_vazia_e_rejeitada(auth_client):
+    mv_a = await _material("PLA A", "100", "A-403")
+    mv_b = await _material("PLA B", "100", "B-403")
+    q = await _quote_com_item_multicor(mv_a, mv_b, quantity=1)
+    r0 = await auth_client.get(f"/quotes/{q.id}")
+    item_id = r0.json()["items"][0]["id"]
+
+    r = await auth_client.put(f"/quotes/{q.id}/items/{item_id}", json={"filaments": []})
+    assert r.status_code == 400
+    assert "pelo menos um filamento" in r.text
+
+    r2 = await auth_client.get(f"/quotes/{q.id}")
+    item = r2.json()["items"][0]
+    assert len(item["filaments"]) == 2, "a rejeição não devia ter apagado as linhas"
+
+
+@pytest.mark.asyncio
+async def test_duas_linhas_sem_gramas_sao_rejeitadas(auth_client):
+    mv_a = await _material("PLA A", "100", "A-404")
+    mv_b = await _material("PLA B", "100", "B-404")
+    q = await _quote_com_item_multicor(mv_a, mv_b, quantity=1)
+    r0 = await auth_client.get(f"/quotes/{q.id}")
+    item_id = r0.json()["items"][0]["id"]
+
+    r = await auth_client.put(
+        f"/quotes/{q.id}/items/{item_id}",
+        json={"filaments": [{"material_id": str(mv_a.id)},
+                            {"material_id": str(mv_b.id)}]},
+    )
+    assert r.status_code == 400
+    assert "gramas" in r.text
+
+    r2 = await auth_client.get(f"/quotes/{q.id}")
+    item = r2.json()["items"][0]
+    assert [f["grams_unit"] for f in item["filaments"]] == ["12.00", "8.00"], (
+        "a rejeição não devia ter tocado as linhas existentes"
+    )
+
+
+@pytest.mark.asyncio
+async def test_grams_unit_zero_e_422_nao_400(auth_client):
+    """`gt=0` é validação de schema (Pydantic), não regra de negócio — 422, não 400.
+
+    E a rejeição não pode ter escrito a linha com gramas zeradas.
+    """
+    mv_a = await _material("PLA A", "100", "A-407")
+    mv_b = await _material("PLA B", "100", "B-407")
+    q = await _quote_com_item_multicor(mv_a, mv_b, quantity=1)
+    r0 = await auth_client.get(f"/quotes/{q.id}")
+    item_id = r0.json()["items"][0]["id"]
+
+    r = await auth_client.put(
+        f"/quotes/{q.id}/items/{item_id}",
+        json={"filaments": [{"material_id": str(mv_a.id), "grams_unit": "0"},
+                            {"material_id": str(mv_b.id), "grams_unit": "5"}]},
+    )
+    assert r.status_code == 422, r.text
+
+    r2 = await auth_client.get(f"/quotes/{q.id}")
+    item = r2.json()["items"][0]
+    assert [f["grams_unit"] for f in item["filaments"]] == ["12.00", "8.00"], (
+        "o 422 não devia ter escrito nada"
+    )
+
+
+@pytest.mark.asyncio
+async def test_remover_a_linha_do_meio_renumera(auth_client):
+    mv_a = await _material("PLA A", "100", "A-405")
+    mv_b = await _material("PLA B", "100", "B-405")
+    mv_c = await _material("PLA C", "100", "C-405")
+    q = await _quote_com_item_multicor(mv_a, mv_b, quantity=1)
+    r0 = await auth_client.get(f"/quotes/{q.id}")
+    item_id = r0.json()["items"][0]["id"]
+
+    # três linhas, depois remove a do meio mandando a lista sem ela
+    await auth_client.put(f"/quotes/{q.id}/items/{item_id}", json={"filaments": [
+        {"material_id": str(mv_a.id), "grams_unit": "10"},
+        {"material_id": str(mv_b.id), "grams_unit": "5"},
+        {"material_id": str(mv_c.id), "grams_unit": "2"},
+    ]})
+    r = await auth_client.put(f"/quotes/{q.id}/items/{item_id}", json={"filaments": [
+        {"material_id": str(mv_a.id), "grams_unit": "10"},
+        {"material_id": str(mv_c.id), "grams_unit": "2"},
+    ]})
+    assert r.status_code == 200
+    item = [i for i in r.json()["items"] if i["id"] == item_id][0]
+    assert [f["position"] for f in item["filaments"]] == [1, 2]
+    assert [f["material_id"] for f in item["filaments"]] == [str(mv_a.id), str(mv_c.id)]
+
+
+@pytest.mark.asyncio
+async def test_item_novo_ja_nasce_com_a_linha_1(auth_client):
+    """add_item resolve o material e precisa criar a linha, senão o item nasce
+    violando a invariante 1 e não orça."""
+    # Dois PLA registrados → auto-resolve não escolhe nenhum e o item nasce
+    # pendente — precisa do PUT para resolver, como a tela faz.
+    await _material("PLA Outro", "90", "Outro-406")
+    mv = await _material("PLA Novo", "100", "Novo-406")
+    # Mesmo caminho que a tela usa para adicionar item manual: POST é form
+    # data (name/quantity/file opcionais), e sem `file` o item nasce pendente
+    # — então resolvemos o material com o PUT, como a tela faz.
+    r = await auth_client.post("/quotes", json={"kind": "commercial", "markup_pct": "0"})
+    assert r.status_code == 201, r.text
+    qid = r.json()["id"]
+
+    r = await auth_client.post(
+        f"/quotes/{qid}/items",
+        data={"name": "peça manual", "quantity": "1"},
+    )
+    assert r.status_code == 201, r.text
+    item = r.json()["items"][0]
+    assert item["material_pending"] is True
+    assert item["filaments"] == [], "item pendente não deve nascer com linha"
+
+    r = await auth_client.put(f"/quotes/{qid}/items/{item['id']}",
+                              json={"material_id": str(mv.id)})
+    assert r.status_code == 200, r.text
+    item = r.json()["items"][0]
+    assert len(item["filaments"]) == 1
+    assert item["filaments"][0]["position"] == 1
+    assert item["filaments"][0]["material_id"] == str(mv.id), (
+        "resolver o material pendente não criou/atualizou a linha 1"
+    )

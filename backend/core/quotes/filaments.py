@@ -88,6 +88,13 @@ def validate_lines(lines: Sequence[LineShape]) -> None:
             "não há como dividir o filamento do gcode entre as cores"
         )
 
+    # `None` já significa "não informado" (deriva do gcode); um `0` que chegue
+    # aqui zeraria o custo da linha em silêncio, sem cair no fallback do
+    # gcode. Cobre os caminhos que não passam pela API (clone, inbox) — o
+    # `gt=0` do Pydantic em `QuoteItemFilamentIn` cobre a API.
+    if any(ln.grams_unit is not None and ln.grams_unit <= 0 for ln in lines):
+        raise ValueError("gramas de um filamento precisam ser maiores que zero")
+
 
 def renumber(positions: Sequence[int]) -> list[int]:
     """1..N preservando a ordem de entrada. Usado após remover uma linha."""

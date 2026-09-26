@@ -1,6 +1,6 @@
 from datetime import datetime
 from decimal import Decimal
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from backend.core.models import QuoteKind, QuoteStatus
 
@@ -48,6 +48,9 @@ class ConsumptionOut(BaseModel):
     # arredonda o agregado. Quem exibe é responsável por formatar em centavos.
     custo_total: Decimal
     consumed_at: datetime
+    # Qual linha de filamento originou este consumo. None = consumo anterior à
+    # 0034, ou baixa feita sem identificar a cor.
+    filament_id: str | None = None
 
 
 class QuoteItemFilamentOut(BaseModel):
@@ -64,6 +67,19 @@ class QuoteItemFilamentOut(BaseModel):
     # anterior à migração 0034 — a tela mostra o derivado em cinza.
     grams_unit: Decimal | None = None
     position: int
+
+
+class QuoteItemFilamentIn(BaseModel):
+    material_id: str
+    # `gt=0`: `None` já significa "não informado", então um `0` que chega aqui veio
+    # de erro — tela que limpa o campo mandando 0 em vez de null. Sem a guarda,
+    # aquela linha custaria zero em silêncio, sem cair no fallback do gcode.
+    # (Achado na review da Task 3: a função espelhada, `effective_grams_per_unit`,
+    # exige `filament_g > 0`, e este campo não exigia nada.)
+    grams_unit: Decimal | None = Field(default=None, gt=0)
+    # Sem `position`: a ORDEM DA LISTA é a posição. Aceitar posição do cliente
+    # abriria espaço para um conjunto inconsistente que o servidor teria de
+    # rejeitar — mais um caminho de erro por nada.
 
 
 class QuoteItemOut(BaseModel):
@@ -109,6 +125,11 @@ class QuoteItemUpdate(BaseModel):
     model_source_url: str | None = None
     model_source_author: str | None = None
     model_source_license: str | None = None
+    # Substituição da lista inteira. None = não mexer (um PATCH que só muda o
+    # nome não deve apagar as linhas). As invariantes são do CONJUNTO, e por
+    # isso não há endpoint por linha: validar um conjunto em três endpoints
+    # seria três lugares para a mesma regra divergir.
+    filaments: list[QuoteItemFilamentIn] | None = None
 
 
 class QuoteServiceOut(BaseModel):
