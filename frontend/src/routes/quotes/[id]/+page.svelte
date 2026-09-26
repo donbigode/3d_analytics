@@ -7,6 +7,7 @@
   import { resource, action } from "$lib/resource";
   import { money as fmtMoney, num as fmtNum, dur as fmtDur, dateTime as fmtDate } from "$lib/format";
   import { quoteNumber } from "$lib/quote-number";
+  import FilamentLines from "$lib/components/FilamentLines.svelte";
   import type {
     Client,
     Material,
@@ -15,6 +16,7 @@
     Person,
     Quote,
     QuoteItem,
+    QuoteItemFilament,
     Service,
     Spool,
     VarianceOut,
@@ -71,6 +73,13 @@
   let produceAssignments: Record<string, string> = {}; // quote_item_id -> spool_id
   let produceMeters: Record<string, string> = {}; // quote_item_id -> filament_m (override)
   let produceGrams: Record<string, string> = {}; // quote_item_id -> gramas (override direto)
+
+  // Constante, não `?? []` no template: um literal `[]` novo a cada render
+  // muda a IDENTIDADE da prop, e o FilamentLines ressincroniza o rascunho
+  // quando `filaments` muda — o que apagaria a linha em branco que a pessoa
+  // acabou de acrescentar com "+ cor". Na prática a API sempre manda a lista,
+  // então este fallback é defensivo; a identidade estável é que importa.
+  const SEM_FILAMENTOS: QuoteItemFilament[] = [];
 
   let photoVersion = 0; // cache-bust após upload/delete
   let photoBusy = false;
@@ -281,9 +290,14 @@
     if (!Number.isFinite(g) || g < 0) return;
     patchItem(itemId, { filament_g: g }, "filament");
   }
-  function patchMaterial(itemId: string, materialId: string) {
-    if (!materialId) return;
-    patchItem(itemId, { material_id: materialId }, "material");
+  /** Substitui a lista de filamentos do item. `material_id` NÃO vai neste
+   *  payload: mandar os dois na mesma requisição é 400 (Task 7) — a linha de
+   *  `position` 1 é que passa a definir o material do item. */
+  function saveFilaments(
+    itemId: string,
+    filaments: { material_id: string; grams_unit?: string }[],
+  ) {
+    patchItem(itemId, { filaments }, "filaments");
   }
   function patchQuantity(itemId: string, qtyStr: string) {
     const q = Math.max(1, Math.floor(Number(qtyStr) || 1));
@@ -1002,21 +1016,13 @@
                   </td>
                   <td class="mono">
                     {#if isDraft}
-                      <select
-                        class="inline"
-                        value={it.material_id ?? ""}
-                        disabled={savingField[it.id] === "material"}
-                        on:change={(e) => patchMaterial(it.id, (e.currentTarget as HTMLSelectElement).value)}
-                      >
-                        <option value="" disabled>
-                          {it.gcode_meta?.material ? `(${it.gcode_meta.material}) escolher` : "— escolher —"}
-                        </option>
-                        {#each materials as m}
-                          <option value={m.id}>
-                            {m.name} · {m.material_type}{m.color ? ` · ${m.color}` : ""}
-                          </option>
-                        {/each}
-                      </select>
+                      <FilamentLines
+                        filaments={it.filaments ?? SEM_FILAMENTOS}
+                        {materials}
+                        gcodeMeta={it.gcode_meta}
+                        saving={savingField[it.id] === "filaments"}
+                        on:save={(e) => saveFilaments(it.id, e.detail.filaments)}
+                      />
                       <label class="mc-toggle" title="Marca quando a peça usa mais de uma cor — aplica o refugo de purga maior do material.">
                         <input
                           type="checkbox"
@@ -1040,6 +1046,18 @@
                           <span class="badge" title="Houve mais de um ciclo de produção"
                             >{consumos.length} baixas</span>
                         {/if}
+                      {:else if (it.filaments ?? SEM_FILAMENTOS).length > 0}
+                        <span class="cores">
+                          {#each it.filaments ?? SEM_FILAMENTOS as f (f.id)}
+                            <span class="cor">
+                              {f.material_name}{f.material_color ? ` · ${f.material_color}` : ""}
+                              <span class="dim">
+                                {f.grams_unit ? `${fmtNum(f.grams_unit, 2)} g` : "pelo gcode"}
+                              </span>
+                            </span>
+                          {/each}
+                        </span>
+                        <span class="badge estimativa" title="Nenhuma baixa registrada ainda — estas são as cores orçadas, não as bobinas usadas.">estimativa</span>
                       {:else}
                         {it.gcode_meta?.material ?? "—"}
                         <span class="badge estimativa" title="Nenhuma baixa registrada ainda — este é o material do gcode, não a bobina usada.">estimativa</span>
@@ -1789,8 +1807,11 @@
     margin-left: 0.3rem;
     color: var(--muted);
   }
-  /* Inline-edit table cells — fixed widths so every row aligns vertically. */
-  input.inline, select.inline {
+  /* Inline-edit table cells — fixed widths so every row aligns vertically.
+     Sem `select.inline`: o único select inline da tabela era o seletor de
+     material, que virou o componente FilamentLines — e CSS de página não
+     atravessa para dentro dele (as mesmas regras vivem lá). */
+  input.inline {
     font: inherit;
     padding: 0.2rem 0.4rem;
     border: 1px solid var(--line);
@@ -1799,12 +1820,11 @@
     height: 1.85rem;
     line-height: 1.2;
     vertical-align: middle;
+    width: 5.5rem;
   }
-  input.inline { width: 5.5rem; }
   input.inline.right { text-align: right; font-variant-numeric: tabular-nums; }
-  select.inline { width: 13rem; max-width: 100%; }
-  input.inline:focus, select.inline:focus { outline: 1px solid var(--brand); outline-offset: 1px; }
-  input.inline:disabled, select.inline:disabled { opacity: 0.55; }
+  input.inline:focus { outline: 1px solid var(--brand); outline-offset: 1px; }
+  input.inline:disabled { opacity: 0.55; }
   .unit {
     color: var(--muted);
     margin-left: 0.25rem;
@@ -1825,6 +1845,18 @@
     user-select: none;
   }
   .mc-toggle input { margin: 0; }
+  /* Lista de cores orçadas de um item já fechado (sem baixa ainda): uma
+     linha por cor, porque um item multicor não tem "o" material. */
+  .cores {
+    display: grid;
+    gap: 0.1rem;
+  }
+  .cores .cor {
+    display: flex;
+    gap: 0.4rem;
+    align-items: baseline;
+    font-size: 0.82rem;
+  }
   /* Pin column widths so input vs. plain-text rendering doesn't reflow. */
   table th:nth-child(2), table td:nth-child(2) { min-width: 14rem; }
   table th:nth-child(3), table td:nth-child(3),

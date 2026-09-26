@@ -125,6 +125,18 @@ export type Consumption = {
   consumed_at: string;
 };
 
+// Um filamento orçado do item — uma cor. `grams_unit` é Decimal no backend,
+// então chega como string; `null` significa "derive do gcode" (todo item
+// anterior à migração 0034), e é o valor que a tela mostra em cinza.
+export type QuoteItemFilament = {
+  id: string;
+  material_id: string;
+  material_name: string;
+  material_color: string | null;
+  grams_unit: string | null;
+  position: number;
+};
+
 export type QuoteItem = {
   id: string;
   name: string;
@@ -146,6 +158,9 @@ export type QuoteItem = {
   model_source_author?: string | null;
   model_source_license?: string | null;
   photos?: QuotePhoto[];
+  // Ordenados por position. Vazio = item que ainda não tem linha nenhuma,
+  // que é o mesmo fato que `material_pending`.
+  filaments?: QuoteItemFilament[];
   consumptions?: Consumption[];
 };
 
