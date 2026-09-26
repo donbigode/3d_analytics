@@ -12,7 +12,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.api.deps import db_session, require_user
-from backend.api.routes.quotes._shared import _build_item_input, _get_settings_row, _now
+from backend.api.routes.quotes._shared import (
+    _build_item_input,
+    _filaments_map,
+    _get_settings_row,
+    _now,
+)
 from backend.core.pricing.quote import (
     ItemInput,
     ServiceLine,
@@ -44,10 +49,16 @@ async def get_pdf(
     items = await quote_repo.list_items(session, q.id)
     services = await quote_repo.list_services(session, q.id)
 
+    # Em lote: o laço abaixo percorre todos os itens, e buscar as linhas por
+    # item aqui seria o mesmo N+1 que _filaments_map existe para evitar.
+    filaments_by_item = await _filaments_map(session, [it.id for it in items])
+
     item_inputs: list[ItemInput] = []
     item_subtotals: list[Decimal] = []
     for it in items:
-        ii = await _build_item_input(session, it, s)
+        ii = await _build_item_input(
+            session, it, s, filaments=filaments_by_item.get(it.id, [])
+        )
         if ii is None:
             item_subtotals.append(Decimal("0"))
         else:

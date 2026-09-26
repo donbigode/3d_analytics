@@ -1,0 +1,330 @@
+"""Custo e contrato das linhas de filamento, pela API.
+
+Pelo HTTP de propósito: é onde o N+1 e a serialização aparecem, e é o que a
+tela consome.
+"""
+from decimal import Decimal
+
+import pytest
+import sqlalchemy as sa
+from sqlalchemy import event
+
+from backend.core.models import QuoteKind, QuoteStatus
+from backend.infra.db import session as session_module
+from backend.infra.db.models import (
+    MaterialVersion,
+    Quote,
+    QuoteItem,
+    QuoteItemFilament,
+    Settings,
+    User,
+    WatcherInboxFile,
+)
+
+GCODE = b";TIME:3600\n;Filament used:5.0m\n;Material Type:PLA\n"
+
+
+async def _settings() -> Settings:
+    """Linha de settings conhecida.
+
+    O conftest de `api/` limpa a tabela `settings` depois de cada teste, então
+    o valor semeado pela migração não sobrevive — sem semear aqui o esperado
+    dependeria dos defaults transitórios de `_get_settings_row`.
+    """
+    async with session_module.SessionFactory() as s:
+        st = Settings(
+            id=1,
+            energy_kwh_price=Decimal("0.95"),
+            printer_power_w=Decimal("150"),
+            printer_depreciation_per_hour=Decimal("2"),
+            printer_maintenance_per_hour=Decimal("0"),
+        )
+        s.add(st)
+        await s.commit()
+        await s.refresh(st)
+        return st
+
+
+async def _material(nome: str, preco: str, cor: str, tipo: str = "PLA") -> MaterialVersion:
+    async with session_module.SessionFactory() as s:
+        mv = MaterialVersion(
+            material_type=tipo, name=nome, color=cor, manufacturer="ACME",
+            density_g_cm3=Decimal("1.24"), price_per_kg_ref=Decimal(preco),
+            failure_rate_pct=Decimal("0"),
+        )
+        s.add(mv)
+        await s.commit()
+        await s.refresh(mv)
+        return mv
+
+
+async def _quote_com_item_multicor(mv_a: MaterialVersion, mv_b: MaterialVersion,
+                                   quantity: int) -> Quote:
+    async with session_module.SessionFactory() as s:
+        u = (await s.execute(sa.select(User))).scalars().first()
+        q = Quote(kind=QuoteKind.COMMERCIAL.value, user_id=u.id,
+                  status=QuoteStatus.DRAFT.value, markup_pct=Decimal("0"),
+                  min_charge=Decimal("0"))
+        s.add(q)
+        await s.commit()
+        it = QuoteItem(quote_id=q.id, name="peça bicolor",
+                       gcode_meta={"filament_m": 10, "time_s": 3600},
+                       material_version_id=mv_a.id, quantity=quantity,
+                       is_multi_color=True)
+        s.add(it)
+        await s.commit()
+        s.add_all([
+            QuoteItemFilament(quote_item_id=it.id, material_version_id=mv_a.id,
+                              grams_unit=Decimal("12"), position=1),
+            QuoteItemFilament(quote_item_id=it.id, material_version_id=mv_b.id,
+                              grams_unit=Decimal("8"), position=2),
+        ])
+        await s.commit()
+        await s.refresh(q)
+        return q
+
+
+@pytest.mark.asyncio
+async def test_subtotal_soma_as_duas_cores_e_conta_o_tempo_uma_vez(auth_client):
+    from backend.core.pricing.cost import depreciation_cost, energy_cost, filament_cost
+    from backend.core.pricing.failure import apply_failure
+
+    st = await _settings()
+    mv_a = await _material("PLA Preto", "100", "Preto")
+    mv_b = await _material("PLA Dourado", "250", "Dourado")
+    q = await _quote_com_item_multicor(mv_a, mv_b, quantity=3)
+
+    r = await auth_client.get(f"/quotes/{q.id}")
+    assert r.status_code == 200, r.text
+    item = r.json()["items"][0]
+
+    # As duas linhas aparecem, ordenadas por position
+    assert [f["grams_unit"] for f in item["filaments"]] == ["12.00", "8.00"]
+    assert [f["material_name"] for f in item["filaments"]] == ["PLA Preto", "PLA Dourado"]
+    assert [f["position"] for f in item["filaments"]] == [1, 2]
+
+    # E o subtotal soma o filamento das duas, com o tempo contado uma vez.
+    # Gramas digitadas não levam refugo, então `is_multi_color` não infla nada
+    # aqui — é exatamente o ponto de gravar as gramas por linha.
+    fil = filament_cost(Decimal("12"), Decimal("100")) + filament_cost(Decimal("8"), Decimal("250"))
+    en = energy_cost(3600, st.printer_power_w, st.energy_kwh_price)
+    dep = depreciation_cost(3600, st.printer_depreciation_per_hour)
+    # apply_failure arredonda a base antes da quantidade — mesma ordem de
+    # compute_item_cost, senão o esperado divergiria por centavos.
+    esperado = apply_failure(fil + en + dep, Decimal("0")) * Decimal(3)
+
+    assert Decimal(item["subtotal"]) == esperado.quantize(Decimal("0.01")), (
+        "subtotal divergiu — conferir se energia/depreciação foram somadas por cor"
+    )
+
+
+@pytest.mark.asyncio
+async def test_item_criado_pela_rota_nasce_com_linha_e_orca(auth_client):
+    """Invariante 1 pela porta da frente: item com material resolvido tem linha.
+
+    Sem isto `_build_item_input` devolveria None e o item pararia de orçar em
+    silêncio — que é exatamente o risco desta task.
+    """
+    await _settings()
+    await _material("PLA Preto", "100", "Preto")   # único PLA → auto-resolve
+
+    r = await auth_client.post("/quotes", json={"kind": "commercial", "markup_pct": "0"})
+    assert r.status_code == 201, r.text
+    qid = r.json()["id"]
+
+    r = await auth_client.post(
+        f"/quotes/{qid}/items",
+        data={"name": "peça", "quantity": "1"},
+        files={"file": ("p.gcode", GCODE, "text/plain")},
+    )
+    assert r.status_code == 201, r.text
+    item = r.json()["items"][0]
+    assert item["material_pending"] is False
+    assert len(item["filaments"]) == 1
+    assert item["filaments"][0]["position"] == 1
+    # grams_unit None = "derive do gcode_meta" — a linha nasce sem gramas fixas
+    assert item["filaments"][0]["grams_unit"] is None
+    assert Decimal(item["subtotal"]) > 0, "item novo parou de orçar"
+
+
+@pytest.mark.asyncio
+async def test_resolver_material_pendente_cria_a_linha(auth_client):
+    """Item que entra pendente não tem linha; resolver o material cria a linha 1."""
+    await _settings()
+    # Dois PLA registrados → nada de auto-resolve, o item entra pendente
+    await _material("PLA Preto", "100", "Preto")
+    mv_branco = await _material("PLA Branco", "110", "Branco")
+
+    r = await auth_client.post("/quotes", json={"kind": "commercial", "markup_pct": "0"})
+    qid = r.json()["id"]
+    r = await auth_client.post(
+        f"/quotes/{qid}/items",
+        data={"name": "peça", "quantity": "1"},
+        files={"file": ("p.gcode", GCODE, "text/plain")},
+    )
+    assert r.status_code == 201, r.text
+    item = r.json()["items"][0]
+    assert item["material_pending"] is True
+    assert item["filaments"] == [], "item pendente não deve nascer com linha"
+    assert Decimal(item["subtotal"]) == 0
+
+    # Finalizar deve ser bloqueado enquanto não há linha
+    r = await auth_client.post(f"/quotes/{qid}/transitions/finalize")
+    assert r.status_code == 409, r.text
+
+    r = await auth_client.put(f"/quotes/{qid}/items/{item['id']}",
+                              json={"material_id": str(mv_branco.id)})
+    assert r.status_code == 200, r.text
+    item = r.json()["items"][0]
+    assert len(item["filaments"]) == 1
+    assert item["filaments"][0]["material_id"] == str(mv_branco.id)
+    assert Decimal(item["subtotal"]) > 0
+
+    r = await auth_client.post(f"/quotes/{qid}/transitions/finalize")
+    assert r.status_code == 200, r.text
+
+
+@pytest.mark.asyncio
+async def test_trocar_material_reaproveita_a_linha_1(auth_client):
+    """Trocar o material não duplica a linha 1 — atualiza a existente."""
+    await _settings()
+    mv_a = await _material("PLA Preto", "100", "Preto")
+    mv_b = await _material("PETG Azul", "200", "Azul", tipo="PETG")
+
+    r = await auth_client.post("/quotes", json={"kind": "commercial", "markup_pct": "0"})
+    qid = r.json()["id"]
+    r = await auth_client.post(
+        f"/quotes/{qid}/items",
+        data={"name": "peça", "quantity": "1"},
+        files={"file": ("p.gcode", GCODE, "text/plain")},
+    )
+    item = r.json()["items"][0]
+    assert item["filaments"][0]["material_id"] == str(mv_a.id)
+
+    r = await auth_client.put(f"/quotes/{qid}/items/{item['id']}",
+                              json={"material_id": str(mv_b.id)})
+    assert r.status_code == 200, r.text
+    item = r.json()["items"][0]
+    assert len(item["filaments"]) == 1, "troca de material duplicou a linha"
+    assert item["filaments"][0]["material_id"] == str(mv_b.id)
+    assert item["material_id"] == str(mv_b.id)
+
+
+@pytest.mark.asyncio
+async def test_clone_preserva_as_duas_cores_e_continua_orcando(auth_client):
+    await _settings()
+    mv_a = await _material("PLA Preto", "100", "Preto")
+    mv_b = await _material("PLA Dourado", "250", "Dourado")
+    q = await _quote_com_item_multicor(mv_a, mv_b, quantity=2)
+
+    r = await auth_client.post(f"/quotes/{q.id}/clone")
+    assert r.status_code == 201, r.text
+    clone = r.json()
+    assert len(clone["items"]) == 1
+    item = clone["items"][0]
+    assert [(f["material_id"], f["grams_unit"], f["position"]) for f in item["filaments"]] == [
+        (str(mv_a.id), "12.00", 1),
+        (str(mv_b.id), "8.00", 2),
+    ]
+    assert Decimal(item["subtotal"]) > 0, "clone perdeu as linhas e parou de orçar"
+
+    # E o original continua com as suas linhas (nada foi movido)
+    r = await auth_client.get(f"/quotes/{q.id}")
+    assert len(r.json()["items"][0]["filaments"]) == 2
+
+
+@pytest.mark.asyncio
+async def test_item_vindo_do_inbox_nasce_com_linha(auth_client):
+    await _settings()
+    mv = await _material("PLA Preto", "100", "Preto")
+
+    async with session_module.SessionFactory() as s:
+        rec = WatcherInboxFile(
+            file_hash="hash-item-filaments-1",
+            original_path="/tmp/peca.gcode",
+            parsed_meta={"time_s": 3600, "filament_m": 10, "material": "PLA"},
+        )
+        s.add(rec)
+        await s.commit()
+        rec_id = str(rec.id)
+
+    r = await auth_client.post(f"/inbox/{rec_id}/promote", json={"kind": "commercial"})
+    assert r.status_code == 200, r.text
+    qid = r.json()["id"]
+
+    r = await auth_client.get(f"/quotes/{qid}")
+    assert r.status_code == 200, r.text
+    item = r.json()["items"][0]
+    assert len(item["filaments"]) == 1
+    assert item["filaments"][0]["material_id"] == str(mv.id)
+    assert Decimal(item["subtotal"]) > 0, "item do inbox nasceu sem linha e não orça"
+
+
+async def _contar_queries(auth_client, url: str) -> int:
+    contador = {"n": 0}
+
+    def antes(conn, cursor, statement, params, context, executemany):
+        contador["n"] += 1
+
+    event.listen(session_module.engine.sync_engine, "before_cursor_execute", antes)
+    try:
+        r = await auth_client.get(url)
+        assert r.status_code == 200, r.text
+    finally:
+        event.remove(session_module.engine.sync_engine, "before_cursor_execute", antes)
+    return contador["n"]
+
+
+async def _quote_com_n_itens(mv_a: MaterialVersion, mv_b: MaterialVersion,
+                             n_itens: int, linhas_por_item: int) -> Quote:
+    async with session_module.SessionFactory() as s:
+        u = (await s.execute(sa.select(User))).scalars().first()
+        q = Quote(kind=QuoteKind.COMMERCIAL.value, user_id=u.id,
+                  status=QuoteStatus.DRAFT.value, markup_pct=Decimal("0"),
+                  min_charge=Decimal("0"))
+        s.add(q)
+        await s.flush()
+        for i in range(n_itens):
+            it = QuoteItem(quote_id=q.id, name=f"peça {i}",
+                           gcode_meta={"filament_m": 10, "time_s": 3600},
+                           material_version_id=mv_a.id, quantity=1,
+                           is_multi_color=linhas_por_item > 1)
+            s.add(it)
+            await s.flush()
+            for pos in range(1, linhas_por_item + 1):
+                s.add(QuoteItemFilament(
+                    quote_item_id=it.id,
+                    material_version_id=(mv_a.id if pos == 1 else mv_b.id),
+                    grams_unit=Decimal("10"), position=pos,
+                ))
+        await s.commit()
+        await s.refresh(q)
+        return q
+
+
+@pytest.mark.asyncio
+async def test_queries_nao_crescem_com_itens_e_linhas(auth_client):
+    """As linhas vêm numa query só — nem por item, nem por linha.
+
+    Buscar as linhas dentro do laço de custo reintroduziria o N+1 que a Spec 2
+    tirou do contábil, e aqui seria pior: o cálculo percorre todos os itens.
+
+    Medido nesta configuração: 1 item/1 linha = 9 queries, 3 itens/2 linhas = 9
+    queries — nenhum crescimento. Teto = poucas + 2 (folga pequena). Uma volta
+    ao `_filaments_map(session, [it.id])` por item estouraria de sobra.
+    """
+    await _settings()
+    mv_a = await _material("PLA Preto", "100", "Preto")
+    mv_b = await _material("PLA Dourado", "250", "Dourado")
+
+    pequeno = await _quote_com_n_itens(mv_a, mv_b, n_itens=1, linhas_por_item=1)
+    grande = await _quote_com_n_itens(mv_a, mv_b, n_itens=3, linhas_por_item=2)
+
+    poucas = await _contar_queries(auth_client, f"/quotes/{pequeno.id}")
+    muitas = await _contar_queries(auth_client, f"/quotes/{grande.id}")
+
+    teto = poucas + 2
+    assert muitas <= teto, (
+        f"GET /quotes passou de {poucas} para {muitas} queries ao ir de 1 item/1 linha "
+        f"para 3 itens/2 linhas (teto {teto}) — provável busca de linhas por item"
+    )

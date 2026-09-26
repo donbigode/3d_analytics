@@ -16,7 +16,7 @@ from backend.api.schemas.quotes import QuoteItemUpdate, QuoteOut
 from backend.api.routes.quotes._shared import _quote_out
 from backend.core.gcode.parser import GcodeMeta, parse_gcode_metadata
 from backend.core.models import QuoteStatus
-from backend.infra.db.models import Quote, QuoteItem, QuotePhoto, User
+from backend.infra.db.models import Quote, QuoteItem, QuoteItemFilament, QuotePhoto, User
 from backend.infra.db.repos import material as material_repo
 from backend.infra.storage import quote_photos as photo_storage
 from backend.infra.storage.gcodes import save_gcode
@@ -25,6 +25,33 @@ from backend.settings import get_settings as get_app_settings
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+async def _sync_linha1(session: AsyncSession, item_id: UUID, material_version_id: UUID) -> None:
+    """Garante a linha de ``position = 1`` do item apontando para o material.
+
+    Todo item com material resolvido precisa de pelo menos uma linha: é a
+    tabela autoritativa do custo, e sem linha ``_build_item_input`` devolve
+    ``None`` e a peça para de orçar em silêncio. Cria quando o item era
+    pendente; troca o material quando já existia (não duplica, e as linhas
+    2..N de um item multicor ficam onde estão).
+    """
+    linha1 = (
+        await session.execute(
+            select(QuoteItemFilament)
+            .where(QuoteItemFilament.quote_item_id == item_id)
+            .where(QuoteItemFilament.position == 1)
+        )
+    ).scalar_one_or_none()
+    if linha1 is None:
+        session.add(QuoteItemFilament(
+            quote_item_id=item_id,
+            material_version_id=material_version_id,
+            grams_unit=None,
+            position=1,
+        ))
+    else:
+        linha1.material_version_id = material_version_id
 
 
 # ---------- Items ----------
@@ -88,6 +115,17 @@ async def add_item(
         model_source_license=model_source_license or None,
     )
     session.add(item)
+    # flush para ter o id do item antes de pendurar a linha de filamento nele
+    await session.flush()
+    if item.material_version_id is not None:
+        # Item que entra pendente (sem material) NÃO ganha linha — a invariante
+        # é "item com material resolvido tem ao menos uma linha".
+        session.add(QuoteItemFilament(
+            quote_item_id=item.id,
+            material_version_id=item.material_version_id,
+            grams_unit=None,
+            position=1,
+        ))
     await session.commit()
     await session.refresh(q)
     return await _quote_out(session, q)
@@ -122,6 +160,7 @@ async def update_item(
             raise HTTPException(400, "material_id must be a valid UUID")
         if not mv:
             raise HTTPException(400, "material not found")
+        await _sync_linha1(session, it.id, mv.id)
         it.material_version_id = mv.id
         meta = dict(it.gcode_meta or {})
         meta["material"] = mv.material_type
@@ -135,6 +174,7 @@ async def update_item(
                 f"cannot uniquely resolve material '{payload.material_code}' "
                 "(zero or multiple registered) — send material_id instead",
             )
+        await _sync_linha1(session, it.id, mv.id)
         it.material_version_id = mv.id
         meta = dict(it.gcode_meta or {})
         meta["material"] = payload.material_code

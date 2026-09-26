@@ -50,6 +50,22 @@ class ConsumptionOut(BaseModel):
     consumed_at: datetime
 
 
+class QuoteItemFilamentOut(BaseModel):
+    """Um filamento orçado do item — uma cor.
+
+    Lado de leitura. O lado de escrita (`QuoteItemFilamentIn`) mora com a rota
+    que troca a lista inteira.
+    """
+    id: str
+    material_id: str
+    material_name: str
+    material_color: str | None = None
+    # Gramas POR PEÇA. None = "derive do gcode_meta", que é o caso de todo item
+    # anterior à migração 0034 — a tela mostra o derivado em cinza.
+    grams_unit: Decimal | None = None
+    position: int
+
+
 class QuoteItemOut(BaseModel):
     id: str
     name: str
@@ -68,6 +84,8 @@ class QuoteItemOut(BaseModel):
     model_source_author: str | None = None
     model_source_license: str | None = None
     photos: list[QuotePhotoOut] = []
+    # Filamentos orçados — um por cor. Ordenados por position.
+    filaments: list[QuoteItemFilamentOut] = []
     # Filamento efetivamente baixado das bobinas — pode ter mais de uma linha
     # quando houve reimpressão (falha + nova tentativa consome duas vezes).
     consumptions: list[ConsumptionOut] = []
