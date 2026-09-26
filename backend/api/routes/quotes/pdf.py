@@ -130,6 +130,19 @@ async def get_pdf(
         per_piece = (client_price / Decimal(qty)).quantize(
             Decimal("0.01"), rounding=ROUND_HALF_UP
         ) if qty else client_price
+        # Linhas de filamento do item, já em lote via _filaments_map (ordenadas
+        # por position). O template usa isto para listar cada cor de um item
+        # multicolor; item de uma linha só cai no ramo antigo do macro.
+        item_filaments = [
+            {
+                "material_name": fil_mv.name,
+                "material_color": fil_mv.color,
+                "grams_unit": (
+                    float(fil.grams_unit) if fil.grams_unit is not None else None
+                ),
+            }
+            for fil, fil_mv in filaments_by_item.get(it.id, [])
+        ]
         item_dicts.append(
             {
                 "name": it.name,
@@ -144,6 +157,7 @@ async def get_pdf(
                 "material_manufacturer": mat_manufacturer,
                 "material_polymer": it.gcode_meta.get("material") or None,
                 "is_multi_color": bool(it.is_multi_color),
+                "filaments": item_filaments,
                 "model_source_url": it.model_source_url,
                 "model_source_author": it.model_source_author,
                 "model_source_license": it.model_source_license,
