@@ -2,7 +2,7 @@ from decimal import Decimal
 
 from backend.core.gcode.parser import GcodeMeta
 from backend.core.pricing.cost import grams_from_meters
-from backend.core.pricing.quote import ItemInput
+from backend.core.pricing.quote import FilamentLine, ItemInput
 
 
 def effective_grams_per_unit(
@@ -38,8 +38,14 @@ def gcode_to_item_input(
     maintenance_per_hour: Decimal = Decimal("0"),
     waste_pct: Decimal = Decimal("0"),
     filament_g: float | None = None,
+    filaments: tuple[FilamentLine, ...] | None = None,
 ) -> ItemInput:
     """Build an ItemInput for cost computation from parsed gcode metadata and material/settings.
+
+    ``filaments`` explícito vence: é o caminho multicor, já resolvido pelo
+    chamador (gramas e preço de cada linha). Quando é ``None``, monta uma linha
+    única a partir de ``meta``/``filament_g``/``waste_pct`` — o comportamento de
+    sempre, para itens de uma cor.
 
     ``waste_pct`` inflates the consumed filament to account for purges,
     brims, supports and color-change towers. The caller picks the right
@@ -48,10 +54,13 @@ def gcode_to_item_input(
 
     If ``filament_g`` is provided and > 0, it is used as-is (no waste applied).
     """
-    grams = effective_grams_per_unit(meta.filament_m, filament_g, density, diameter_mm, waste_pct)
+    if filaments is None:
+        grams = effective_grams_per_unit(
+            meta.filament_m, filament_g, density, diameter_mm, waste_pct
+        )
+        filaments = (FilamentLine(grams=grams, price_per_kg=price_per_kg),)
     return ItemInput(
-        grams=grams,
-        price_per_kg=price_per_kg,
+        filaments=filaments,
         time_s=meta.time_s,
         power_w=power_w,
         kwh_price=kwh_price,

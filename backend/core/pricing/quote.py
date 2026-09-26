@@ -12,9 +12,22 @@ from backend.core.pricing.failure import apply_failure
 
 
 @dataclass(frozen=True)
-class ItemInput:
+class FilamentLine:
+    """Um filamento de um item: gramas **por peça** e preço do seu material.
+
+    Preço por linha, não por item, porque duas cores podem custar diferente —
+    é justamente isso que torna a separação útil.
+    """
+
     grams: Decimal
     price_per_kg: Decimal
+
+
+@dataclass(frozen=True)
+class ItemInput:
+    # Um item tem N filamentos. Item de uma cor tem uma linha — não há caminho
+    # separado para "cor única", porque dois caminhos divergem.
+    filaments: tuple[FilamentLine, ...]
     time_s: float
     power_w: Decimal
     kwh_price: Decimal
@@ -34,7 +47,13 @@ class ServiceLine:
 
 
 def compute_item_cost(item: ItemInput) -> Decimal:
-    fil = filament_cost(item.grams, item.price_per_kg)
+    # Gramas somam por linha de filamento; time_s NÃO. O gcode descreve a
+    # impressão da peça inteira, com todas as suas cores, então energia,
+    # depreciação e manutenção contam o tempo UMA vez — e só depois tudo
+    # escala pela quantidade de cópias.
+    fil = sum(
+        (filament_cost(f.grams, f.price_per_kg) for f in item.filaments), Decimal(0)
+    )
     en = energy_cost(item.time_s, item.power_w, item.kwh_price)
     dep = depreciation_cost(item.time_s, item.depreciation_per_hour)
     maint = maintenance_cost(item.time_s, item.maintenance_per_hour)

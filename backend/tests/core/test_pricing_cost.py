@@ -6,7 +6,7 @@ from backend.core.pricing.cost import (
     grams_from_meters,
     maintenance_cost,
 )
-from backend.core.pricing.quote import ItemInput, compute_item_cost
+from backend.core.pricing.quote import FilamentLine, ItemInput, compute_item_cost
 
 
 def test_grams_pla_175():
@@ -42,8 +42,7 @@ def test_compute_item_cost_includes_maintenance():
     Sanity check using round numbers — base = filament 10 + energy 0 +
     depreciation 2 + maintenance 1 = 13; failure 0%; qty 1 = 13."""
     item = ItemInput(
-        grams=Decimal("100"),
-        price_per_kg=Decimal("100"),
+        filaments=(FilamentLine(grams=Decimal("100"), price_per_kg=Decimal("100")),),
         time_s=3600,
         power_w=Decimal("0"),
         kwh_price=Decimal("0"),
@@ -59,8 +58,7 @@ def test_compute_item_cost_omits_maintenance_when_absent():
     """Backwards compatibility: callers that don't pass maintenance still
     compute the same value as before."""
     item = ItemInput(
-        grams=Decimal("100"),
-        price_per_kg=Decimal("100"),
+        filaments=(FilamentLine(grams=Decimal("100"), price_per_kg=Decimal("100")),),
         time_s=3600,
         power_w=Decimal("0"),
         kwh_price=Decimal("0"),
@@ -101,4 +99,4 @@ def test_gcode_to_item_input_applies_waste():
         waste_pct=Decimal("20"),
     )
     # 20% mais filamento por causa de purga/wipe tower
-    assert ii_multi.grams == ii_no_waste.grams * Decimal("1.20")
+    assert ii_multi.filaments[0].grams == ii_no_waste.filaments[0].grams * Decimal("1.20")

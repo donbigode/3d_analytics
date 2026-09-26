@@ -131,7 +131,7 @@ async def test_cpv_concorda_com_o_pricing_no_mesmo_item():
     diferença é decisão de produto em aberto (provisão de falha não é custo
     realizado), não bug — e está documentada nos achados pendentes.
     """
-    from backend.core.pricing.quote import ItemInput, compute_item_cost
+    from backend.core.pricing.quote import FilamentLine, ItemInput, compute_item_cost
 
     async with session_module.SessionFactory() as s:
         user = User(name="u", email="cmp@t.com", password_hash="x")
@@ -154,7 +154,8 @@ async def test_cpv_concorda_com_o_pricing_no_mesmo_item():
         contabil = costs.catalog_filament + costs.energy + costs.depreciation
 
         pricing = compute_item_cost(ItemInput(
-            grams=Decimal("60"), price_per_kg=Decimal("100"), time_s=4 * 3600,
+            filaments=(FilamentLine(grams=Decimal("60"), price_per_kg=Decimal("100")),),
+            time_s=4 * 3600,
             power_w=Decimal("150"), kwh_price=Decimal("0.95"),
             depreciation_per_hour=Decimal("1.50"), failure_pct=Decimal("0"), quantity=4,
         ))
