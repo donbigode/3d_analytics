@@ -78,11 +78,23 @@ async def compute_quote_costs(session: AsyncSession, quote, settings_row: Settin
         grams_unit = effective_grams_per_unit(
             filament_m, filament_g, mv.density_g_cm3, _DIAMETER_MM, Decimal("0")
         )
-        grams = grams_unit * Decimal(it.quantity)
+        qty = Decimal(it.quantity)
+        grams = grams_unit * qty
         catalog_filament += filament_cost(grams, mv.price_per_kg_ref)
-        energy += energy_cost(time_s, settings_row.printer_power_w, settings_row.energy_kwh_price)
+        # time_s e filament_m saem do MESMO cabeçalho de gcode e descrevem UMA
+        # peça — a spec 2026-06-17-contabil-fato-itens declara `filament_m` como
+        # "por peça", e `quantity` são cópias. Logo energia e depreciação também
+        # escalam com a quantidade, como já fazem em pricing/quote.py
+        # (compute_item_cost multiplica o custo inteiro por quantity).
+        #
+        # Antes daqui só as gramas escalavam, e o CPV de um item com 4 cópias
+        # saía 35% abaixo do custo que o pricing cobrou do cliente — inflando a
+        # margem do DRE e subestimando a perda operacional do uso pessoal. Os
+        # dois testes que cobriam este laço usavam quantity=1, onde ×1 esconde
+        # a diferença.
+        energy += energy_cost(time_s, settings_row.printer_power_w, settings_row.energy_kwh_price) * qty
         dep_rate = it.depreciation_rate_override or settings_row.printer_depreciation_per_hour
-        depreciation += depreciation_cost(time_s, dep_rate)
+        depreciation += depreciation_cost(time_s, dep_rate) * qty
 
         cons = (
             await session.execute(

@@ -174,6 +174,27 @@ uma edição troca pela cópia com os valores anteriores. Baixo dano hoje.
 **13. `spool_label` ainda colide** para duas bobinas de mesmo tipo, fabricante
 e cor compradas na mesma loja no mesmo mês.
 
+**14. O contábil não aplica `failure_pct` nem `maintenance_cost`; o pricing
+aplica.** Achado ao investigar a assimetria de quantidade (ver abaixo). São duas
+perguntas distintas, e nenhuma delas é claramente bug:
+
+- **Provisão de falha.** `pricing/quote.py` infla o custo por `failure_pct`
+  antes de multiplicar pela quantidade. O contábil não. Argumento pra manter
+  como está: provisão de falha é colchão de precificação, não custo realizado —
+  se a peça saiu boa, aquele dinheiro não foi gasto. Argumento contra: se as
+  falhas acontecem, elas viram refugo real que hoje não entra em CPV nenhum, e a
+  margem aparece melhor do que é. Resolver isso provavelmente passa por
+  registrar a falha como evento, não por mudar a fórmula.
+- **Manutenção.** `maintenance_cost` (bicos, correias, lubrificação) entra no
+  preço e não entra no CPV. Aqui o caso pra incluir é mais forte que no de
+  falha: é desgaste que acontece independente do resultado da peça. Ficou de
+  fora só porque `compute_quote_costs` nunca o chamou.
+
+O teste `test_cpv_concorda_com_o_pricing_no_mesmo_item` compara os dois motores
+de propósito **só** em filamento + energia + depreciação, e diz no docstring por
+quê. Quando uma destas duas decisões for tomada, é esse teste que precisa
+crescer.
+
 ## Fechados durante o trabalho, registrados por serem contra-intuitivos
 
 - `dur(0)` mostra travessão, não "0min": impressão 3D não leva zero minutos,
