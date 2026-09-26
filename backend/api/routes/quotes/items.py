@@ -162,11 +162,21 @@ async def update_item(
             raise HTTPException(400, "quantity must be >= 1")
         it.quantity = payload.quantity
 
-    if payload.filaments is not None and payload.material_id is not None:
+    # Três jeitos de dizer qual é o material do item: `filaments` (a lista
+    # inteira), `material_id` e `material_code` (atalhos de uma cor, que
+    # reescrevem a linha 1). Dois no mesmo request obrigam alguém a adivinhar
+    # qual ganha — e aqui ganhava o último por acidente da ordem dos branches:
+    # `filaments` gravava as linhas e normalizava `gcode_meta["material"]`, e
+    # em seguida `material_code` reescrevia a linha 1 e sobrescrevia o mesmo
+    # campo com o código cru. Regra de negócio, não schema: 400, como o irmão.
+    if payload.filaments is not None and (
+        payload.material_id is not None or payload.material_code is not None
+    ):
         raise HTTPException(
             400,
-            "envie material_id OU filaments, não os dois — material_id é o "
-            "atalho para um item de uma cor e reescreve a linha 1",
+            "envie filaments OU material_id OU material_code, nunca dois juntos "
+            "— material_id e material_code são atalhos para um item de uma cor "
+            "e reescrevem a linha 1, enquanto filaments substitui a lista toda",
         )
 
     if payload.filaments is not None:

@@ -704,3 +704,52 @@ async def test_escrever_filaments_nao_apaga_o_resto_do_gcode_meta(auth_client):
     assert item["gcode_meta"]["filament_m"] == 10
     assert item["gcode_meta"]["time_s"] == 3600
     assert Decimal(item["subtotal"]) > 0, "o item parou de orçar"
+
+
+@pytest.mark.asyncio
+async def test_filaments_e_material_code_no_mesmo_patch_e_400(auth_client):
+    """O guard cobria `material_id` e deixava `material_code` passar.
+
+    São três jeitos de dizer qual é o material do item, e o guard existe porque
+    dois juntos obrigam alguém a adivinhar qual ganha. Aqui ganhava o último por
+    acidente da ordem dos branches: `filaments` gravava as linhas e normalizava
+    `gcode_meta["material"]`, e o `elif material_code` em seguida reescrevia a
+    linha 1 e sobrescrevia o mesmo campo com o código cru.
+    """
+    await _settings()
+    # Exatamente UM PLA registrado, para `material_code: "PLA"` resolver. Sem
+    # isso a rota devolveria 400 pelo "cannot uniquely resolve" e o teste
+    # passaria pelo motivo errado — verde com o guard ausente.
+    await _material("PLA Único", "100", "Preto", tipo="PLA")
+    mv_petg = await _material("PETG Preto", "120", "Preto", tipo="PETG")
+    mv_abs = await _material("ABS Vermelho", "90", "Vermelho", tipo="ABS")
+    q, it = await _item_com_material_cru("Generic PLA")
+
+    # Estado de partida: uma linha PETG e o campo já normalizado.
+    r = await auth_client.put(
+        f"/quotes/{q.id}/items/{it.id}",
+        json={"filaments": [{"material_id": str(mv_petg.id)}]},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["items"][0]["gcode_meta"]["material"] == "PETG"
+
+    # Os dois juntos: a lista pediria ABS, o atalho pediria PLA.
+    r = await auth_client.put(
+        f"/quotes/{q.id}/items/{it.id}",
+        json={"material_code": "PLA",
+              "filaments": [{"material_id": str(mv_abs.id)}]},
+    )
+    assert r.status_code == 400, r.text
+    assert "material_code" in r.text
+
+    # E nada foi escrito: nem a lista (seria ABS), nem o campo (seria "PLA").
+    # Só o status não bastaria — a rejeição vinha depois de escrever a linha 1.
+    r = await auth_client.get(f"/quotes/{q.id}")
+    assert r.status_code == 200, r.text
+    item = r.json()["items"][0]
+    assert [f["material_id"] for f in item["filaments"]] == [str(mv_petg.id)], (
+        "a rejeição escreveu as linhas antes de levantar"
+    )
+    assert item["gcode_meta"]["material"] == "PETG", (
+        "a rejeição sobrescreveu gcode_meta['material'] antes de levantar"
+    )
