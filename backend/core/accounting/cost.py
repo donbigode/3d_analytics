@@ -4,14 +4,14 @@ from decimal import Decimal
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.core.pricing.cost import depreciation_cost, energy_cost, filament_cost
-from backend.core.quote_service import effective_grams_per_unit
-from backend.infra.db.models import (
-    MaterialConsumption, MaterialVersion, QuoteItem, QuoteService, Settings,
+from backend.core.pricing.cost import (
+    depreciation_cost, energy_cost, filament_cost, maintenance_cost,
 )
-
-_DIAMETER_MM = Decimal("1.75")
-
+from backend.core.pricing.failure import apply_failure
+from backend.core.quotes.filaments import grams_for_line, waste_for_line
+from backend.infra.db.models import (
+    MaterialConsumption, MaterialVersion, QuoteItem, QuoteItemFilament, QuoteService, Settings,
+)
 
 @dataclass
 class QuoteCosts:
@@ -19,14 +19,20 @@ class QuoteCosts:
     real_filament: Decimal     # filamento real consumido (snapshots)
     energy: Decimal
     depreciation: Decimal
+    maintenance: Decimal      # o pricing já cobrava, o contábil não somava
     services: Decimal
+    orcado_itens: Decimal     # custo dos itens já com falha e manutenção
 
     @property
     def cost_orcado(self) -> Decimal:
-        return self.catalog_filament + self.energy + self.depreciation + self.services
+        # Espelha compute_quote_total: itens (com provisão de falha) + serviços,
+        # serviços FORA da falha.
+        return self.orcado_itens + self.services
 
     @property
     def cpv(self) -> Decimal:
+        # Realizado, não orçado: sem provisão de falha e sem manutenção. Provisão
+        # de falha que não se concretizou não é dinheiro gasto.
         return self.real_filament + self.energy + self.depreciation + self.services
 
 
@@ -66,21 +72,46 @@ async def compute_quote_costs(session: AsyncSession, quote, settings_row: Settin
     real_filament = Decimal(0)
     energy = Decimal(0)
     depreciation = Decimal(0)
+    maintenance = Decimal(0)
+    orcado_itens = Decimal(0)
+
+    # Linhas de filamento de todos os itens numa query só.
+    filaments_by_item: dict = {}
+    if items:
+        rows = (
+            await session.execute(
+                select(QuoteItemFilament, MaterialVersion)
+                .join(MaterialVersion, MaterialVersion.id == QuoteItemFilament.material_version_id)
+                .where(QuoteItemFilament.quote_item_id.in_([it.id for it in items]))
+                .order_by(QuoteItemFilament.quote_item_id, QuoteItemFilament.position)
+            )
+        ).all()
+        for fil, mv_line in rows:
+            filaments_by_item.setdefault(fil.quote_item_id, []).append((fil, mv_line))
 
     for it in items:
-        mv = await session.get(MaterialVersion, it.material_version_id)
-        if mv is None:
+        linhas = filaments_by_item.get(it.id, [])
+        if not linhas:
+            # Item sem linha = material não resolvido. Mesma semântica que o
+            # `if mv is None: continue` de antes.
             continue
         time_s = float(it.gcode_meta.get("time_s", 0))
-        filament_m = float(it.gcode_meta.get("filament_m", 0) or 0)
-        raw_g = it.gcode_meta.get("filament_g")
-        filament_g = float(raw_g) if raw_g not in (None, "") else None
-        grams_unit = effective_grams_per_unit(
-            filament_m, filament_g, mv.density_g_cm3, _DIAMETER_MM, Decimal("0")
-        )
         qty = Decimal(it.quantity)
-        grams = grams_unit * qty
-        catalog_filament += filament_cost(grams, mv.price_per_kg_ref)
+
+        # Gramas somam por linha de cor; time_s NÃO — ele descreve a impressão
+        # da peça inteira, com todas as suas cores.
+        fil_peca = Decimal(0)
+        for fil, mv_line in linhas:
+            waste = waste_for_line(
+                fil.grams_unit, bool(it.is_multi_color),
+                mv_line.single_color_waste_pct, mv_line.multi_color_waste_pct,
+            )
+            gramas_unit = grams_for_line(
+                fil.grams_unit, it.gcode_meta, mv_line.density_g_cm3, waste
+            )
+            fil_peca += filament_cost(gramas_unit, mv_line.price_per_kg_ref)
+            catalog_filament += filament_cost(gramas_unit * qty, mv_line.price_per_kg_ref)
+
         # time_s e filament_m saem do MESMO cabeçalho de gcode e descrevem UMA
         # peça — a spec 2026-06-17-contabil-fato-itens declara `filament_m` como
         # "por peça", e `quantity` são cópias. Logo energia e depreciação também
@@ -92,9 +123,25 @@ async def compute_quote_costs(session: AsyncSession, quote, settings_row: Settin
         # margem do DRE e subestimando a perda operacional do uso pessoal. Os
         # dois testes que cobriam este laço usavam quantity=1, onde ×1 esconde
         # a diferença.
-        energy += energy_cost(time_s, settings_row.printer_power_w, settings_row.energy_kwh_price) * qty
+        en_peca = energy_cost(time_s, settings_row.printer_power_w, settings_row.energy_kwh_price)
         dep_rate = it.depreciation_rate_override or settings_row.printer_depreciation_per_hour
-        depreciation += depreciation_cost(time_s, dep_rate) * qty
+        dep_peca = depreciation_cost(time_s, dep_rate)
+        maint_peca = maintenance_cost(time_s, settings_row.printer_maintenance_per_hour or Decimal(0))
+        energy += en_peca * qty
+        depreciation += dep_peca * qty
+        maintenance += maint_peca * qty
+
+        # Custo ORÇADO do item, espelhando compute_item_cost: provisão de falha
+        # aplicada POR ITEM sobre a base por peça, e só depois × quantidade.
+        # Aplicar a falha sobre o agregado daria número diferente, e serviços
+        # ficam FORA dela — igual ao compute_quote_total.
+        #
+        # Decisão do Otavio (2026-09-26): ele quer que `sale.quote_total` bata com o
+        # total do PDF. Medido antes: com manutenção 0,50/h a divergência era 12,7%,
+        # e 19,1% somando falha de 8%. Batia hoje só porque os dois estão em zero.
+        failure_pct = it.failure_rate_override or linhas[0][1].failure_rate_pct
+        base_peca = fil_peca + en_peca + dep_peca + maint_peca
+        orcado_itens += apply_failure(base_peca, failure_pct) * qty
 
         cons = (
             await session.execute(
@@ -110,5 +157,7 @@ async def compute_quote_costs(session: AsyncSession, quote, settings_row: Settin
         real_filament=real_filament,
         energy=energy,
         depreciation=depreciation,
+        maintenance=maintenance,
         services=services_cost,
+        orcado_itens=orcado_itens,
     )

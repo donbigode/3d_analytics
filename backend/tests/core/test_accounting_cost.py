@@ -5,7 +5,8 @@ import pytest
 from backend.core.accounting.cost import apply_markup, compute_quote_costs
 from backend.infra.db import session as session_module
 from backend.infra.db.models import (
-    MaterialConsumption, MaterialVersion, Quote, QuoteItem, Settings, Spool, User,
+    MaterialConsumption, MaterialVersion, Quote, QuoteItem, QuoteItemFilament, Settings, Spool,
+    User,
 )
 from backend.core.models import QuoteKind, QuoteStatus
 from datetime import datetime, timezone
@@ -39,6 +40,9 @@ async def test_compute_quote_costs_components():
                       purchased_price=Decimal("100"), initial_grams=Decimal("1000"),
                       remaining_grams=Decimal("900"))
         s.add_all([item, spool]); await s.commit()
+        s.add(QuoteItemFilament(quote_item_id=item.id, material_version_id=mv.id,
+                                grams_unit=None, position=1))
+        await s.commit()
         # consumo real: 25 g a R$0,10/g = R$2,50
         cons = MaterialConsumption(quote_item_id=item.id, spool_id=spool.id,
                                    grams_used=Decimal("25"), unit_cost_snapshot=Decimal("0.10"))
@@ -69,6 +73,9 @@ async def test_compute_quote_costs_honors_filament_g():
                          gcode_meta={"filament_m": 10, "time_s": 0, "filament_g": 50},
                          material_version_id=mv.id, quantity=1)
         s.add(item); await s.commit()
+        s.add(QuoteItemFilament(quote_item_id=item.id, material_version_id=mv.id,
+                                grams_unit=None, position=1))
+        await s.commit()
 
         costs = await compute_quote_costs(s, q, settings)
         assert costs.catalog_filament == Decimal("5.00")
@@ -104,6 +111,9 @@ async def test_cpv_escala_energia_e_depreciacao_com_a_quantidade():
         item = QuoteItem(quote_id=q.id, name="peça", gcode_meta={"filament_m": 10, "time_s": 3600},
                          material_version_id=mv.id, quantity=4)
         s.add(item); await s.commit()
+        s.add(QuoteItemFilament(quote_item_id=item.id, material_version_id=mv.id,
+                                grams_unit=None, position=1))
+        await s.commit()
 
         costs = await compute_quote_costs(s, q, settings)
 
@@ -149,6 +159,9 @@ async def test_cpv_concorda_com_o_pricing_no_mesmo_item():
                          gcode_meta={"filament_m": 20, "time_s": 4 * 3600, "filament_g": 60},
                          material_version_id=mv.id, quantity=4)
         s.add(item); await s.commit()
+        s.add(QuoteItemFilament(quote_item_id=item.id, material_version_id=mv.id,
+                                grams_unit=None, position=1))
+        await s.commit()
 
         costs = await compute_quote_costs(s, q, settings)
         contabil = costs.catalog_filament + costs.energy + costs.depreciation
@@ -163,3 +176,179 @@ async def test_cpv_concorda_com_o_pricing_no_mesmo_item():
         assert contabil == pricing, (
             f"contabil ({contabil}) divergiu do pricing ({pricing}) no mesmo item"
         )
+
+
+@pytest.mark.asyncio
+async def test_catalog_filament_soma_as_cores_e_energia_conta_uma_vez():
+    """Item bicolor: filamento de catálogo soma as duas linhas; energia e
+    depreciação continuam contando o time_s uma vez (× quantidade).
+
+    Duas cores E quantidade 2, porque com uma cor ou com quantidade 1 as duas
+    regras ficam indistinguíveis.
+    """
+    async with session_module.SessionFactory() as s:
+        user = User(name="u", email="multicor@t.com", password_hash="x")
+        mv_a = MaterialVersion(material_type="PLA", name="PLA Preto", color="Preto",
+                               density_g_cm3=Decimal("1.24"), price_per_kg_ref=Decimal("100"))
+        mv_b = MaterialVersion(material_type="PLA", name="PLA Ouro", color="Ouro",
+                               density_g_cm3=Decimal("1.24"), price_per_kg_ref=Decimal("300"))
+        settings = await s.merge(Settings(id=1, energy_kwh_price=Decimal("1.00"),
+                                         printer_power_w=Decimal("100"),
+                                         printer_depreciation_per_hour=Decimal("2.00")))
+        s.add_all([user, mv_a, mv_b]); await s.commit()
+        q = Quote(kind=QuoteKind.COMMERCIAL.value, user_id=user.id,
+                  status=QuoteStatus.PRODUZIDO.value, markup_pct=Decimal("0"),
+                  min_charge=Decimal("0"))
+        s.add(q); await s.commit()
+        item = QuoteItem(quote_id=q.id, name="bicolor",
+                         gcode_meta={"filament_m": 10, "time_s": 3600},
+                         material_version_id=mv_a.id, quantity=2)
+        s.add(item); await s.commit()
+        s.add_all([
+            QuoteItemFilament(quote_item_id=item.id, material_version_id=mv_a.id,
+                              grams_unit=Decimal("30"), position=1),
+            QuoteItemFilament(quote_item_id=item.id, material_version_id=mv_b.id,
+                              grams_unit=Decimal("10"), position=2),
+        ])
+        await s.commit()
+
+        costs = await compute_quote_costs(s, q, settings)
+
+        # filamento: (30g × R$100/kg) + (10g × R$300/kg) = 3,00 + 3,00 = 6,00, × 2 cópias
+        assert costs.catalog_filament == Decimal("12.00"), (
+            f"catalog_filament {costs.catalog_filament} — conferir se as duas linhas somaram"
+        )
+        # energia: 100W × 1h ÷ 1000 × R$1 = 0,10 → × 2 cópias = 0,20. NÃO × 2 cores.
+        assert costs.energy == Decimal("0.20"), (
+            f"energia {costs.energy} — se deu 0.40, o time_s foi somado por cor"
+        )
+        # depreciação: 1h × R$2,00 = 2,00 → × 2 cópias = 4,00. NÃO × 2 cores.
+        assert costs.depreciation == Decimal("4.00"), (
+            f"depreciacao {costs.depreciation} — se deu 8.00, o time_s foi somado por cor"
+        )
+
+
+@pytest.mark.asyncio
+async def test_linha_nula_em_item_multicor_mantem_os_20_por_cento():
+    """A linha de `grams_unit NULL` segue a regra de refugo de HOJE.
+
+    É o que garante que a migração 0034 não mexe em dinheiro. Não dá para
+    comparar com um "antes" calculado pelo código novo: sem linhas, o laço pula
+    o item e devolve zero, e a comparação ficaria vazia. Então a asserção fixa o
+    valor esperado montado com as primitivas antigas, deixando explícitos os
+    dois pontos que importam — os 20% de `is_multi_color` (não os 2% de cor
+    única) e o × quantidade.
+
+    Falha se alguém "simplificar" a regra de refugo para depender da contagem de
+    linhas, que é a mudança tentadora e errada.
+    """
+    from backend.core.pricing.cost import filament_cost
+    from backend.core.quote_service import effective_grams_per_unit
+
+    async with session_module.SessionFactory() as s:
+        user = User(name="u", email="refugonulo@t.com", password_hash="x")
+        mv = MaterialVersion(material_type="PLA", name="PLA", color="Preto",
+                             density_g_cm3=Decimal("1.24"), price_per_kg_ref=Decimal("100"),
+                             single_color_waste_pct=Decimal("2"),
+                             multi_color_waste_pct=Decimal("20"))
+        settings = await s.merge(Settings(id=1, energy_kwh_price=Decimal("0"),
+                                         printer_power_w=Decimal("0"),
+                                         printer_depreciation_per_hour=Decimal("0")))
+        s.add_all([user, mv]); await s.commit()
+        q = Quote(kind=QuoteKind.COMMERCIAL.value, user_id=user.id,
+                  status=QuoteStatus.PRODUZIDO.value, markup_pct=Decimal("0"),
+                  min_charge=Decimal("0"))
+        s.add(q); await s.commit()
+        # is_multi_color=True é o caso em que a regra poderia "simplificar" errado
+        item = QuoteItem(quote_id=q.id, name="antigo",
+                         gcode_meta={"filament_m": 10, "time_s": 3600},
+                         material_version_id=mv.id, quantity=2, is_multi_color=True)
+        s.add(item); await s.commit()
+        s.add(QuoteItemFilament(quote_item_id=item.id, material_version_id=mv.id,
+                                grams_unit=None, position=1))
+        await s.commit()
+
+        costs = await compute_quote_costs(s, q, settings)
+
+    gramas_por_peca = effective_grams_per_unit(
+        10, None, Decimal("1.24"), Decimal("1.75"), Decimal("20")
+    )
+    esperado = filament_cost(gramas_por_peca * Decimal(2), Decimal("100"))
+    assert costs.catalog_filament == esperado, (
+        f"catalog_filament {costs.catalog_filament} != {esperado} — se deu menos, "
+        "a linha NULL usou single_color_waste_pct (2%) em vez dos 20% de "
+        "is_multi_color, e o custo do histórico mudou"
+    )
+
+
+@pytest.mark.asyncio
+async def test_total_da_venda_bate_com_o_total_do_pdf():
+    """Os dois motores precisam concordar sobre o TOTAL, não só sobre as parcelas.
+
+    Achado durante a execução do plano, e é dinheiro: a tela do orçamento e o PDF
+    usam `compute_quote_total` (pricing), que aplica o refugo do material.
+    `sale.quote_total` vem de `apply_markup(cost_orcado)` (contábil), que passava
+    refugo ZERO. Medido: o total da venda ficava 1,0% abaixo do PDF num item de uma
+    cor (refugo 2%) e 9,4% abaixo num multicor (refugo 20%) — o cliente recebia um
+    PDF com um número e o sistema gravava outro.
+
+    Usar `waste_for_line` nesta task fecha a diferença. Este teste é o que impede
+    de reabrir.
+    """
+    from backend.core.accounting.cost import apply_markup
+    from backend.core.pricing.quote import compute_quote_total
+    from backend.core.quotes.filaments import grams_for_line, waste_for_line
+    from backend.core.pricing.quote import FilamentLine, ItemInput
+
+    async with session_module.SessionFactory() as s:
+        user = User(name="u", email="totalbate@t.com", password_hash="x")
+        # refugo de uma cor em 2%, que é o default do cadastro
+        mv = MaterialVersion(material_type="PLA", name="PLA", color="Preto",
+                             density_g_cm3=Decimal("1.24"), price_per_kg_ref=Decimal("120"),
+                             single_color_waste_pct=Decimal("2"),
+                             multi_color_waste_pct=Decimal("20"))
+        # manutenção e falha NÃO-ZERO de propósito. Com os dois em zero este teste
+        # verificaria a concordância justamente com os termos que divergem anulados —
+        # passaria provando nada. Medido: com manutenção 0,50/h a divergência é 12,7%,
+        # e com falha 8% em cima vai a 19,1%.
+        settings = await s.merge(Settings(id=1, energy_kwh_price=Decimal("0.95"),
+                                         printer_power_w=Decimal("150"),
+                                         printer_depreciation_per_hour=Decimal("1.50"),
+                                         printer_maintenance_per_hour=Decimal("0.50")))
+        mv.failure_rate_pct = Decimal("8")
+        s.add_all([user, mv]); await s.commit()
+        q = Quote(kind=QuoteKind.COMMERCIAL.value, user_id=user.id,
+                  status=QuoteStatus.PRODUZIDO.value, markup_pct=Decimal("100"),
+                  min_charge=Decimal("0"))
+        s.add(q); await s.commit()
+        item = QuoteItem(quote_id=q.id, name="peça",
+                         gcode_meta={"filament_m": 20, "time_s": 4 * 3600},
+                         material_version_id=mv.id, quantity=1)
+        s.add(item); await s.commit()
+        s.add(QuoteItemFilament(quote_item_id=item.id, material_version_id=mv.id,
+                                grams_unit=None, position=1))
+        await s.commit()
+
+        costs = await compute_quote_costs(s, q, settings)
+        total_contabil = apply_markup(costs.cost_orcado, q.markup_pct, q.min_charge)
+
+        # o mesmo item pelo motor de pricing, que é o que a tela e o PDF mostram
+        waste = waste_for_line(None, False, mv.single_color_waste_pct, mv.multi_color_waste_pct)
+        gramas = grams_for_line(None, item.gcode_meta, mv.density_g_cm3, waste)
+        total_pdf = compute_quote_total(
+            [ItemInput(
+                filaments=(FilamentLine(grams=gramas, price_per_kg=mv.price_per_kg_ref),),
+                time_s=4 * 3600, power_w=settings.printer_power_w,
+                kwh_price=settings.energy_kwh_price,
+                depreciation_per_hour=settings.printer_depreciation_per_hour,
+                failure_pct=mv.failure_rate_pct, quantity=1,
+                maintenance_per_hour=settings.printer_maintenance_per_hour,
+            )],
+            [], q.markup_pct, q.min_charge,
+        )
+
+    assert total_contabil.quantize(Decimal("0.01")) == total_pdf.quantize(Decimal("0.01")), (
+        f"contábil {total_contabil} != PDF {total_pdf} — se o contábil ficou MENOR, "
+        "ele voltou a passar refugo zero e sale.quote_total divergiu do PDF que o "
+        "cliente recebeu"
+    )
