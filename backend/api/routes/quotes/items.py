@@ -171,6 +171,9 @@ async def update_item(
 
     if payload.filaments is not None:
         novas = []
+        # As MaterialVersion na mesma ordem das linhas. `mv` do loop é a da
+        # ÚLTIMA linha; quem define o material do item é a linha 1.
+        mvs = []
         for pos, linha in enumerate(payload.filaments, start=1):
             try:
                 mv_id = UUID(linha.material_id)
@@ -179,6 +182,7 @@ async def update_item(
             mv = await session.get(MaterialVersion, mv_id)
             if mv is None:
                 raise HTTPException(400, f"material {linha.material_id} não existe")
+            mvs.append(mv)
             novas.append(
                 QuoteItemFilament(
                     quote_item_id=it.id,
@@ -203,6 +207,18 @@ async def update_item(
         await session.flush()
         # Derivado (invariante 2)
         it.material_version_id = novas[0].material_version_id
+        # E `gcode_meta["material"]` acompanha a linha 1, exatamente como no
+        # branch de `material_id` abaixo. Sem isto, escolher material só pelas
+        # linhas deixava ali a string crua do fatiador (ex. "Generic PLA"), que
+        # não é um `material_type` — e nove consumidores leem esse campo, entre
+        # eles o `material_polymer` do PDF, os prompts de markup/variantes e o
+        # filtro de bobina da tela de produzir, que passava a não casar com
+        # nada. Linha 1 é o material do item por convenção declarada — é o
+        # mesmo significado de `quote_items.material_version_id`.
+        # JSONB: reatribui um dict novo, senão o SQLAlchemy não vê a mudança.
+        meta = dict(it.gcode_meta or {})
+        meta["material"] = mvs[0].material_type
+        it.gcode_meta = meta
 
     if payload.material_id is not None:
         try:

@@ -3,13 +3,14 @@
 Pelo HTTP de propósito: é onde o N+1 e a serialização aparecem, e é o que a
 tela consome.
 """
+from datetime import datetime, timezone
 from decimal import Decimal
 
 import pytest
 import sqlalchemy as sa
 from sqlalchemy import event
 
-from backend.core.models import QuoteKind, QuoteStatus
+from backend.core.models import QuoteKind, QuoteStatus, SpoolStatus
 from backend.infra.db import session as session_module
 from backend.infra.db.models import (
     MaterialVersion,
@@ -17,6 +18,7 @@ from backend.infra.db.models import (
     QuoteItem,
     QuoteItemFilament,
     Settings,
+    Spool,
     User,
     WatcherInboxFile,
 )
@@ -560,3 +562,145 @@ async def test_item_novo_ja_nasce_com_a_linha_1(auth_client):
     assert item["filaments"][0]["material_id"] == str(mv.id), (
         "resolver o material pendente não criou/atualizou a linha 1"
     )
+
+
+async def _spool(material_type: str) -> Spool:
+    """Bobina aberta de um tipo — o alvo do filtro da tela de produzir."""
+    async with session_module.SessionFactory() as s:
+        sp = Spool(
+            material_type=material_type, color="Preto", manufacturer="ACME",
+            purchased_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            purchased_price=Decimal("100"), initial_grams=Decimal("1000"),
+            remaining_grams=Decimal("1000"), status=SpoolStatus.OPEN.value,
+        )
+        s.add(sp)
+        await s.commit()
+        await s.refresh(sp)
+        return sp
+
+
+async def _item_com_material_cru(material_cru: str) -> tuple[Quote, QuoteItem]:
+    """Item cujo `gcode_meta["material"]` é a string crua do fatiador.
+
+    É o estado normal de um item vindo de gcode: o fatiador escreve o nome
+    comercial do filamento, que não é um `material_type` cadastrado.
+    """
+    async with session_module.SessionFactory() as s:
+        u = (await s.execute(sa.select(User))).scalars().first()
+        q = Quote(kind=QuoteKind.COMMERCIAL.value, user_id=u.id,
+                  status=QuoteStatus.DRAFT.value, markup_pct=Decimal("0"),
+                  min_charge=Decimal("0"))
+        s.add(q)
+        await s.commit()
+        it = QuoteItem(quote_id=q.id, name="peça",
+                       gcode_meta={"filament_m": 10, "time_s": 3600,
+                                   "material": material_cru},
+                       quantity=1)
+        s.add(it)
+        await s.commit()
+        await s.refresh(q)
+        await s.refresh(it)
+        return q, it
+
+
+@pytest.mark.asyncio
+async def test_escolher_material_pelas_linhas_normaliza_gcode_meta_material(auth_client):
+    """Escrever `filaments` tem que normalizar `gcode_meta["material"]`.
+
+    O branch de `material_id` já fazia isso; o de `filaments` não, e aí escolher
+    material pela tela nova deixava a string crua do fatiador no campo. Nove
+    consumidores leem `gcode_meta["material"]` — entre eles o `material_polymer`
+    do PDF, os prompts de markup/variantes e o filtro de bobina da tela de
+    produzir. Este teste afirma o campo E a consequência: a bobina volta a casar.
+    """
+    await _settings()
+    mv = await _material("PETG Preto", "120", "Preto", tipo="PETG")
+    sp = await _spool("PETG")
+    q, it = await _item_com_material_cru("Generic PLA")
+
+    # Antes: a string do fatiador não é um material_type, então o filtro da
+    # tela de produzir (`sp.material_type === matCode`) não casa com nada.
+    r = await auth_client.get(f"/quotes/{q.id}")
+    assert r.status_code == 200, r.text
+    antes = r.json()["items"][0]["gcode_meta"]["material"]
+    assert antes == "Generic PLA"
+    assert antes != sp.material_type, "o teste precisa começar sem casar"
+
+    r = await auth_client.put(
+        f"/quotes/{q.id}/items/{it.id}",
+        json={"filaments": [{"material_id": str(mv.id)}]},
+    )
+    assert r.status_code == 200, r.text
+    item = r.json()["items"][0]
+
+    # Depois: o campo guarda o material_type do material escolhido…
+    assert item["gcode_meta"]["material"] == "PETG"
+    # …e é por isso que a bobina volta a casar. Sem esta segunda asserção, o
+    # teste passaria mesmo com o campo escrito com a grafia errada (o nome do
+    # produto, "PETG Preto", em vez do material_type).
+    assert item["gcode_meta"]["material"] == sp.material_type
+
+    # E persistiu de verdade no JSONB, não só na resposta desta requisição.
+    r = await auth_client.get(f"/quotes/{q.id}")
+    assert r.json()["items"][0]["gcode_meta"]["material"] == "PETG"
+
+
+@pytest.mark.asyncio
+async def test_normalizacao_usa_a_linha_1_nao_a_ultima(auth_client):
+    """Num item de duas cores, o material do item é o da linha 1.
+
+    O `mv` do loop da rota é o da ÚLTIMA linha, então usá-lo seria gravar o
+    polímero da cor 2 como material do item. Tipos distintos de propósito: com
+    dois PLA o teste passaria de qualquer jeito.
+    """
+    await _settings()
+    mv_1 = await _material("PETG Preto", "120", "Preto", tipo="PETG")
+    mv_2 = await _material("ABS Vermelho", "90", "Vermelho", tipo="ABS")
+    q, it = await _item_com_material_cru("Generic PLA")
+
+    r = await auth_client.put(
+        f"/quotes/{q.id}/items/{it.id}",
+        json={"filaments": [
+            {"material_id": str(mv_1.id), "grams_unit": "12.00"},
+            {"material_id": str(mv_2.id), "grams_unit": "8.00"},
+        ]},
+    )
+    assert r.status_code == 200, r.text
+    item = r.json()["items"][0]
+    assert [f["position"] for f in item["filaments"]] == [1, 2]
+    assert item["gcode_meta"]["material"] == "PETG", (
+        "gravou o polímero da última linha, não o da linha 1"
+    )
+
+    # Inverter a ordem das linhas troca qual é a linha 1 — e o campo segue.
+    r = await auth_client.put(
+        f"/quotes/{q.id}/items/{it.id}",
+        json={"filaments": [
+            {"material_id": str(mv_2.id), "grams_unit": "8.00"},
+            {"material_id": str(mv_1.id), "grams_unit": "12.00"},
+        ]},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["items"][0]["gcode_meta"]["material"] == "ABS"
+
+
+@pytest.mark.asyncio
+async def test_escrever_filaments_nao_apaga_o_resto_do_gcode_meta(auth_client):
+    """Só a chave `material` muda: o dict é reatribuído, não substituído.
+
+    `filament_m` e `time_s` são o custo do item. Se a normalização trocasse o
+    gcode_meta por `{"material": ...}`, o subtotal iria a zero em silêncio.
+    """
+    await _settings()
+    mv = await _material("PETG Preto", "120", "Preto", tipo="PETG")
+    q, it = await _item_com_material_cru("Generic PLA")
+
+    r = await auth_client.put(
+        f"/quotes/{q.id}/items/{it.id}",
+        json={"filaments": [{"material_id": str(mv.id)}]},
+    )
+    assert r.status_code == 200, r.text
+    item = r.json()["items"][0]
+    assert item["gcode_meta"]["filament_m"] == 10
+    assert item["gcode_meta"]["time_s"] == 3600
+    assert Decimal(item["subtotal"]) > 0, "o item parou de orçar"
