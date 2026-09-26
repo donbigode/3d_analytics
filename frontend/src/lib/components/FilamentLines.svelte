@@ -3,11 +3,14 @@
   import {
     delta,
     gcodeGrams,
+    linesSignature,
     sumGrams,
     toGrams,
+    toPayload,
     whyNotSendable,
     withoutIndex,
   } from "$lib/filament-lines";
+  import type { FilamentPayload } from "$lib/filament-lines";
   import { num as fmtNum, DASH } from "$lib/format";
   import type { Material, QuoteItemFilament } from "$lib/types";
 
@@ -24,9 +27,7 @@
   /** PUT em voo — trava os campos para não sobrepor dois salvamentos. */
   export let saving = false;
 
-  const dispatch = createEventDispatcher<{
-    save: { filaments: { material_id: string; grams_unit?: string }[] };
-  }>();
+  const dispatch = createEventDispatcher<{ save: { filaments: FilamentPayload[] } }>();
 
   /** O rascunho guarda as gramas como o TEXTO do campo, não como número: o
    *  que a pessoa digitou é o que fica no input, sem reformatar embaixo do
@@ -52,11 +53,27 @@
     return atuais.map((l) => ({ material_id: l.material_id, grams_unit: toGrams(l.gramasRaw) }));
   }
 
-  // Ressincroniza o rascunho quando o servidor responde. `filaments` aparece
-  // textualmente e é o único gatilho: mexer no rascunho localmente (digitar,
-  // + cor, ×) não muda a prop, então a linha nova em branco sobrevive até o
-  // PUT acontecer — e quando ele acontece, o servidor volta a ser a verdade.
-  $: linhas = doServidor(filaments);
+  // Ressincroniza o rascunho quando o servidor responde — e SÓ então.
+  //
+  // `$: linhas = doServidor(filaments)` sozinho não serve, e o motivo não é
+  // óbvio: o pai passa a prop dentro de um `derived_safe_equal`, e
+  // `safe_not_equal` devolve `true` para qualquer array, com identidade igual
+  // ou não. Ou seja, a prop "muda" a cada invalidação do item — a cada
+  // `quoteRes.set()`, isto é, a cada toggle de multicolor, edição de
+  // quantidade, tempo, metros, serviço — e o efeito apagava o rascunho:
+  // a cor recém-acrescentada com "+ cor", as gramas recém-digitadas.
+  //
+  // A comparação tem de ser por VALOR, e numa string, onde `safe_not_equal`
+  // é uma comparação de verdade. `filaments` continua textualmente presente
+  // nos dois statements, então a varredura de dependências do Svelte vê tudo.
+  let linhas: Rascunho[] = doServidor(filaments);
+  let ultimaAssinatura: string = linesSignature(filaments);
+
+  $: assinatura = linesSignature(filaments);
+  $: if (assinatura !== ultimaAssinatura) {
+    ultimaAssinatura = assinatura;
+    linhas = doServidor(filaments);
+  }
 
   // ARMADILHA CONHECIDA DESTE PROJETO: a descoberta de dependências de um
   // `$:` é uma varredura TEXTUAL do statement. Variável lida de dentro de uma
@@ -100,15 +117,9 @@
   function talvezSalvar(atuais: Rascunho[]) {
     const norm = normaliza(atuais);
     if (whyNotSendable(norm) !== null) return;
-    dispatch("save", {
-      filaments: norm.map((l) =>
-        // Gramas ausentes = chave omitida: o servidor mantém NULL e segue
-        // derivando do gcode (spec 3.4). Mandar 0 seria 422.
-        l.grams_unit === null
-          ? { material_id: l.material_id }
-          : { material_id: l.material_id, grams_unit: String(l.grams_unit) },
-      ),
-    });
+    // `toPayload` é quem garante a forma do corpo (sem `position`, gramas
+    // ausentes como chave omitida, gramas como string) — e tem teste.
+    dispatch("save", { filaments: toPayload(norm) });
   }
 
   function trocaMaterial(i: number, materialId: string) {

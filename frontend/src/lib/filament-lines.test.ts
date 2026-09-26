@@ -1,5 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { delta, gcodeGrams, sumGrams, toGrams, whyNotSendable, withoutIndex } from "./filament-lines";
+import {
+  delta,
+  gcodeGrams,
+  linesSignature,
+  sumGrams,
+  toGrams,
+  toPayload,
+  whyNotSendable,
+  withoutIndex,
+} from "./filament-lines";
 
 describe("toGrams", () => {
   it("aceita o decimal em string que a API manda", () => {
@@ -85,6 +94,105 @@ describe("gcodeGrams", () => {
   it("é 0 quando o gcode não trouxe nem metros nem gramas", () => {
     expect(gcodeGrams({}, 1.24)).toBe(0);
     expect(gcodeGrams({ filament_m: null, filament_g: null }, 1.24)).toBe(0);
+  });
+});
+
+describe("linesSignature", () => {
+  const vindas = [
+    { id: "f1", material_id: "a", grams_unit: "12.34" },
+    { id: "f2", material_id: "b", grams_unit: null },
+  ];
+
+  it("é igual para um ARRAY NOVO com o mesmo conteúdo", () => {
+    // Esta é a propriedade que existe para um bug específico: a prop `filaments`
+    // chega como array novo a cada invalidação do item, e o runtime do Svelte
+    // trata todo array como "mudou" (safe_not_equal). Se a assinatura não
+    // fosse igual aqui, o rascunho local continuaria sendo sobrescrito.
+    const outroArray = vindas.map((f) => ({ ...f }));
+    expect(outroArray).not.toBe(vindas);
+    expect(linesSignature(outroArray)).toBe(linesSignature(vindas));
+  });
+
+  it("muda quando as gramas mudam", () => {
+    const depois = [vindas[0], { ...vindas[1], grams_unit: "5.66" }];
+    expect(linesSignature(depois)).not.toBe(linesSignature(vindas));
+  });
+
+  it("muda quando o material da linha muda, com o mesmo id", () => {
+    // O caminho `material_code` reescreve a linha 1 no lugar, sem trocar o id.
+    const depois = [{ ...vindas[0], material_id: "z" }, vindas[1]];
+    expect(linesSignature(depois)).not.toBe(linesSignature(vindas));
+  });
+
+  it("muda quando o id da linha muda, com o mesmo material e gramas", () => {
+    // O PUT apaga e recria as linhas, então os ids são novos — é assim que a
+    // ressincronização depois de salvar continua acontecendo.
+    const depois = [{ ...vindas[0], id: "f9" }, vindas[1]];
+    expect(linesSignature(depois)).not.toBe(linesSignature(vindas));
+  });
+
+  it("muda quando a ordem muda", () => {
+    // A ordem É a posição, então trocar duas cores de lugar é uma mudança.
+    expect(linesSignature([vindas[1], vindas[0]])).not.toBe(linesSignature(vindas));
+  });
+
+  it("muda quando o número de linhas muda", () => {
+    expect(linesSignature([vindas[0]])).not.toBe(linesSignature(vindas));
+    expect(linesSignature([])).not.toBe(linesSignature(vindas));
+  });
+});
+
+describe("toPayload", () => {
+  it("manda material_id e as gramas como string", () => {
+    const p = toPayload([{ material_id: "a", grams_unit: 12.34 }]);
+    expect(p).toEqual([{ material_id: "a", grams_unit: "12.34" }]);
+    // `Decimal` do outro lado: número viraria float no JSON.
+    expect(typeof p[0].grams_unit).toBe("string");
+  });
+
+  it("não manda position, nem qualquer outra chave do rascunho", () => {
+    // A ORDEM DA LISTA é a posição; `QuoteItemFilamentIn` não tem o campo.
+    const rascunho = [
+      { material_id: "a", grams_unit: 12.34, position: 1, gramasRaw: "12.34" },
+      { material_id: "b", grams_unit: 5.66, position: 2, gramasRaw: "5.66" },
+    ];
+    const p = toPayload(rascunho);
+    expect(Object.keys(p[0]).sort()).toEqual(["grams_unit", "material_id"]);
+    expect(Object.keys(p[1]).sort()).toEqual(["grams_unit", "material_id"]);
+    expect(JSON.stringify(p)).not.toContain("position");
+    expect(JSON.stringify(p)).not.toContain("gramasRaw");
+  });
+
+  it("omite a chave grams_unit quando não há gramas — não manda null", () => {
+    const p = toPayload([{ material_id: "a", grams_unit: null }]);
+    expect(Object.keys(p[0])).toEqual(["material_id"]);
+    expect("grams_unit" in p[0]).toBe(false);
+    // `{material_id, grams_unit: undefined}` passaria num toEqual frouxo e
+    // serializaria igual; a asserção acima é sobre a CHAVE existir.
+    expect(JSON.stringify(p)).toBe('[{"material_id":"a"}]');
+  });
+
+  it("transforma 0 e negativo em ausência, nunca na string \"0\"", () => {
+    // `grams_unit` tem `gt=0` no schema: um "0" que chegasse lá é 422, e pior,
+    // um 0 aceito custaria zero em silêncio sem cair no fallback do gcode.
+    expect(JSON.stringify(toPayload([{ material_id: "a", grams_unit: 0 }]))).toBe(
+      '[{"material_id":"a"}]',
+    );
+    expect(JSON.stringify(toPayload([{ material_id: "a", grams_unit: -3 }]))).toBe(
+      '[{"material_id":"a"}]',
+    );
+  });
+
+  it("preserva a ordem das linhas, que é o que define a position", () => {
+    const p = toPayload([
+      { material_id: "c", grams_unit: 1 },
+      { material_id: "a", grams_unit: 2 },
+      { material_id: "b", grams_unit: 3 },
+    ]);
+    // Materiais e gramas distintos de propósito: com valores iguais, uma
+    // implementação que ordenasse a lista passaria igual.
+    expect(p.map((l) => l.material_id)).toEqual(["c", "a", "b"]);
+    expect(p.map((l) => l.grams_unit)).toEqual(["1", "2", "3"]);
   });
 });
 

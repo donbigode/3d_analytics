@@ -8,6 +8,7 @@
   import { money as fmtMoney, num as fmtNum, dur as fmtDur, dateTime as fmtDate } from "$lib/format";
   import { quoteNumber } from "$lib/quote-number";
   import FilamentLines from "$lib/components/FilamentLines.svelte";
+  import type { FilamentPayload } from "$lib/filament-lines";
   import type {
     Client,
     Material,
@@ -16,7 +17,6 @@
     Person,
     Quote,
     QuoteItem,
-    QuoteItemFilament,
     Service,
     Spool,
     VarianceOut,
@@ -73,13 +73,6 @@
   let produceAssignments: Record<string, string> = {}; // quote_item_id -> spool_id
   let produceMeters: Record<string, string> = {}; // quote_item_id -> filament_m (override)
   let produceGrams: Record<string, string> = {}; // quote_item_id -> gramas (override direto)
-
-  // Constante, não `?? []` no template: um literal `[]` novo a cada render
-  // muda a IDENTIDADE da prop, e o FilamentLines ressincroniza o rascunho
-  // quando `filaments` muda — o que apagaria a linha em branco que a pessoa
-  // acabou de acrescentar com "+ cor". Na prática a API sempre manda a lista,
-  // então este fallback é defensivo; a identidade estável é que importa.
-  const SEM_FILAMENTOS: QuoteItemFilament[] = [];
 
   let photoVersion = 0; // cache-bust após upload/delete
   let photoBusy = false;
@@ -292,11 +285,9 @@
   }
   /** Substitui a lista de filamentos do item. `material_id` NÃO vai neste
    *  payload: mandar os dois na mesma requisição é 400 (Task 7) — a linha de
-   *  `position` 1 é que passa a definir o material do item. */
-  function saveFilaments(
-    itemId: string,
-    filaments: { material_id: string; grams_unit?: string }[],
-  ) {
+   *  `position` 1 é que passa a definir o material do item. A forma de cada
+   *  linha é montada por `toPayload`, no componente. */
+  function saveFilaments(itemId: string, filaments: FilamentPayload[]) {
     patchItem(itemId, { filaments }, "filaments");
   }
   function patchQuantity(itemId: string, qtyStr: string) {
@@ -1017,7 +1008,7 @@
                   <td class="mono">
                     {#if isDraft}
                       <FilamentLines
-                        filaments={it.filaments ?? SEM_FILAMENTOS}
+                        filaments={it.filaments ?? []}
                         {materials}
                         gcodeMeta={it.gcode_meta}
                         saving={savingField[it.id] === "filaments"}
@@ -1046,9 +1037,9 @@
                           <span class="badge" title="Houve mais de um ciclo de produção"
                             >{consumos.length} baixas</span>
                         {/if}
-                      {:else if (it.filaments ?? SEM_FILAMENTOS).length > 0}
+                      {:else if (it.filaments ?? []).length > 0}
                         <span class="cores">
-                          {#each it.filaments ?? SEM_FILAMENTOS as f (f.id)}
+                          {#each it.filaments ?? [] as f (f.id)}
                             <span class="cor">
                               {f.material_name}{f.material_color ? ` · ${f.material_color}` : ""}
                               <span class="dim">

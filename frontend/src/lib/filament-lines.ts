@@ -63,6 +63,55 @@ export function delta(soma: number | null, gcode: number): number | null {
   return casas2(soma - gcode);
 }
 
+/** Assinatura por VALOR da lista vinda do servidor.
+ *
+ *  Existe por causa de um bug real: `$: linhas = doServidor(filaments)` num
+ *  componente Svelte 5 legado compila para um `legacy_pre_effect` cuja
+ *  dependência é a prop `filaments`, e a prop, sendo um ARRAY, é envolvida no
+ *  pai por `derived_safe_equal`. `safe_not_equal` devolve `true` para
+ *  QUALQUER objeto ou array, com identidade igual ou não — então o efeito
+ *  re-rodava a cada invalidação do item, e sobrescrevia o rascunho local
+ *  (a cor recém-acrescentada, as gramas recém-digitadas) em cada `set()` do
+ *  orçamento. Comparar identidade de array não resolve, e não é isso que o
+ *  runtime faz; comparar uma STRING resolve, porque aí `safe_not_equal` é uma
+ *  comparação de verdade.
+ *
+ *  Entra o que o rascunho deriva do servidor — identidade, material e gramas
+ *  de cada linha, NA ORDEM. `position` não entra: a ordem já é a posição. */
+export function linesSignature(
+  lines: readonly { id: string; material_id: string; grams_unit: string | null }[],
+): string {
+  return JSON.stringify(lines.map((f) => [f.id, f.material_id, f.grams_unit]));
+}
+
+/** Monta o corpo de `filaments` do PUT.
+ *
+ *  Três coisas que o servidor cobra e que precisam estar exatas:
+ *  - **sem `position`**: a ORDEM DA LISTA é a posição (`enumerate(..., start=1)`
+ *    do lado de lá). Mandar `position` não é aceito pelo schema;
+ *  - **gramas ausentes = chave omitida**, nunca `0`: `QuoteItemFilamentIn`
+ *    exige `gt=0`, então `0` é 422, enquanto omitir mantém `NULL` e o
+ *    servidor segue derivando do gcode (spec 3.4);
+ *  - **gramas como string**, porque do outro lado é `Decimal`.
+ *
+ *  `material_id` também não pode viajar como chave de item — é o `material_id`
+ *  de TOPO do payload que é 400 junto de `filaments`, e quem monta o corpo do
+ *  PUT é o chamador; aqui cada linha leva o seu, que é o que a rota espera. */
+export type FilamentPayload = { material_id: string; grams_unit?: string };
+
+export function toPayload(
+  lines: readonly { material_id: string; grams_unit: number | null }[],
+): FilamentPayload[] {
+  return lines.map((l) => {
+    // Passa por toGrams de novo de propósito: um `0` que chegue aqui por
+    // qualquer caminho vira ausência, em vez de virar a string "0" e 422.
+    const g = toGrams(l.grams_unit);
+    return g === null
+      ? { material_id: l.material_id }
+      : { material_id: l.material_id, grams_unit: String(g) };
+  });
+}
+
 /** Por que a lista ainda não pode ir para o servidor, ou `null` se pode.
  *
  *  Espelha as três rejeições 400 da rota (Task 7) para que a tela marque o
