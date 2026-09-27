@@ -8,7 +8,7 @@ from pathlib import Path
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.api.deps import db_session, require_user
@@ -229,12 +229,6 @@ async def update_item(
         meta = dict(it.gcode_meta or {})
         meta["material"] = mvs[0].material_type
         it.gcode_meta = meta
-        # Mais de uma cor ⇒ multicolor. Numa direção SÓ: uma lista de uma
-        # linha não desmarca, porque item antigo de uma cor marcado multicolor
-        # usa `multi_color_waste_pct` na linha sem gramas, e desmarcar por
-        # efeito colateral reprecificaria o histórico. Quem desmarca é a pessoa.
-        if len(novas) > 1:
-            it.is_multi_color = True
 
     if payload.material_id is not None:
         try:
@@ -291,6 +285,20 @@ async def update_item(
         it.model_source_author = payload.model_source_author or None
     if payload.model_source_license is not None:
         it.model_source_license = payload.model_source_license or None
+
+    # Mais de uma cor ⇒ multicolor, sobre o estado FINAL do item: depois de
+    # todos os ramos, inclusive um `is_multi_color: false` explícito (sozinho
+    # ou junto de uma lista de várias cores). Numa direção SÓ: item de uma
+    # linha nunca é desmarcado aqui, porque item antigo de uma cor marcado
+    # multicolor usa `multi_color_waste_pct` na linha sem gramas, e desmarcar
+    # por efeito colateral reprecificaria o histórico. Quem desmarca é a pessoa.
+    n_linhas = await session.scalar(
+        select(func.count())
+        .select_from(QuoteItemFilament)
+        .where(QuoteItemFilament.quote_item_id == it.id)
+    )
+    if (n_linhas or 0) > 1:
+        it.is_multi_color = True
     await session.commit()
     return await _quote_out(session, q)
 
