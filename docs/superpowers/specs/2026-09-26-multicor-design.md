@@ -333,11 +333,68 @@ pela cor da *bobina* e o uso pela cor do *item*.
 Isso já está tecnicamente errado hoje (consumo já é 1:N); multicor transforma
 latente em real.
 
-| onde | o que fazer |
+**Esta seção foi reescrita em 2026-09-27**, depois do review final da branch e de eu
+inspecionar o catálogo `analytics_prod` ao vivo. A versão original dizia que
+`gold/itens.py`, `gold/performance.py`, `gold/dre.py` e o notebook "seguem válidos lendo
+a cor principal". **Estava errada**, e do jeito que estava levaria a consertar o
+`consumo.py` e deixar três marts de dinheiro precificando errado em silêncio.
+
+### 7.1 Pré-requisito NESTE repositório
+
+`backend/core/export/entities.py` é o contrato de exportação. As duas colunas novas
+(`material_consumptions.quote_item_filament_id` e `spools.material_version_id`) fluem
+automáticas, porque `columns_for` lê todas as colunas do modelo. Mas
+**`quote_item_filaments` não está em `EXPORT_ENTITIES`**, então o medallion nunca
+recebe a tabela. Verificado no catálogo: `analytics_prod.bronze` tem 20 tabelas e essa
+não está entre elas. Sem essa linha, tudo abaixo é inexecutável.
+
+### 7.2 O que está bloqueado na camada SILVER
+
+Verificado por `databricks tables get` em 2026-09-27:
+
+    silver.dim_spool                  -> spool_id, material_type, color, purchase_price, remaining_g
+    silver.fact_material_consumption  -> consumption_id, quote_item_id, spool_id, grams_used,
+                                         unit_cost_snapshot, consumed_at
+
+Nenhuma das duas colunas necessárias existe. `notebooks/10_silver_build.py` monta o
+`dim_spool` com o comentário *"(no material_version link; keep material_type+color for
+stock grouping)"* e **descarta** a coluna; o `fact_material_consumption` lista colunas
+explicitamente e não tem `quote_item_filament_id`.
+
+Consequência: **a correção do `gold/consumo.py` descrita em 7.3 é impossível até silver
+expor as duas.** A versão original desta seção mencionava só bronze e gold, e isso era
+um furo.
+
+### 7.3 O trabalho, em ordem de dependência
+
+| # | onde | o que fazer |
+|---|---|---|
+| 1 | serviço: `backend/core/export/entities.py` | acrescentar `("quote_item_filaments", QuoteItemFilament, set())` |
+| 2 | `src/analytics_medallion/bronze.py` | acrescentar `quote_item_filaments` a `BRONZE_ENTITIES` |
+| 3 | `notebooks/10_silver_build.py` | expor `material_version_id` no `dim_spool`; expor `quote_item_filament_id` no `fact_material_consumption`; criar o fato das linhas (`fact_quote_item_filament`: `filament_id`, `quote_item_id`, `material_version_id`, `grams_unit`, `position`) |
+| 4 | `gold/consumo.py` (joins ~22 e ~55) | atribuir consumo por `dim_spool.material_version_id`, não por `quote_items.material_version_id` — conserta o caso multicor **e** o erro latente que a docstring do próprio mart já confessa |
+| 5 | `gold/dre.py` (~26-31) | **mart de dinheiro.** Calcula `grams_from_length(filament_m, density) -> filament_cost(grams, price_per_kg_ref)` pela linha 1, e alimenta `custo_estoque` e `perda_operacional`. Num item multicor as gramas autoritativas são as `grams_unit` digitadas por linha, e a seção 3.5 permite o total do gcode discordar da soma delas. Somar sobre as linhas |
+| 6 | `gold/itens.py` (~15-22) | `gramas_estimadas` pela linha 1 — mesma correção |
+| 7 | `gold/performance.py` (~18) | idem |
+| 8 | `notebooks/32_gold_projeto_tipo.py` (~89) | idem |
+
+Itens 5-8 **não ficam mais grosseiros: ficam errados**, e divergem do DRE correto do
+próprio app. Era exatamente o oposto do que esta seção dizia antes.
+
+### 7.4 Leitores da coluna derivada NESTE repositório
+
+A seção original catalogou o repositório externo e não catalogou este. Cada um destes
+passa a reportar só a linha 1 num item multicor. Nenhum bloqueia merge; nenhum estava
+escrito:
+
+| onde | o que fica errado |
 |---|---|
-| `src/analytics_medallion/bronze.py` | ingerir `quote_item_filaments` |
-| `gold/consumo.py` (2 joins, linhas ~22 e ~55) | atribuir por `spool.material_version_id`, não por `quote_item.material_version_id` — conserta o caso multicor **e** o erro latente |
-| `gold/itens.py`, `gold/performance.py`, `gold/dre.py`, `notebooks/32_gold_projeto_tipo.py` | seguem válidos lendo a cor principal. Revisar só se a granularidade por cor for desejada nesses marts |
+| `backend/api/routes/materials.py:110-115` | checagem de "material em uso" antes de deletar lê só `QuoteItem.material_version_id`. Material usado **apenas** como cor 2+ não é detectado, o delete prossegue e o FK NOT NULL de `quote_item_filaments` levanta **500** em vez do 409 limpo |
+| `backend/core/accounting/facts.py:24-65` | `custo_filamento_item`, `gramas_total` e `cor_material` pela linha 1 — afeta a alocação de `receita_item` e o export XLSX |
+| `backend/core/accounting/profitability.py:58-73` | "lucratividade por material" aloca o item inteiro na cor 1; a cor 2 recebe zero |
+| `backend/core/llm_features/variance.py:35-48` | agrupa o consumo REAL das duas cores sob o `material_type` da linha 1 |
+| `backend/api/routes/insights.py:273-296`, `calibration.py:76-98` | top-materiais e a amostra de calibração atribuem o item inteiro à cor 1 |
+| `backend/api/routes/llm.py:158-201` | `_compute_orcado_real` — quinta cópia da matemática de custo, sem linhas, sem refugo, sem manutenção, sem falha, e sem `× quantity`. Alimenta o painel de variância e um piso de preço para o LLM |
 
 O `3d_analytics_listener` não referencia `quote_items`, `material_versions` nem
 `material_consumptions` — verificado por busca. Nada a fazer lá.
