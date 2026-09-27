@@ -45,6 +45,10 @@
   // Inline-edit support — items track which field is currently saving so
   // the UI can grey it out and prevent overlapping PUTs.
   let savingField: Record<string, string | undefined> = {};
+  /** Cores do item em modo multicor (0 fora dele), vindas do rascunho do
+   *  `FilamentLines` por `bind:` — a 2ª cor recém-aberta ainda não está no
+   *  servidor, então `it.filaments` não serve para isto. */
+  let coresPorItem: Record<string, number> = {};
   let qcDensity = "1.24";
   let qcPrice = "100";
   let qcFailure = "5";
@@ -318,8 +322,12 @@
     const q = Math.max(1, Math.floor(Number(qtyStr) || 1));
     patchItem(itemId, { quantity: q }, "quantity");
   }
-  function patchMultiColor(itemId: string, next: boolean) {
-    patchItem(itemId, { is_multi_color: next }, "multi_color");
+  /** Flag multicolor. Com `filaments` (desmarcar apagando cores já salvas),
+   *  flag e lista vão num PUT só: a lista de uma cor não mexe no flag do lado
+   *  do servidor, e o flag desmarca no mesmo request. */
+  function patchMultiColor(itemId: string, next: boolean, filaments?: FilamentPayload[]) {
+    if (filaments) patchItem(itemId, { filaments, is_multi_color: next }, "filaments");
+    else patchItem(itemId, { is_multi_color: next }, "multi_color");
   }
 
   let reparsingId: string | null = null;
@@ -1072,17 +1080,12 @@
                         {materials}
                         gcodeMeta={it.gcode_meta}
                         saving={savingField[it.id] === "filaments"}
+                        multiColor={it.is_multi_color ?? false}
+                        savingFlag={savingField[it.id] === "multi_color"}
+                        bind:nCores={coresPorItem[it.id]}
                         on:save={(e) => saveFilaments(it.id, e.detail.filaments)}
+                        on:multicolor={(e) => patchMultiColor(it.id, e.detail.next, e.detail.filaments)}
                       />
-                      <label class="mc-toggle" title="Marca quando a peça usa mais de uma cor — aplica o refugo de purga maior do material.">
-                        <input
-                          type="checkbox"
-                          checked={it.is_multi_color ?? false}
-                          disabled={savingField[it.id] === "multi_color"}
-                          on:change={(e) => patchMultiColor(it.id, (e.currentTarget as HTMLInputElement).checked)}
-                        />
-                        <span>multicolor</span>
-                      </label>
                       {#if it.material_pending}
                         <span class="badge pending">pendente</span>
                       {/if}
@@ -1168,6 +1171,13 @@
                         on:change={(e) => patchTime(it.id, (e.currentTarget as HTMLInputElement).value)}
                       />
                       <span class="unit">min</span>
+                      {#if (coresPorItem[it.id] ?? 0) > 1}
+                        {@const n = coresPorItem[it.id]}
+                        <span
+                          class="tempo-cores"
+                          title="O tempo é da peça inteira: energia e depreciação contam uma vez por peça, só o filamento soma por cor."
+                          >vale para as {n} cores</span>
+                      {/if}
                     {:else}
                       {fmtDur(it.gcode_meta?.time_s)}
                     {/if}
@@ -1942,17 +1952,14 @@
     text-align: left;
     vertical-align: middle;
   }
-  .mc-toggle {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.25rem;
-    margin-left: 0.4rem;
+  /* Nota da célula de tempo em modo multicor: o tempo é um só por peça. */
+  .tempo-cores {
+    display: block;
+    margin-top: 0.2rem;
+    font-size: 0.66rem;
     color: var(--muted);
-    font-size: 0.72rem;
-    cursor: pointer;
-    user-select: none;
+    white-space: nowrap;
   }
-  .mc-toggle input { margin: 0; }
   /* Lista de cores orçadas de um item já fechado (sem baixa ainda): uma
      linha por cor, porque um item multicor não tem "o" material. */
   .cores {

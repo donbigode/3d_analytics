@@ -147,3 +147,94 @@ export function withoutIndex<T extends { position: number }>(lines: readonly T[]
     .filter((_, idx) => idx !== i)
     .map((l, idx) => ({ ...l, position: idx + 1 }));
 }
+
+/** Linha do rascunho do editor: gramas guardadas como o TEXTO do campo, para
+ *  não reformatar embaixo do cursor. `toGrams` faz a leitura. */
+export type DraftLine = { material_id: string; gramasRaw: string; position: number };
+
+function linhaEmBranco(position: number): DraftLine {
+  return { material_id: "", gramasRaw: "", position };
+}
+
+/** Modo multicor: flag marcado OU mais de uma linha. As duas coisas andam
+ *  juntas na tela — uma segunda cor sem o flag ainda é um item de N cores. */
+export function isMultiColor(lines: readonly unknown[], flag: boolean): boolean {
+  return flag || lines.length > 1;
+}
+
+/** Entrar em multicor: garante pelo menos duas linhas, acrescentando linhas em
+ *  branco (material a escolher, gramas vazias). Idempotente — com 2+ linhas
+ *  devolve uma cópia sem mudança, então marcar duas vezes não cria duas cores
+ *  vazias. A linha nova é rascunho: sem gramas ela é 400 no servidor
+ *  (invariante 3), e o editor só salva quando a lista fica válida. */
+export function enterMultiColor(lines: readonly DraftLine[]): DraftLine[] {
+  const r = [...lines];
+  while (r.length < 2) r.push(linhaEmBranco(r.length + 1));
+  return r;
+}
+
+/** Sair de multicor: fica só a cor 1, com o material e as gramas dela. */
+export function leaveMultiColor(lines: readonly DraftLine[]): DraftLine[] {
+  return lines.slice(0, 1).map((l) => ({ ...l, position: 1 }));
+}
+
+/** Sair de multicor descarta alguma coisa que a pessoa preencheu?
+ *
+ *  Decide se a tela pede confirmação. Uma linha além da 1 conta como "cor"
+ *  se tem material OU gramas; a linha totalmente em branco que o próprio
+ *  multicolor acabou de criar não é cor nenhuma, e desmarcar logo em seguida
+ *  não precisa perguntar nada. */
+export function discardsOnLeave(lines: readonly DraftLine[]): boolean {
+  return lines
+    .slice(1)
+    .some((l) => l.material_id !== "" || toGrams(l.gramasRaw) !== null);
+}
+
+type ComPreco = { id: string; price_per_kg_ref: number | string };
+
+/** Custo de filamento de UMA cor, por peça: gramas × preço/kg do material da
+ *  linha / 1000 — o mesmo `filament_cost` do backend, sem refugo (gramas
+ *  digitadas não levam refugo) e sem falha (que se aplica ao item todo).
+ *
+ *  `null` sem gramas, sem material, ou com preço ausente/inválido: não existe
+ *  custo parcial honesto. Preço 0 é preço — vale 0. */
+export function lineCost(
+  line: { material_id: string; grams_unit: number | null },
+  materials: readonly ComPreco[],
+): number | null {
+  const g = toGrams(line.grams_unit);
+  if (g === null) return null;
+  const m = materials.find((x) => x.id === line.material_id);
+  if (!m || m.price_per_kg_ref === "" || m.price_per_kg_ref === null) return null;
+  const preco = Number(m.price_per_kg_ref);
+  if (!Number.isFinite(preco) || preco < 0) return null;
+  return (g * preco) / 1000;
+}
+
+/** Soma do custo de filamento das cores, por peça. `null` se a lista é vazia
+ *  ou se alguma cor não tem custo — mesmo motivo de `sumGrams`. */
+export function filamentCostPerPiece(
+  lines: readonly { material_id: string; grams_unit: number | null }[],
+  materials: readonly ComPreco[],
+): number | null {
+  if (lines.length === 0) return null;
+  let total = 0;
+  for (const l of lines) {
+    const c = lineCost(l, materials);
+    if (c === null) return null;
+    total += c;
+  }
+  return total;
+}
+
+/** Depois de remover uma cor pelo `×`, o item deve sair de multicolor?
+ *
+ *  Só quando sobra UMA cor, o flag está marcado e essa cor TEM gramas. Com
+ *  gramas digitadas o refugo é zero dos dois lados, então desmarcar não mexe
+ *  em dinheiro. Sem gramas, o refugo da linha segue o flag (20% multicor vs
+ *  o de cor única) — desmarcar reprecificaria o item, e há um caso legítimo
+ *  para ficar marcado: impressão multicor da qual só se sabe o total do
+ *  gcode, orçada como uma linha sem gramas com o refugo multicor. */
+export function shouldUntickAfterRemove(restantes: readonly DraftLine[], flag: boolean): boolean {
+  return flag && restantes.length === 1 && toGrams(restantes[0].gramasRaw) !== null;
+}

@@ -804,3 +804,140 @@ async def test_filaments_e_material_code_no_mesmo_patch_e_400(auth_client):
     assert item["gcode_meta"]["material"] == "PETG", (
         "a rejeição sobrescreveu gcode_meta['material'] antes de levantar"
     )
+
+
+async def _quote_com_item_de_uma_cor(mv: MaterialVersion, *, multicor: bool) -> Quote:
+    """Item de UMA linha, sem gramas (deriva do gcode), com o flag dado."""
+    async with session_module.SessionFactory() as s:
+        u = (await s.execute(sa.select(User))).scalars().first()
+        q = Quote(kind=QuoteKind.COMMERCIAL.value, user_id=u.id,
+                  status=QuoteStatus.DRAFT.value, markup_pct=Decimal("0"),
+                  min_charge=Decimal("0"))
+        s.add(q)
+        await s.commit()
+        it = QuoteItem(quote_id=q.id, name="peça", quantity=1,
+                       gcode_meta={"filament_m": 10, "time_s": 3600},
+                       material_version_id=mv.id, is_multi_color=multicor)
+        s.add(it)
+        await s.commit()
+        s.add(QuoteItemFilament(quote_item_id=it.id, material_version_id=mv.id,
+                                grams_unit=None, position=1))
+        await s.commit()
+        await s.refresh(q)
+        return q
+
+
+@pytest.mark.asyncio
+async def test_lista_de_duas_linhas_marca_multicolor(auth_client):
+    """Mais de uma linha ⇒ `is_multi_color = True`: flag e cores andam juntos."""
+    await _settings()
+    mv_a = await _material("PLA A", "100", "A-mc1")
+    mv_b = await _material("PLA B", "250", "B-mc1")
+    q = await _quote_com_item_de_uma_cor(mv_a, multicor=False)
+    item_id = (await auth_client.get(f"/quotes/{q.id}")).json()["items"][0]["id"]
+
+    r = await auth_client.put(f"/quotes/{q.id}/items/{item_id}", json={"filaments": [
+        {"material_id": str(mv_a.id), "grams_unit": "10"},
+        {"material_id": str(mv_b.id), "grams_unit": "5"},
+    ]})
+    assert r.status_code == 200, r.text
+    item = r.json()["items"][0]
+    assert len(item["filaments"]) == 2
+    assert item["is_multi_color"] is True, "duas cores gravadas e o flag continuou desmarcado"
+
+
+@pytest.mark.asyncio
+async def test_lista_de_uma_linha_nao_desmarca_multicolor(auth_client):
+    """A regra é numa direção só. Item antigo de uma cor marcado multicolor usa
+    `multi_color_waste_pct` na linha sem gramas; desmarcar por efeito colateral
+    de gravar a lista reprecificaria o histórico. Quem desmarca é a pessoa."""
+    await _settings()
+    mv = await _material("PLA A", "100", "A-mc2")
+    q = await _quote_com_item_de_uma_cor(mv, multicor=True)
+    antes = (await auth_client.get(f"/quotes/{q.id}")).json()["items"][0]
+    assert antes["is_multi_color"] is True
+    assert Decimal(antes["subtotal"]) > 0
+
+    r = await auth_client.put(f"/quotes/{q.id}/items/{antes['id']}", json={"filaments": [
+        {"material_id": str(mv.id)},
+    ]})
+    assert r.status_code == 200, r.text
+    depois = r.json()["items"][0]
+    assert depois["is_multi_color"] is True, (
+        "gravar uma lista de uma cor desmarcou multicolor — a regra só pode marcar"
+    )
+    assert depois["subtotal"] == antes["subtotal"], "gravar a mesma linha reprecificou o item"
+
+
+@pytest.mark.asyncio
+async def test_lista_de_uma_linha_nao_marca_multicolor(auth_client):
+    await _settings()
+    mv = await _material("PLA A", "100", "A-mc3")
+    q = await _quote_com_item_de_uma_cor(mv, multicor=False)
+    item_id = (await auth_client.get(f"/quotes/{q.id}")).json()["items"][0]["id"]
+
+    r = await auth_client.put(f"/quotes/{q.id}/items/{item_id}", json={"filaments": [
+        {"material_id": str(mv.id), "grams_unit": "7"},
+    ]})
+    assert r.status_code == 200, r.text
+    assert r.json()["items"][0]["is_multi_color"] is False
+
+
+@pytest.mark.asyncio
+async def test_flag_sozinho_nao_desmarca_item_de_duas_cores(auth_client):
+    """A regra vale no estado FINAL: um PATCH só de flag num item que já tem
+    duas linhas não pode deixá-lo desmarcado."""
+    await _settings()
+    mv_a = await _material("PLA A", "100", "A-mc4")
+    mv_b = await _material("PLA B", "250", "B-mc4")
+    q = await _quote_com_item_multicor(mv_a, mv_b, quantity=1)
+    item_id = (await auth_client.get(f"/quotes/{q.id}")).json()["items"][0]["id"]
+
+    r = await auth_client.put(f"/quotes/{q.id}/items/{item_id}",
+                              json={"is_multi_color": False})
+    assert r.status_code == 200, r.text
+    item = r.json()["items"][0]
+    assert len(item["filaments"]) == 2
+    assert item["is_multi_color"] is True, "item de duas cores ficou desmarcado pelo flag"
+
+
+@pytest.mark.asyncio
+async def test_duas_linhas_com_flag_false_no_mesmo_request_fica_marcado(auth_client):
+    await _settings()
+    mv_a = await _material("PLA A", "100", "A-mc5")
+    mv_b = await _material("PLA B", "250", "B-mc5")
+    q = await _quote_com_item_multicor(mv_a, mv_b, quantity=1)
+    item_id = (await auth_client.get(f"/quotes/{q.id}")).json()["items"][0]["id"]
+
+    r = await auth_client.put(f"/quotes/{q.id}/items/{item_id}", json={
+        "filaments": [
+            {"material_id": str(mv_a.id), "grams_unit": "10"},
+            {"material_id": str(mv_b.id), "grams_unit": "5"},
+        ],
+        "is_multi_color": False,
+    })
+    assert r.status_code == 200, r.text
+    item = r.json()["items"][0]
+    assert len(item["filaments"]) == 2
+    assert item["is_multi_color"] is True, "flag explícito ganhou de uma lista de duas cores"
+
+
+@pytest.mark.asyncio
+async def test_desmarcar_pela_tela_uma_linha_e_flag_false_desmarca(auth_client):
+    """O pedido que a tela manda ao desmarcar (ou ao remover até sobrar uma
+    cor com gramas): lista de UMA linha + flag false, num PUT só."""
+    await _settings()
+    mv_a = await _material("PLA A", "100", "A-mc6")
+    mv_b = await _material("PLA B", "250", "B-mc6")
+    q = await _quote_com_item_multicor(mv_a, mv_b, quantity=1)
+    item_id = (await auth_client.get(f"/quotes/{q.id}")).json()["items"][0]["id"]
+
+    r = await auth_client.put(f"/quotes/{q.id}/items/{item_id}", json={
+        "filaments": [{"material_id": str(mv_a.id), "grams_unit": "12"}],
+        "is_multi_color": False,
+    })
+    assert r.status_code == 200, r.text
+    item = r.json()["items"][0]
+    assert [f["material_id"] for f in item["filaments"]] == [str(mv_a.id)]
+    assert Decimal(item["filaments"][0]["grams_unit"]) == Decimal("12")
+    assert item["is_multi_color"] is False
