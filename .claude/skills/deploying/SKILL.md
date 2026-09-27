@@ -53,6 +53,7 @@ gh workflow run deploy.yml ; gh run list --workflow=deploy.yml --limit 1
 - `frontend.url` in the app uses `/api/...`; tests/curl on the server hit `api:8000/...` directly (no `/api`).
 - **Imagem da api: ~5 GB, e tem que continuar assim.** `sentence-transformers` arrasta `torch`, e o wheel default do PyPI vem com a stack CUDA inteira (3,3 GB de `nvidia/*` + 817 MB de `triton`) que nunca executa — a caixa não tem GPU. O `Dockerfile` instala torch do índice CPU (`--index-url https://download.pytorch.org/whl/cpu`) antes do install principal, e tem um `RUN test ! -d .../site-packages/nvidia` que **quebra o build** se a stack voltar. Se um dia o build falhar nessa linha, não remova a guarda: descubra qual bump reinstalou torch pelo PyPI.
 - Produção não instala os extras `[dev]`: `docker-compose.prod.yml` passa `EXTRAS: ""`. O default do `Dockerfile` é `[dev]`, que é o que o `docker-compose.yml` local usa pra `pytest`/`ruff`.
+- **Um deploy por vez** (`concurrency: deploy-prod`, `cancel-in-progress: false`). Dois merges próximos enfileiram em vez de rodar juntos. Se você mergear dois PRs seguidos, o segundo run fica `queued` até o primeiro terminar — isso é o desenho, não travamento. Nunca mude para `cancel-in-progress: true`: cancelar no meio deixa a caixa com imagem nova construída, containers na versão velha e migração talvez aplicada.
 
 ## Common failures & fixes
 
@@ -61,6 +62,7 @@ gh workflow run deploy.yml ; gh run list --workflow=deploy.yml --limit 1
 | Run fails: `no space left on device` while building | Lightsail disk full | **Já mitigado**: `deploy.sh` libera disco *antes* de construir (build cache capado em 4GB + `image prune -af`) e imprime `df -h` em três pontos do log. Se ainda acontecer, ler os `df -h` do run pra ver o que cresceu; só então SSH + `docker system prune -af` (**sem** `--volumes`: `frontend_build`/`caddy_data` são volumes nomeados) |
 | Run = success but change **"não apareceu"** | Your **browser** cached the old SPA (server is fresh) | Hard refresh **Cmd/Ctrl+Shift+R** or incognito |
 | A list shows nothing | **Empty state**, no seed (e.g. people) | Add data in the UI — not a bug |
+| Segundo deploy fica `queued` por minutos | `concurrency: deploy-prod` enfileirando — esperado após dois merges seguidos | Esperar. Conferir com `gh run list --workflow=deploy.yml --limit 3` |
 | `gh run watch` returned but unsure | watch can exit early/stale | Confirm with `gh run view <id> --json conclusion` |
 
 ## On-server diagnostics (when a deploy "didn't take")
