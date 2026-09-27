@@ -16,6 +16,7 @@ from backend.infra.db.models.production_suggestion import ProductionSuggestion
 from backend.infra.db.models.quote import Quote
 from backend.infra.db.models.person import Person
 from backend.infra.db.models.quote_item import QuoteItem
+from backend.infra.db.models.quote_item_filament import QuoteItemFilament
 from backend.infra.db.models.quote_person import QuotePerson
 from backend.infra.db.models.quote_photo import QuotePhoto
 from backend.infra.db.models.quote_service import QuoteService
@@ -32,6 +33,6 @@ __all__ = [
     "MaterialVersion", "MaterialConsumption", "PrinterJob", "ProductionEvent",
     "ProductionSuggestion",
     "Person",
-    "Quote", "QuoteItem", "QuotePerson", "QuotePhoto", "QuoteService", "Sale", "Service", "Settings", "Spool",
+    "Quote", "QuoteItem", "QuoteItemFilament", "QuotePerson", "QuotePhoto", "QuoteService", "Sale", "Service", "Settings", "Spool",
     "User", "WatcherInboxFile",
 ]

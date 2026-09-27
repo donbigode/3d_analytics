@@ -55,6 +55,11 @@ export type SpoolStatus = "open" | "empty" | "discarded";
 
 export type Spool = {
   id: string;
+  // Qual produto (MaterialVersion) está no rolo. IDENTIDADE, não preço: é o
+  // que a tela de produzir usa para pré-selecionar a bobina da cor de cada
+  // linha. `null` é normal — o backfill da migração 0035 só vinculou o que
+  // casou com certeza.
+  material_version_id: string | null;
   material_type: string;
   color: string | null;
   manufacturer: string | null;
@@ -125,6 +130,18 @@ export type Consumption = {
   consumed_at: string;
 };
 
+// Um filamento orçado do item — uma cor. `grams_unit` é Decimal no backend,
+// então chega como string; `null` significa "derive do gcode" (todo item
+// anterior à migração 0034), e é o valor que a tela mostra em cinza.
+export type QuoteItemFilament = {
+  id: string;
+  material_id: string;
+  material_name: string;
+  material_color: string | null;
+  grams_unit: string | null;
+  position: number;
+};
+
 export type QuoteItem = {
   id: string;
   name: string;
@@ -146,6 +163,9 @@ export type QuoteItem = {
   model_source_author?: string | null;
   model_source_license?: string | null;
   photos?: QuotePhoto[];
+  // Ordenados por position. Vazio = item que ainda não tem linha nenhuma,
+  // que é o mesmo fato que `material_pending`.
+  filaments?: QuoteItemFilament[];
   consumptions?: Consumption[];
 };
 

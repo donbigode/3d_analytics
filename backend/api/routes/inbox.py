@@ -7,7 +7,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.api.deps import db_session, require_user
 from backend.api.schemas.inbox import InboxPromote
 from backend.core.models import QuoteStatus, WatcherInboxStatus
-from backend.infra.db.models import Quote, QuoteItem, User, WatcherInboxFile
+from backend.infra.db.models import (
+    Quote,
+    QuoteItem,
+    QuoteItemFilament,
+    User,
+    WatcherInboxFile,
+)
 from backend.infra.db.repos import material as material_repo
 
 router = APIRouter()
@@ -67,6 +73,16 @@ async def promote(
         quantity=1,
     )
     session.add(it)
+    await session.flush()
+    if it.material_version_id is not None:
+        # Mesma invariante de add_item: item com material resolvido nasce com a
+        # linha 1. Sem ela a peça promovida do inbox não orçaria.
+        session.add(QuoteItemFilament(
+            quote_item_id=it.id,
+            material_version_id=it.material_version_id,
+            grams_unit=None,
+            position=1,
+        ))
     rec.status = WatcherInboxStatus.ASSIGNED
     rec.quote_id = q.id
     await session.commit()

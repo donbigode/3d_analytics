@@ -106,3 +106,58 @@ async def test_spool_remaining_cannot_exceed_initial(auth_client):
         "remaining_grams": "1500",
     })
     assert r.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_spool_out_exposes_material_version_id(auth_client):
+    """O `SpoolOut` carrega o vínculo com o produto — é ele que a tela de
+    produzir usa para pré-selecionar a bobina da cor de cada linha.
+
+    As DUAS asserções importam: só a de vinculada passaria com o campo cravado
+    em `None`, e só a de não-vinculada passaria com o campo cravado em qualquer
+    id. O `material_type` das duas é igual de propósito — é o casamento frouxo
+    que a pré-seleção NÃO deve usar, e a única coisa que as distingue é o
+    vínculo.
+    """
+    from datetime import datetime, timezone
+    from decimal import Decimal
+
+    from backend.infra.db import session as session_module
+    from backend.infra.db.models import MaterialVersion, Spool
+
+    # O vínculo não é criável pela API (não está em SpoolCreate): quem o
+    # preenche é a migração 0035. Então o fixture grava direto.
+    async with session_module.SessionFactory() as s:
+        mv = MaterialVersion(
+            material_type="PLA", name="PLA Preto", color="Preto", manufacturer="ACME",
+            density_g_cm3=Decimal("1.24"), price_per_kg_ref=Decimal("100"),
+            failure_rate_pct=Decimal("0"),
+        )
+        s.add(mv)
+        await s.flush()
+        vinculada = Spool(
+            material_type="PLA", color="Preto", purchased_at=datetime.now(timezone.utc),
+            purchased_price=Decimal("100.00"), initial_grams=Decimal("1000"),
+            remaining_grams=Decimal("1000"), material_version_id=mv.id,
+        )
+        solta = Spool(
+            material_type="PLA", color="Preto", purchased_at=datetime.now(timezone.utc),
+            purchased_price=Decimal("100.00"), initial_grams=Decimal("1000"),
+            remaining_grams=Decimal("1000"), material_version_id=None,
+        )
+        s.add_all([vinculada, solta])
+        await s.commit()
+        mv_id, com_id, sem_id = str(mv.id), str(vinculada.id), str(solta.id)
+
+    r = await auth_client.get(f"/spools/{com_id}")
+    assert r.status_code == 200, r.text
+    assert r.json()["material_version_id"] == mv_id
+
+    r = await auth_client.get(f"/spools/{sem_id}")
+    assert r.status_code == 200, r.text
+    assert r.json()["material_version_id"] is None
+
+    # E na listagem, que é de onde a tela de produzir lê.
+    por_id = {s["id"]: s for s in (await auth_client.get("/spools")).json()}
+    assert por_id[com_id]["material_version_id"] == mv_id
+    assert por_id[sem_id]["material_version_id"] is None

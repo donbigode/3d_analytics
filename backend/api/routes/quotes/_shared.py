@@ -7,11 +7,12 @@ from decimal import Decimal
 from uuid import UUID
 
 from fastapi import HTTPException
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.api.schemas.quotes import (
     ConsumptionOut,
+    QuoteItemFilamentOut,
     QuoteItemOut,
     QuoteOut,
     QuotePhotoOut,
@@ -19,17 +20,20 @@ from backend.api.schemas.quotes import (
 )
 from backend.core.gcode.parser import GcodeMeta
 from backend.core.pricing.quote import (
+    FilamentLine,
     ItemInput,
     ServiceLine,
     compute_item_cost,
     compute_quote_total,
 )
 from backend.core.quote_service import gcode_to_item_input
+from backend.core.quotes.filaments import grams_for_line, waste_for_line
 from backend.infra.db.models import (
     MaterialConsumption,
     MaterialVersion,
     Quote,
     QuoteItem,
+    QuoteItemFilament,
     QuotePerson,
     QuotePhoto,
     Settings,
@@ -64,20 +68,67 @@ async def _get_settings_row(session: AsyncSession) -> Settings:
     return s
 
 
+async def _filaments_map(
+    session: AsyncSession, item_ids: list[UUID]
+) -> dict[UUID, list[tuple[QuoteItemFilament, MaterialVersion]]]:
+    """Linhas de todos os itens numa query só.
+
+    Buscar por item reintroduziria o N+1 que a Spec 2 acabou de tirar do
+    contábil — e aqui seria pior, porque o cálculo de custo percorre os itens.
+    """
+    if not item_ids:
+        return {}
+    rows = (
+        await session.execute(
+            select(QuoteItemFilament, MaterialVersion)
+            .join(MaterialVersion, MaterialVersion.id == QuoteItemFilament.material_version_id)
+            .where(QuoteItemFilament.quote_item_id.in_(item_ids))
+            .order_by(QuoteItemFilament.quote_item_id, QuoteItemFilament.position)
+        )
+    ).all()
+    out: dict[UUID, list[tuple[QuoteItemFilament, MaterialVersion]]] = {}
+    for fil, mv in rows:
+        out.setdefault(fil.quote_item_id, []).append((fil, mv))
+    return out
+
+
 async def _build_item_input(
-    session: AsyncSession, it: QuoteItem, settings_row: Settings
+    session: AsyncSession,
+    it: QuoteItem,
+    settings_row: Settings,
+    filaments: list[tuple[QuoteItemFilament, MaterialVersion]] | None = None,
 ) -> ItemInput | None:
-    """Return ItemInput for cost calc, or None if the item has no resolved material (pending)."""
-    if not it.material_version_id:
+    """Return ItemInput for cost calc, or None if the item has no resolved material (pending).
+
+    ``filaments`` vem de ``_filaments_map`` quando o chamador já carregou tudo
+    em lote. Quando é ``None``, busca as linhas deste item — caminho usado por
+    chamadores de um item só.
+    """
+    if filaments is None:
+        filaments = (await _filaments_map(session, [it.id])).get(it.id, [])
+
+    if not filaments:
+        # Item sem linha = material não resolvido (pendente). Mesma semântica
+        # que o `if not it.material_version_id` de antes.
         return None
-    mv = await session.get(MaterialVersion, it.material_version_id)
-    if not mv:
-        return None
+
     deprec = it.depreciation_rate_override or settings_row.printer_depreciation_per_hour
-    failure = it.failure_rate_override or mv.failure_rate_pct
-    waste_pct = (
-        mv.multi_color_waste_pct if it.is_multi_color else mv.single_color_waste_pct
-    ) or Decimal("0")
+    # failure_pct sai do material da PRIMEIRA linha: é uma propriedade da
+    # impressão, não de cada cor, e a linha 1 é o material principal do item.
+    primeiro_mv = filaments[0][1]
+    failure = it.failure_rate_override or primeiro_mv.failure_rate_pct
+
+    linhas: list[FilamentLine] = []
+    for fil, mv in filaments:
+        waste = waste_for_line(
+            fil.grams_unit,
+            bool(it.is_multi_color),
+            mv.single_color_waste_pct,
+            mv.multi_color_waste_pct,
+        )
+        gramas = grams_for_line(fil.grams_unit, it.gcode_meta or {}, mv.density_g_cm3, waste)
+        linhas.append(FilamentLine(grams=gramas, price_per_kg=mv.price_per_kg_ref))
+
     meta = GcodeMeta(
         time_s=float(it.gcode_meta.get("time_s") or 0),
         filament_m=float(it.gcode_meta.get("filament_m") or 0),
@@ -86,17 +137,17 @@ async def _build_item_input(
     )
     return gcode_to_item_input(
         meta=meta,
-        density=mv.density_g_cm3,
-        price_per_kg=mv.price_per_kg_ref,
+        # density/price_per_kg seguem porque a assinatura os exige; com
+        # ``filaments`` explícito são ignorados — cada linha traz o seu.
+        density=primeiro_mv.density_g_cm3,
+        price_per_kg=primeiro_mv.price_per_kg_ref,
         power_w=settings_row.printer_power_w,
         kwh_price=settings_row.energy_kwh_price,
         depreciation_per_hour=deprec,
         failure_pct=failure,
         quantity=it.quantity,
         maintenance_per_hour=settings_row.printer_maintenance_per_hour or Decimal("0"),
-        waste_pct=waste_pct,
-        filament_g=(float(it.gcode_meta["filament_g"])
-                    if it.gcode_meta.get("filament_g") not in (None, "") else None),
+        filaments=tuple(linhas),
     )
 
 
@@ -169,6 +220,11 @@ async def _consumptions_map(
                 # O arredondamento é responsabilidade de quem exibe.
                 custo_total=cons.grams_used * cons.unit_cost_snapshot,
                 consumed_at=cons.consumed_at,
+                filament_id=(
+                    str(cons.quote_item_filament_id)
+                    if cons.quote_item_filament_id
+                    else None
+                ),
             )
         )
     return out
@@ -179,11 +235,15 @@ async def _quote_out(session: AsyncSession, q: Quote) -> QuoteOut:
     items = await quote_repo.list_items(session, q.id)
     services = await quote_repo.list_services(session, q.id)
 
+    filaments_by_item = await _filaments_map(session, [it.id for it in items])
+
     item_inputs: list[ItemInput] = []
     item_subtotals: list[Decimal] = []
     pending_items = 0
     for it in items:
-        ii = await _build_item_input(session, it, s)
+        ii = await _build_item_input(
+            session, it, s, filaments=filaments_by_item.get(it.id, [])
+        )
         if ii is None:
             pending_items += 1
             item_subtotals.append(Decimal("0"))
@@ -223,6 +283,13 @@ async def _quote_out(session: AsyncSession, q: Quote) -> QuoteOut:
 
     consumptions_by_item = await _consumptions_map(session, [it.id for it in items])
 
+    # "Pendente" tem UM critério: não tem linha de filamento. É o mesmo que faz
+    # `_build_item_input` devolver None e o mesmo que `_assert_materials_resolved`
+    # usa. Derivar de `material_version_id` aqui deixaria a tela discordar do
+    # custo no instante em que as duas condições divergissem — e a Task 7 traz
+    # um caminho de escrita que apaga linhas, o que torna isso alcançável.
+    pendentes = {it.id for it in items if not filaments_by_item.get(it.id)}
+
     items_out = [
         QuoteItemOut(
             id=str(it.id),
@@ -233,14 +300,25 @@ async def _quote_out(session: AsyncSession, q: Quote) -> QuoteOut:
             subtotal=item_subtotals[idx].quantize(Decimal("0.01")),
             material_id=str(it.material_version_id) if it.material_version_id else None,
             is_multi_color=bool(it.is_multi_color),
-            material_pending=(it.material_version_id is None),
+            material_pending=(it.id in pendentes),
             pending_material_code=(
-                (it.gcode_meta.get("material") if it.material_version_id is None else None)
+                (it.gcode_meta or {}).get("material") if it.id in pendentes else None
             ),
             model_source_url=it.model_source_url,
             model_source_author=it.model_source_author,
             model_source_license=it.model_source_license,
             photos=photos_by_item.get(str(it.id), []),
+            filaments=[
+                QuoteItemFilamentOut(
+                    id=str(fil.id),
+                    material_id=str(mv.id),
+                    material_name=mv.name,
+                    material_color=mv.color,
+                    grams_unit=fil.grams_unit,
+                    position=fil.position,
+                )
+                for fil, mv in filaments_by_item.get(it.id, [])
+            ],
             consumptions=consumptions_by_item.get(it.id, []),
         )
         for idx, it in enumerate(items)
@@ -284,26 +362,25 @@ async def _quote_out(session: AsyncSession, q: Quote) -> QuoteOut:
 async def _assert_materials_resolved(session: AsyncSession, q: Quote) -> None:
     """Block finalizing/producing a quote that still has items whose material
     couldn't be matched to a registered ``MaterialVersion`` — without it we
-    can't compute filament grams (and therefore can't debit the spool)."""
-    pending = await session.scalar(
-        select(func.count(QuoteItem.id)).where(
-            QuoteItem.quote_id == q.id,
-            QuoteItem.material_version_id.is_(None),
-        )
-    )
-    if pending and pending > 0:
-        codes = await session.execute(
-            select(QuoteItem.gcode_meta).where(
-                QuoteItem.quote_id == q.id,
-                QuoteItem.material_version_id.is_(None),
-            )
-        )
+    can't compute filament grams (and therefore can't debit the spool).
+
+    O critério é "o item tem ao menos uma linha de filamento", não
+    ``material_version_id``: é a mesma condição que faz ``_build_item_input``
+    devolver ``None``, então não existe orçamento que passe por aqui e depois
+    não orce. A mensagem fica igual — é a que a tela mostra.
+    """
+    items = (
+        await session.execute(select(QuoteItem).where(QuoteItem.quote_id == q.id))
+    ).scalars().all()
+    linhas = await _filaments_map(session, [it.id for it in items])
+    pendentes = [it for it in items if not linhas.get(it.id)]
+    if pendentes:
         pending_codes = {
-            (m or {}).get("material") or "?" for m in codes.scalars()
+            (it.gcode_meta or {}).get("material") or "?" for it in pendentes
         }
         raise HTTPException(
             409,
-            f"there are {pending} item(s) with unregistered materials: "
+            f"there are {len(pendentes)} item(s) with unregistered materials: "
             f"{', '.join(sorted(pending_codes))}. Register them and resolve each item before finalizing.",
         )
 

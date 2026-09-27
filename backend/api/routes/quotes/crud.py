@@ -13,7 +13,15 @@ from backend.api.deps import db_session, require_user
 from backend.api.schemas.quotes import QuoteCreate, QuoteOut, QuoteUpdate
 from backend.api.routes.quotes._shared import _quote_out
 from backend.core.models import QuoteKind, QuoteStatus
-from backend.infra.db.models import Quote, QuoteItem, QuotePerson, QuotePhoto, QuoteService, User
+from backend.infra.db.models import (
+    Quote,
+    QuoteItem,
+    QuoteItemFilament,
+    QuotePerson,
+    QuotePhoto,
+    QuoteService,
+    User,
+)
 from backend.infra.storage.gcodes import copy_gcode
 from backend.infra.storage.quote_photos import copy_photo_file
 from backend.settings import get_settings
@@ -163,6 +171,26 @@ async def clone_quote(
             session.add(copia)
             await session.flush()
             mapa_itens[it.id] = copia.id
+
+            # As linhas de filamento vão junto: são a tabela autoritativa do
+            # custo. Sem copiá-las o clone perderia as cores E pararia de
+            # orçar (tem material, não tem linha → _build_item_input = None).
+            # MaterialConsumption não é copiado (o clone é rascunho novo, nada
+            # foi produzido), então não há quote_item_filament_id a remapear.
+            linhas_orig = (
+                await session.execute(
+                    select(QuoteItemFilament)
+                    .where(QuoteItemFilament.quote_item_id == it.id)
+                    .order_by(QuoteItemFilament.position)
+                )
+            ).scalars().all()
+            for ln in linhas_orig:
+                session.add(QuoteItemFilament(
+                    quote_item_id=copia.id,
+                    material_version_id=ln.material_version_id,
+                    grams_unit=ln.grams_unit,
+                    position=ln.position,
+                ))
 
         servicos = (
             await session.execute(select(QuoteService).where(QuoteService.quote_id == orig.id))

@@ -12,7 +12,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.api.deps import db_session, require_user
-from backend.api.routes.quotes._shared import _build_item_input, _get_settings_row, _now
+from backend.api.routes.quotes._shared import (
+    _build_item_input,
+    _filaments_map,
+    _get_settings_row,
+    _now,
+)
 from backend.core.pricing.quote import (
     ItemInput,
     ServiceLine,
@@ -44,10 +49,16 @@ async def get_pdf(
     items = await quote_repo.list_items(session, q.id)
     services = await quote_repo.list_services(session, q.id)
 
+    # Em lote: o laço abaixo percorre todos os itens, e buscar as linhas por
+    # item aqui seria o mesmo N+1 que _filaments_map existe para evitar.
+    filaments_by_item = await _filaments_map(session, [it.id for it in items])
+
     item_inputs: list[ItemInput] = []
     item_subtotals: list[Decimal] = []
     for it in items:
-        ii = await _build_item_input(session, it, s)
+        ii = await _build_item_input(
+            session, it, s, filaments=filaments_by_item.get(it.id, [])
+        )
         if ii is None:
             item_subtotals.append(Decimal("0"))
         else:
@@ -119,6 +130,19 @@ async def get_pdf(
         per_piece = (client_price / Decimal(qty)).quantize(
             Decimal("0.01"), rounding=ROUND_HALF_UP
         ) if qty else client_price
+        # Linhas de filamento do item, já em lote via _filaments_map (ordenadas
+        # por position). O template usa isto para listar cada cor de um item
+        # multicolor; item de uma linha só cai no ramo antigo do macro.
+        item_filaments = [
+            {
+                "material_name": fil_mv.name,
+                "material_color": fil_mv.color,
+                "grams_unit": (
+                    float(fil.grams_unit) if fil.grams_unit is not None else None
+                ),
+            }
+            for fil, fil_mv in filaments_by_item.get(it.id, [])
+        ]
         item_dicts.append(
             {
                 "name": it.name,
@@ -133,6 +157,7 @@ async def get_pdf(
                 "material_manufacturer": mat_manufacturer,
                 "material_polymer": it.gcode_meta.get("material") or None,
                 "is_multi_color": bool(it.is_multi_color),
+                "filaments": item_filaments,
                 "model_source_url": it.model_source_url,
                 "model_source_author": it.model_source_author,
                 "model_source_license": it.model_source_license,

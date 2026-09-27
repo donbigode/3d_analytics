@@ -7,8 +7,10 @@ de propósito (spec §6): tem payload próprio (`ProduceRequest`), regra de
 origem por tipo de orçamento e o efeito colateral pesado de debitar spools —
 ver `apply_production` abaixo da tabela.
 """
+import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from decimal import Decimal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -25,6 +27,7 @@ from backend.api.schemas.quotes import (
 from backend.api.routes.quotes._shared import (
     _assert_materials_resolved,
     _cycle_context_and_grams,
+    _filaments_map,
     _now,
     _quote_out,
 )
@@ -32,13 +35,14 @@ from backend.core.models import ProductionOutcome, QuoteKind, QuoteStatus, Spool
 from backend.core.quote_service import grams_for_item
 from backend.infra.db.models import (
     MaterialConsumption,
-    MaterialVersion,
     ProductionEvent,
     Quote,
     QuoteItem,
     Spool,
     User,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -274,15 +278,68 @@ async def apply_production(
     else:
         raise HTTPException(400, "unsupported quote kind for produce")
 
+    # Linhas de todos os itens referenciados numa query só — evita repetir a
+    # busca a cada assignment quando o mesmo item aparece mais de uma vez
+    # (o caso normal do multicor: uma linha por cor, uma bobina por linha).
+    item_ids = list({UUID(a.quote_item_id) for a in assignments})
+    filaments_by_item = await _filaments_map(session, item_ids)
+
     for assign in assignments:
         it = await session.get(QuoteItem, UUID(assign.quote_item_id))
         sp = await session.get(Spool, UUID(assign.spool_id))
         if not it or it.quote_id != q.id or not sp:
             raise HTTPException(400, "invalid assignment")
-        mv = await session.get(MaterialVersion, it.material_version_id)
+
+        linhas = filaments_by_item.get(it.id, [])
+
+        # Densidade e material saem da LINHA, não do item: com multicor cada
+        # cor tem a sua.
+        linha = None
+        mv = None
+        if assign.quote_item_filament_id:
+            match = next(
+                (
+                    pair
+                    for pair in linhas
+                    if str(pair[0].id) == assign.quote_item_filament_id
+                ),
+                None,
+            )
+            if match is None:
+                raise HTTPException(
+                    400,
+                    f"filamento {assign.quote_item_filament_id} não pertence a este item",
+                )
+            linha, mv = match
+        elif len(linhas) > 1:
+            raise HTTPException(
+                409,
+                f"item '{it.name}' tem {len(linhas)} filamentos — informe "
+                "quote_item_filament_id em cada baixa. Sem isso, cada linha "
+                "debitaria as gramas do item inteiro.",
+            )
+        elif linhas:
+            linha, mv = linhas[0]
+
+        if linha is None or mv is None:
+            raise HTTPException(409, f"item '{it.name}' não tem filamento resolvido")
+
+        if sp.material_version_id and sp.material_version_id != linha.material_version_id:
+            # Aviso, não bloqueio: o backfill da 0035 deixa material_version_id
+            # NULL em parte das bobinas, e bloquear por dado incompleto
+            # impediria produzir.
+            logger.warning(
+                "bobina %s é de outro material que a linha %s do item %s",
+                sp.id, linha.id, it.id,
+            )
+
         if assign.grams is not None and assign.grams > 0:
             # Override direto: debita exatamente o informado (total da linha).
             grams = assign.grams
+        elif linha.grams_unit is not None:
+            # Gramas por peça informadas na linha (multicor sem gcode
+            # ambíguo entre cores) — total da linha é grams_unit * quantity.
+            grams = linha.grams_unit * Decimal(it.quantity)
         else:
             if assign.filament_m is not None and assign.filament_m > 0:
                 # Override de metragem: persiste no item para custo/analytics.
@@ -305,6 +362,7 @@ async def apply_production(
         session.add(
             MaterialConsumption(
                 quote_item_id=it.id,
+                quote_item_filament_id=linha.id,
                 spool_id=sp.id,
                 grams_used=grams,
                 unit_cost_snapshot=unit_cost,

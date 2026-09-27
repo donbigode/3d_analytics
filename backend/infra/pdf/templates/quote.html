@@ -13,8 +13,14 @@
 </div>
 {% endif %}
 
-{% macro material_label(it) %}
-  {%- if it.material_name -%}
+{% macro material_label(it, retail_mode) %}
+  {%- if it.filaments and it.filaments|length > 1 -%}
+    {%- for f in it.filaments -%}
+      {{ f.material_name }}{% if f.material_color %} · {{ f.material_color }}{% endif %}
+      {%- if not retail_mode and f.grams_unit %} · {{ "%.2f"|format(f.grams_unit|float) }} g{% endif %}
+      {%- if not loop.last %}<br>{% endif -%}
+    {%- endfor -%}
+  {%- elif it.material_name -%}
     {{ it.material_name }}
     {%- if it.material_color %} · {{ it.material_color }}{%- endif -%}
     {%- if it.is_multi_color %} · multicolor{%- endif -%}
@@ -55,7 +61,7 @@
           </div>
         {% endif %}
       </td>
-      <td style="font-size:0.92em;">{{ material_label(it) }}</td>
+      <td style="font-size:0.92em;">{{ material_label(it, retail_mode) }}</td>
       {% if not retail_mode %}<td>{{ "%.2f"|format(it.filament_m) }}</td>{% endif %}
       {% if not retail_mode %}<td>{{ it.time_s }}</td>{% endif %}
       <td>{{ it.qty }}</td>

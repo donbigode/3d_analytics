@@ -34,6 +34,15 @@ class SpoolUpdate(BaseModel):
 
 class SpoolOut(BaseModel):
     id: str
+    # Qual produto (MaterialVersion) está neste rolo. IDENTIDADE, NÃO PREÇO: a
+    # tela de produzir usa para pré-selecionar a bobina da cor certa (casamento
+    # exato; `material_type` é frouxo e adivinha errado), e o custo da baixa
+    # continua saindo do `purchased_price / initial_grams` da própria bobina,
+    # nunca do `price_per_kg_ref` do material.
+    #
+    # `None` é normal: o backfill da 0035 deixou o vínculo nulo em toda bobina
+    # que não casou com certeza.
+    material_version_id: str | None = None
     material_type: str
     color: str | None
     manufacturer: str | None

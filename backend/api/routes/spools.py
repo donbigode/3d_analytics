@@ -13,6 +13,7 @@ router = APIRouter()
 def _out(s: Spool) -> SpoolOut:
     return SpoolOut(
         id=str(s.id),
+        material_version_id=str(s.material_version_id) if s.material_version_id else None,
         material_type=s.material_type,
         color=s.color,
         manufacturer=s.manufacturer,

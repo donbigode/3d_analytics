@@ -1,7 +1,7 @@
 from datetime import datetime
 from decimal import Decimal
 from uuid import UUID, uuid4
-from sqlalchemy import String, Numeric, DateTime, Text, func
+from sqlalchemy import String, Numeric, DateTime, Text, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 from backend.infra.db.base import Base
@@ -23,3 +23,13 @@ class Spool(Base):
     remaining_grams: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
     status: Mapped[SpoolStatus] = mapped_column(String(20), nullable=False, default=SpoolStatus.OPEN)
     notes: Mapped[str | None] = mapped_column(Text)
+    # Qual produto (MaterialVersion) é esta bobina. Nullable: bobina cadastrada
+    # antes do material, ou com a cor escrita diferente, não casa no backfill —
+    # e inventar um vínculo errado é pior que deixar NULL.
+    #
+    # IDENTIDADE, NÃO PREÇO. O custo da bobina vem do seu próprio
+    # purchased_price / initial_grams. Não derivar custo daqui via
+    # price_per_kg_ref: seria trocar o preço pago por um preço de referência.
+    material_version_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("material_versions.id")
+    )

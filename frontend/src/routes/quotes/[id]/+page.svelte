@@ -5,8 +5,20 @@
   import { api } from "$lib/api";
   import { requireAuth } from "$lib/guard";
   import { resource, action } from "$lib/resource";
-  import { money as fmtMoney, num as fmtNum, dur as fmtDur, dateTime as fmtDate } from "$lib/format";
+  import { money as fmtMoney, num as fmtNum, dur as fmtDur, dateTime as fmtDate, DASH } from "$lib/format";
   import { quoteNumber } from "$lib/quote-number";
+  import FilamentLines from "$lib/components/FilamentLines.svelte";
+  import type { FilamentPayload } from "$lib/filament-lines";
+  import {
+    debitGrams,
+    fillMissing,
+    missingAssignments,
+    preselectSignature,
+    preselectSpools,
+    spoolsForLine,
+    toConsumption,
+  } from "$lib/produce-assignments";
+  import type { Baixa } from "$lib/produce-assignments";
   import type {
     Client,
     Material,
@@ -15,6 +27,7 @@
     Person,
     Quote,
     QuoteItem,
+    QuoteItemFilament,
     Service,
     Spool,
     VarianceOut,
@@ -67,10 +80,23 @@
   let transitioning = "";
 
   // produce modal
+  //
+  // `produceAssignments` e `produceGrams` são chaveados pelo id da LINHA DE
+  // COR (`QuoteItemFilament.id`), não pelo do item: cada cor debita a sua
+  // própria bobina, e o servidor recusa com 409 uma baixa que não diga de qual
+  // linha é (sem isso, cada cor debitaria as gramas do item INTEIRO). O id da
+  // linha é UUID e todo item produzível tem pelo menos uma, então a chave é a
+  // mesma para item de uma cor e de N cores.
+  //
+  // `produceMeters` continua por ITEM: `filament_m` é campo do item, que o
+  // servidor persiste no `gcode_meta` — num item multicor não representa cor
+  // nenhuma, e por isso só é oferecido para item de uma cor.
   let showProduceModal = false;
-  let produceAssignments: Record<string, string> = {}; // quote_item_id -> spool_id
+  let produceAssignments: Record<string, string> = {}; // quote_item_filament_id -> spool_id
+  let produceGrams: Record<string, string> = {}; // quote_item_filament_id -> gramas a debitar
   let produceMeters: Record<string, string> = {}; // quote_item_id -> filament_m (override)
-  let produceGrams: Record<string, string> = {}; // quote_item_id -> gramas (override direto)
+  /** Assinatura (por valor) da pré-seleção já aplicada — ver o `$:` do resync. */
+  let preSelecaoAplicada = "";
 
   let photoVersion = 0; // cache-bust após upload/delete
   let photoBusy = false;
@@ -281,9 +307,12 @@
     if (!Number.isFinite(g) || g < 0) return;
     patchItem(itemId, { filament_g: g }, "filament");
   }
-  function patchMaterial(itemId: string, materialId: string) {
-    if (!materialId) return;
-    patchItem(itemId, { material_id: materialId }, "material");
+  /** Substitui a lista de filamentos do item. `material_id` NÃO vai neste
+   *  payload: mandar os dois na mesma requisição é 400 (Task 7) — a linha de
+   *  `position` 1 é que passa a definir o material do item. A forma de cada
+   *  linha é montada por `toPayload`, no componente. */
+  function saveFilaments(itemId: string, filaments: FilamentPayload[]) {
+    patchItem(itemId, { filaments }, "filaments");
   }
   function patchQuantity(itemId: string, qtyStr: string) {
     const q = Math.max(1, Math.floor(Number(qtyStr) || 1));
@@ -511,50 +540,74 @@
 
   function openProduce() {
     if (!quote) return;
-    produceAssignments = {};
-    produceMeters = {};
+    // Pré-seleção por vínculo exato (`material_version_id` da bobina ==
+    // material da linha). Nunca por `material_type`: é o casamento frouxo que
+    // a migração 0035 recusou a fazer, e uma bobina adivinhada errado debita o
+    // filamento errado. Linha sem candidata fica sem chave — e o botão de
+    // confirmar aponta qual cor falta.
+    const linhas = linhasDeCor(quote.items);
+    produceAssignments = preselectSpools(linhas, spools);
     produceGrams = {};
-    for (const it of quote.items) {
-      const available = spoolsForItem(it.gcode_meta?.material);
-      // Prefere o rolo que casa com o filamento considerado no orçamento
-      // (mesmo fabricante + cor do material_id); senão, o primeiro disponível.
-      const consideredMat = it.material_id
-        ? materials.find((m) => m.id === it.material_id)
-        : null;
-      const candidate =
-        (consideredMat &&
-          available.find(
-            (sp) =>
-              (sp.manufacturer ?? null) === (consideredMat.manufacturer ?? null) &&
-              (sp.color ?? null) === (consideredMat.color ?? null),
-          )) ||
-        available[0];
-      produceAssignments[it.id] = candidate?.id ?? "";
-      const fm = Number(it.gcode_meta?.filament_m ?? 0);
-      produceMeters[it.id] = fm > 0 ? String(fm) : "";
-      const fg = Number(it.gcode_meta?.filament_g ?? 0);
-      produceGrams[it.id] = fg > 0 ? String(fg) : "";
-    }
+    produceMeters = {};
+    // Marca o que já foi aplicado para o resync abaixo não re-rodar de graça.
+    preSelecaoAplicada = preselectSignature(linhas, spools);
     confirmProduceAction.reset();
     showProduceModal = true;
   }
 
-  function spoolsForItem(matCode: string | null | undefined) {
-    return spools.filter(
-      (sp) => sp.status === "open" && (matCode ? sp.material_type === matCode : true),
-    );
+  function linhasDeCor(items: QuoteItem[]) {
+    return items.flatMap((it) => it.filaments ?? []);
   }
 
-  // Descreve o filamento considerado no orçamento (material_id) pra exibir no
-  // modal de produção — tipo · fabricante · cor. Cai no código do gcode se
-  // a peça não tiver material atribuído.
-  function consideredMaterialLabel(it: QuoteItem): string {
-    const m = it.material_id ? materials.find((mm) => mm.id === it.material_id) : null;
-    if (!m) return it.gcode_meta?.material ?? "—";
+  // As funções abaixo recebem `materials`/`spools` como ARGUMENTO em vez de ler
+  // do escopo. Não é estilo: a descoberta de dependências de um `$:` e de uma
+  // expressão de template é uma varredura TEXTUAL, então um `materials` lido de
+  // dentro da função é invisível e a tela não reagiria à chegada dos refs.
+
+  /** Material de uma linha de cor — tipo · fabricante · cor. */
+  function rotuloDaLinha(lista: Material[], f: QuoteItemFilament): string {
+    const m = lista.find((mm) => mm.id === f.material_id);
+    if (!m) return `${f.material_name}${f.material_color ? ` · ${f.material_color}` : ""}`;
     const parts = [m.material_type];
     if (m.manufacturer) parts.push(m.manufacturer);
     if (m.color) parts.push(m.color);
     return parts.join(" · ");
+  }
+
+  /** Bobinas oferecidas no seletor desta cor: as do tipo da linha, mais a que
+   *  estiver vinculada ao material dela (o vínculo vale mais que o texto do
+   *  tipo, que pode estar "PLA+" de um lado e "PLA" do outro). */
+  function bobinasDaLinha(
+    rolos: Spool[],
+    lista: Material[],
+    it: QuoteItem,
+    f: QuoteItemFilament,
+  ): Spool[] {
+    const m = lista.find((mm) => mm.id === f.material_id);
+    return spoolsForLine(rolos, f, m?.material_type ?? it.gcode_meta?.material ?? null);
+  }
+
+  function densidadeDaLinha(lista: Material[], f: QuoteItemFilament): number {
+    const d = Number(lista.find((mm) => mm.id === f.material_id)?.density_g_cm3);
+    return Number.isFinite(d) && d > 0 ? d : 1.24;
+  }
+
+  /** Quanto o servidor vai debitar nesta cor, como placeholder do campo de
+   *  override. Placeholder e não valor: preencher o campo com um número que a
+   *  pessoa não digitou é o que fazia a baixa sair errada em peça repetida — o
+   *  `filament_g` do gcode é POR PEÇA e viajava como total da linha. */
+  function gramasPrevistas(lista: Material[], it: QuoteItem, f: QuoteItemFilament): string {
+    const g = debitGrams(it, f, densidadeDaLinha(lista, f));
+    return g === null ? "g" : fmtNum(g, 2);
+  }
+
+  /** "Peça · material" de uma linha, para a mensagem de bobina faltando. */
+  function ondeFalta(items: QuoteItem[], lista: Material[], linhaId: string): string {
+    for (const it of items) {
+      const f = (it.filaments ?? []).find((x) => x.id === linhaId);
+      if (f) return `${it.name} · ${rotuloDaLinha(lista, f)}`;
+    }
+    return linhaId;
   }
 
   // Label descritiva de um rolo no seletor de produzir:
@@ -586,18 +639,13 @@
   }
 
   const confirmProduceAction = action(
-    (
-      consumption: {
-        quote_item_id: string;
-        spool_id: string;
-        grams?: string;
-        filament_m?: number;
-      }[],
-    ) => {
+    (consumption: Baixa[]) => {
       if (consumption.some((c) => !c.spool_id)) {
         // errorMessage extrai o detalhe do ApiError (ex.: "item sem filamento…");
         // pra Error simples (validação local) devolve a própria mensagem.
-        throw new Error("Selecione um spool para cada peça.");
+        // Rede de segurança: o botão já fica desabilitado, e a mensagem sob a
+        // tabela é que diz QUAL cor falta.
+        throw new Error("Escolha uma bobina para cada cor.");
       }
       return api<Quote>(`/quotes/${id}/transitions/produce`, {
         method: "POST",
@@ -610,18 +658,13 @@
 
   async function confirmProduce() {
     if (!quote) return;
-    const consumption = quote.items.map((it) => {
-      const a: {
-        quote_item_id: string;
-        spool_id: string;
-        grams?: string;
-        filament_m?: number;
-      } = { quote_item_id: it.id, spool_id: produceAssignments[it.id] };
-      const g = parseFloat(produceGrams[it.id] ?? "");
-      const m = parseFloat(produceMeters[it.id] ?? "");
-      if (Number.isFinite(g) && g > 0) a.grams = String(g);
-      else if (Number.isFinite(m) && m > 0) a.filament_m = m;
-      return a;
+    // Uma baixa por LINHA DE COR, cada uma nomeando a sua linha. Era aqui que
+    // o multicor não fechava: um `items.map()` mandava uma baixa por item, sem
+    // `quote_item_filament_id`, e o servidor respondia 409 sem caminho de saída
+    // pela tela.
+    const consumption = toConsumption(quote.items, produceAssignments, {
+      gramasPorLinha: produceGrams,
+      metrosPorItem: produceMeters,
     });
     const updated = await confirmProduceAction.run(consumption);
     if (updated) {
@@ -748,6 +791,28 @@
   $: txError = $transitionAction.error || $clonarAction.error;
   $: producing = $confirmProduceAction.pending;
   $: produceError = $confirmProduceAction.error;
+
+  // ---- modal de produzir: uma bobina por linha de cor ----
+  //
+  // ARMADILHA CONHECIDA DESTE PROJETO, nos dois modos. (1) A descoberta de
+  // dependências de um `$:` é uma varredura TEXTUAL do statement: valor lido de
+  // dentro de uma função chamada é invisível e o bloco nunca re-roda. Por isso
+  // `quote`, `spools`, `materials` e `produceAssignments` aparecem como
+  // ARGUMENTO em cada statement abaixo. (2) Um `$:` que re-roda e APAGA a
+  // escolha da pessoa: `produceAssignments` é estado do usuário, e
+  // `safe_not_equal` devolve `true` para qualquer objeto, então um derivado
+  // invalida sempre que a fonte invalida. As duas defesas: o portão é uma
+  // STRING (comparação de verdade) e `fillMissing` só preenche chave AUSENTE.
+  $: linhasProduzir = linhasDeCor(quote?.items ?? []);
+  $: preSelecaoProduzir = preselectSpools(linhasProduzir, spools);
+  // O portão zera com o modal fechado para que reabrir volte a pré-selecionar.
+  $: assinaturaProduzir = showProduceModal ? preselectSignature(linhasProduzir, spools) : "";
+  $: if (assinaturaProduzir !== preSelecaoAplicada) {
+    preSelecaoAplicada = assinaturaProduzir;
+    produceAssignments = fillMissing(produceAssignments, preSelecaoProduzir);
+  }
+  $: faltaBobina = missingAssignments(quote?.items ?? [], produceAssignments);
+  $: faltaRotulos = faltaBobina.map((lid) => ondeFalta(quote?.items ?? [], materials, lid));
 
   $: llmError =
     $askMarkupAction.error ||
@@ -1002,21 +1067,13 @@
                   </td>
                   <td class="mono">
                     {#if isDraft}
-                      <select
-                        class="inline"
-                        value={it.material_id ?? ""}
-                        disabled={savingField[it.id] === "material"}
-                        on:change={(e) => patchMaterial(it.id, (e.currentTarget as HTMLSelectElement).value)}
-                      >
-                        <option value="" disabled>
-                          {it.gcode_meta?.material ? `(${it.gcode_meta.material}) escolher` : "— escolher —"}
-                        </option>
-                        {#each materials as m}
-                          <option value={m.id}>
-                            {m.name} · {m.material_type}{m.color ? ` · ${m.color}` : ""}
-                          </option>
-                        {/each}
-                      </select>
+                      <FilamentLines
+                        filaments={it.filaments ?? []}
+                        {materials}
+                        gcodeMeta={it.gcode_meta}
+                        saving={savingField[it.id] === "filaments"}
+                        on:save={(e) => saveFilaments(it.id, e.detail.filaments)}
+                      />
                       <label class="mc-toggle" title="Marca quando a peça usa mais de uma cor — aplica o refugo de purga maior do material.">
                         <input
                           type="checkbox"
@@ -1040,6 +1097,18 @@
                           <span class="badge" title="Houve mais de um ciclo de produção"
                             >{consumos.length} baixas</span>
                         {/if}
+                      {:else if (it.filaments ?? []).length > 0}
+                        <span class="cores">
+                          {#each it.filaments ?? [] as f (f.id)}
+                            <span class="cor">
+                              {f.material_name}{f.material_color ? ` · ${f.material_color}` : ""}
+                              <span class="dim">
+                                {f.grams_unit ? `${fmtNum(f.grams_unit, 2)} g` : "pelo gcode"}
+                              </span>
+                            </span>
+                          {/each}
+                        </span>
+                        <span class="badge estimativa" title="Nenhuma baixa registrada ainda — estas são as cores orçadas, não as bobinas usadas.">estimativa</span>
                       {:else}
                         {it.gcode_meta?.material ?? "—"}
                         <span class="badge estimativa" title="Nenhuma baixa registrada ainda — este é o material do gcode, não a bobina usada.">estimativa</span>
@@ -1455,7 +1524,7 @@
             <button
               on:click={openProduce}
               disabled={producing || quote.items.length === 0 || (quote.pending_items ?? 0) > 0}
-              title={(quote.pending_items ?? 0) > 0 ? `Resolva ${quote.pending_items} peça(s) com material pendente antes de produzir` : "Escolha o spool de cada peça e dê baixa no estoque"}
+              title={(quote.pending_items ?? 0) > 0 ? `Resolva ${quote.pending_items} peça(s) com material pendente antes de produzir` : "Escolha a bobina de cada cor e dê baixa no estoque"}
             >
               Produzir…
             </button>
@@ -1591,42 +1660,76 @@
     <div class="modal">
       <h2>Produzir orçamento</h2>
       <p class="dim">
-        Atribua uma bobina por peça. A baixa usa o filamento informado — se o
-        gcode não trouxe a metragem, informe os <strong>metros</strong> ou direto
-        as <strong>gramas</strong> a debitar (gramas têm precedência).
+        Uma bobina por cor. As gramas de cada cor saem do orçamento — preencha o
+        campo só para debitar outro valor. Quando o gcode não trouxe a metragem,
+        informe os <strong>metros</strong> ou direto as <strong>gramas</strong>
+        (gramas têm precedência).
       </p>
       {#if produceError}<div class="alert">{produceError}</div>{/if}
       <div class="table-wrap">
         <table>
           <thead>
-            <tr><th>Peça</th><th>Material</th><th>Spool</th><th class="right">Metros</th><th class="right">Gramas</th></tr>
+            <tr>
+              <th>Peça</th>
+              <th>Cor</th>
+              <th>Bobina</th>
+              <th class="right" title="Metragem do gcode: estimativa do item inteiro, não desta cor.">
+                Metros do item
+              </th>
+              <th class="right">Gramas</th>
+            </tr>
           </thead>
           <tbody>
             {#each quote.items as it (it.id)}
-              <tr>
-                <td>{it.name}</td>
-                <td>{consideredMaterialLabel(it)}</td>
-                <td>
-                  <select
-                    value={produceAssignments[it.id] ?? ""}
-                    on:change={(e) =>
-                      (produceAssignments[it.id] = (e.currentTarget as HTMLSelectElement).value)}
-                  >
-                    <option value="">—</option>
-                    {#each spoolsForItem(it.gcode_meta?.material) as sp}
-                      <option value={sp.id}>{spoolLabel(sp)}</option>
-                    {/each}
-                  </select>
-                </td>
-                <td class="right">
-                  <input class="num" type="number" step="0.01" min="0" placeholder="m"
-                         bind:value={produceMeters[it.id]} />
-                </td>
-                <td class="right">
-                  <input class="num" type="number" step="0.01" min="0" placeholder="g"
-                         bind:value={produceGrams[it.id]} />
-                </td>
-              </tr>
+              {@const cores = it.filaments ?? []}
+              {#if cores.length === 0}
+                <tr>
+                  <td>{it.name}</td>
+                  <td colspan="4" class="dim">
+                    Sem cor definida — resolva o material desta peça antes de produzir.
+                  </td>
+                </tr>
+              {:else}
+                {#each cores as f, i (f.id)}
+                  <!-- Uma linha por cor. O nome da peça aparece uma vez, e a
+                       régua de baixo separa PEÇAS, não cores — assim um item de
+                       uma cor continua sendo exatamente uma linha, sem cabeçalho
+                       de grupo nem enfeite para o caso majoritário. -->
+                  <tr class:cor-continua={i < cores.length - 1}>
+                    <td>{i === 0 ? it.name : ""}</td>
+                    <td>{rotuloDaLinha(materials, f)}</td>
+                    <td>
+                      <select
+                        aria-label={`Bobina para ${it.name} · ${rotuloDaLinha(materials, f)}`}
+                        value={produceAssignments[f.id] ?? ""}
+                        on:change={(e) =>
+                          (produceAssignments[f.id] = (e.currentTarget as HTMLSelectElement).value)}
+                      >
+                        <option value="">—</option>
+                        {#each bobinasDaLinha(spools, materials, it, f) as sp (sp.id)}
+                          <option value={sp.id}>{spoolLabel(sp)}</option>
+                        {/each}
+                      </select>
+                    </td>
+                    <td class="right">
+                      {#if cores.length === 1}
+                        <input class="num" type="number" step="0.01" min="0" placeholder="m"
+                               aria-label={`Metros do item ${it.name}`}
+                               bind:value={produceMeters[it.id]} />
+                      {:else}
+                        <span class="dim" title="A metragem do gcode é do item inteiro e não se divide entre as cores — cada cor debita pelas suas gramas.">{DASH}</span>
+                      {/if}
+                    </td>
+                    <td class="right">
+                      <input class="num" type="number" step="0.01" min="0"
+                             placeholder={gramasPrevistas(materials, it, f)}
+                             aria-label={`Gramas a debitar de ${rotuloDaLinha(materials, f)}`}
+                             title={`Em branco debita ${gramasPrevistas(materials, it, f)} g — as gramas desta cor no orçamento, vezes a quantidade da peça.`}
+                             bind:value={produceGrams[f.id]} />
+                    </td>
+                  </tr>
+                {/each}
+              {/if}
             {/each}
             {#if quote.items.length === 0}
               <tr><td colspan="5"><div class="empty">Nenhuma peça neste orçamento</div></td></tr>
@@ -1634,11 +1737,20 @@
           </tbody>
         </table>
       </div>
+      {#if faltaBobina.length > 0}
+        <p class="falta">
+          {faltaBobina.length === 1 ? "Falta a bobina de" : "Faltam as bobinas de"}
+          {faltaRotulos.join("; ")}.
+        </p>
+      {/if}
       <div class="modal-actions">
         <button class="ghost" on:click={() => (showProduceModal = false)} disabled={producing}>
           Cancelar
         </button>
-        <button on:click={confirmProduce} disabled={producing || quote.items.length === 0}>
+        <button
+          on:click={confirmProduce}
+          disabled={producing || quote.items.length === 0 || faltaBobina.length > 0}
+        >
           {producing ? "Produzindo…" : "Confirmar produção"}
         </button>
       </div>
@@ -1771,6 +1883,20 @@
     text-transform: uppercase;
   }
   tr.pending td { background: rgba(245, 158, 11, 0.08); }
+  /* Modal de produzir: as cores de uma mesma peça ficam sem régua entre si, de
+     forma que a linha divisória separe PEÇAS. Cor transparente em vez de
+     `border: 0` para a altura da linha não mudar entre a última cor e as
+     outras — item de uma cor tem de continuar idêntico ao que era. */
+  tr.cor-continua td { border-bottom-color: transparent; }
+  /* Falta de bobina é orientação, não erro: o botão já está desabilitado e
+     ninguém errou nada ainda. Fica discreta, e nomeia a peça e a cor. */
+  .falta {
+    margin: 0 0 1rem;
+    font-size: 0.86rem;
+    color: var(--muted);
+    border-left: 2px solid var(--line-strong);
+    padding-left: 0.7rem;
+  }
   tfoot td {
     padding: 0.6rem 0.75rem;
     border-top: 1px solid var(--line-strong);
@@ -1789,8 +1915,11 @@
     margin-left: 0.3rem;
     color: var(--muted);
   }
-  /* Inline-edit table cells — fixed widths so every row aligns vertically. */
-  input.inline, select.inline {
+  /* Inline-edit table cells — fixed widths so every row aligns vertically.
+     Sem `select.inline`: o único select inline da tabela era o seletor de
+     material, que virou o componente FilamentLines — e CSS de página não
+     atravessa para dentro dele (as mesmas regras vivem lá). */
+  input.inline {
     font: inherit;
     padding: 0.2rem 0.4rem;
     border: 1px solid var(--line);
@@ -1799,12 +1928,11 @@
     height: 1.85rem;
     line-height: 1.2;
     vertical-align: middle;
+    width: 5.5rem;
   }
-  input.inline { width: 5.5rem; }
   input.inline.right { text-align: right; font-variant-numeric: tabular-nums; }
-  select.inline { width: 13rem; max-width: 100%; }
-  input.inline:focus, select.inline:focus { outline: 1px solid var(--brand); outline-offset: 1px; }
-  input.inline:disabled, select.inline:disabled { opacity: 0.55; }
+  input.inline:focus { outline: 1px solid var(--brand); outline-offset: 1px; }
+  input.inline:disabled { opacity: 0.55; }
   .unit {
     color: var(--muted);
     margin-left: 0.25rem;
@@ -1825,6 +1953,18 @@
     user-select: none;
   }
   .mc-toggle input { margin: 0; }
+  /* Lista de cores orçadas de um item já fechado (sem baixa ainda): uma
+     linha por cor, porque um item multicor não tem "o" material. */
+  .cores {
+    display: grid;
+    gap: 0.1rem;
+  }
+  .cores .cor {
+    display: flex;
+    gap: 0.4rem;
+    align-items: baseline;
+    font-size: 0.82rem;
+  }
   /* Pin column widths so input vs. plain-text rendering doesn't reflow. */
   table th:nth-child(2), table td:nth-child(2) { min-width: 14rem; }
   table th:nth-child(3), table td:nth-child(3),
