@@ -1171,12 +1171,12 @@
                         on:change={(e) => patchTime(it.id, (e.currentTarget as HTMLInputElement).value)}
                       />
                       <span class="unit">min</span>
-                      {#if (coresPorItem[it.id] ?? 0) > 0}
+                      {#if (coresPorItem[it.id] ?? 0) > 1}
                         {@const n = coresPorItem[it.id]}
                         <span
                           class="tempo-cores"
                           title="O tempo é da peça inteira: energia e depreciação contam uma vez por peça, só o filamento soma por cor."
-                          >vale para {n === 1 ? "a 1 cor" : `as ${n} cores`}</span>
+                          >vale para as {n} cores</span>
                       {/if}
                     {:else}
                       {fmtDur(it.gcode_meta?.time_s)}

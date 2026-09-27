@@ -10,6 +10,7 @@
     leaveMultiColor,
     lineCost,
     linesSignature,
+    shouldUntickAfterRemove,
     sumGrams,
     toGrams,
     toPayload,
@@ -123,6 +124,24 @@
   $: custoPeca = filamentCostPerPiece(normalizadas, materials);
   $: nCores = modoMulti ? linhas.length : 0;
 
+  // O `checked={modoMulti}` do template só é reaplicado quando `modoMulti`
+  // MUDA. Se o PATCH do flag falhar, `modoMulti` não muda e o DOM fica com o
+  // clique da pessoa (desmarcado num item que continua multicor). Quando
+  // nenhum salvamento está em voo, o DOM volta a espelhar o estado real.
+  // Só escreve no DOM do checkbox — não toca em `linhas`. A escrita fica numa
+  // função de propósito: `caixa.checked = …` direto no `$:` compila para
+  // `$.mutate(caixa, …)`, que invalida `caixa` — dependência do próprio bloco.
+  let caixa: HTMLInputElement | undefined;
+  function espelha(el: HTMLInputElement, marcado: boolean) {
+    el.checked = marcado;
+  }
+  $: if (caixa && !savingFlag && !saving) espelha(caixa, modoMulti);
+
+  // Colunas travadas: PUT da lista OU PATCH do flag em voo. Com o flag em voo,
+  // uma cor salva nesse meio-tempo teria a resposta do flag chegando depois,
+  // com a lista antiga — o resync a trocaria e o próximo save apagaria a cor.
+  $: travado = saving || savingFlag;
+
   function densidadeDe(lista: Material[], materialId: string): number {
     const m = lista.find((x) => x.id === materialId);
     const d = Number(m?.density_g_cm3);
@@ -209,7 +228,18 @@
 
   function remove(i: number) {
     // withoutIndex recusa a última linha e renumera as sobreviventes.
-    linhas = withoutIndex(linhas, i);
+    const restantes = withoutIndex(linhas, i);
+    if (shouldUntickAfterRemove(restantes, multiColor)) {
+      const norm = normaliza(restantes);
+      if (whyNotSendable(norm) === null) {
+        // Sobrou uma cor com gramas: remoção e desmarcar no MESMO PUT. Dois
+        // requests (save + PATCH do flag) podem responder fora de ordem.
+        linhas = restantes;
+        dispatch("multicolor", { next: false, filaments: toPayload(norm) });
+        return;
+      }
+    }
+    linhas = restantes;
     talvezSalvar(linhas);
   }
 </script>
@@ -235,7 +265,7 @@
           class="material"
           aria-label={`Material da cor ${i + 1}`}
           value={l.material_id}
-          disabled={saving}
+          disabled={travado}
           on:change={(e) => trocaMaterial(i, (e.currentTarget as HTMLSelectElement).value)}
         >
           <option value="" disabled>— escolher —</option>
@@ -263,7 +293,7 @@
                 ? "Vazio usa o valor do gcode, em cinza. Digitar substitui pelo medido."
                 : "Gramas por peça, valor final — purga inclusa."}
             value={l.gramasRaw}
-            disabled={saving}
+            disabled={travado}
             on:input={(e) => digitaGramas(i, (e.currentTarget as HTMLInputElement).value)}
             on:change={() => talvezSalvar(linhas)}
           />
@@ -288,7 +318,7 @@
               ? "A cor 1 é a principal da peça. Para voltar a uma cor, desmarque multicolor."
               : `Remover ${nomeDe(materials, l.material_id)}`}
           aria-label={`Remover cor ${i + 1}`}
-          disabled={saving || linhas.length === 1 || (modoMulti && i === 0)}
+          disabled={travado || linhas.length === 1 || (modoMulti && i === 0)}
           on:click={() => remove(i)}
         >
           ×
@@ -298,7 +328,7 @@
   </ul>
 
   <div class="acoes" class:multi={modoMulti}>
-    <button type="button" class="tiny ghost" disabled={saving} on:click={adiciona}>+ cor</button>
+    <button type="button" class="tiny ghost" disabled={travado} on:click={adiciona}>+ cor</button>
     {#if modoMulti}
       <span
         class="total mono"
@@ -337,12 +367,13 @@
     class="mc-toggle"
     title={modoMulti
       ? "Desmarcar volta a uma cor: fica só a cor 1."
-      : "Marque quando a peça usa mais de uma cor — abre uma linha para cada cor."}
+      : "Marque quando a peça usa mais de uma cor — abre uma linha para cada cor. Cor sem gramas digitadas passa a usar o refugo de purga maior do material."}
   >
     <input
+      bind:this={caixa}
       type="checkbox"
       checked={modoMulti}
-      disabled={savingFlag || saving}
+      disabled={travado}
       on:change={(e) => trocaMulticor(e.currentTarget as HTMLInputElement)}
     />
     <span>multicolor</span>

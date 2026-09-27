@@ -226,3 +226,15 @@ export function filamentCostPerPiece(
   }
   return total;
 }
+
+/** Depois de remover uma cor pelo `×`, o item deve sair de multicolor?
+ *
+ *  Só quando sobra UMA cor, o flag está marcado e essa cor TEM gramas. Com
+ *  gramas digitadas o refugo é zero dos dois lados, então desmarcar não mexe
+ *  em dinheiro. Sem gramas, o refugo da linha segue o flag (20% multicor vs
+ *  o de cor única) — desmarcar reprecificaria o item, e há um caso legítimo
+ *  para ficar marcado: impressão multicor da qual só se sabe o total do
+ *  gcode, orçada como uma linha sem gramas com o refugo multicor. */
+export function shouldUntickAfterRemove(restantes: readonly DraftLine[], flag: boolean): boolean {
+  return flag && restantes.length === 1 && toGrams(restantes[0].gramasRaw) !== null;
+}

@@ -9,6 +9,7 @@ import {
   leaveMultiColor,
   lineCost,
   linesSignature,
+  shouldUntickAfterRemove,
   sumGrams,
   toGrams,
   toPayload,
@@ -347,6 +348,16 @@ describe("leaveMultiColor", () => {
     expect(r).toEqual([{ material_id: "preto", gramasRaw: "12.34", position: 1 }]);
   });
 
+  it("renumera a cor que sobra para position 1", () => {
+    // Se o position não fosse reescrito, a linha sobrevivente levaria o
+    // número que tinha no rascunho — aqui 3.
+    const r = leaveMultiColor([
+      { material_id: "preto", gramasRaw: "12", position: 3 },
+      { material_id: "ouro", gramasRaw: "5", position: 4 },
+    ]);
+    expect(r.map((l) => l.position)).toEqual([1]);
+  });
+
   it("devolve a lista de uma cor sem mudança", () => {
     const uma = [{ material_id: "preto", gramasRaw: "", position: 1 }];
     expect(leaveMultiColor(uma)).toEqual(uma);
@@ -415,6 +426,11 @@ describe("lineCost / filamentCostPerPiece", () => {
     expect(lineCost({ material_id: "branco", grams_unit: 1 }, materials)).toBeCloseTo(0.12, 10);
   });
 
+  it("preço 0 é preço: custo 0, não null", () => {
+    expect(lineCost({ material_id: "gratis", grams_unit: 12 }, [{ id: "gratis", price_per_kg_ref: "0" }])).toBe(0);
+    expect(lineCost({ material_id: "gratis", grams_unit: 12 }, [{ id: "gratis", price_per_kg_ref: 0 }])).toBe(0);
+  });
+
   it("null sem gramas, sem material ou sem preço", () => {
     expect(lineCost({ material_id: "preto", grams_unit: null }, materials)).toBeNull();
     expect(lineCost({ material_id: "", grams_unit: 3 }, materials)).toBeNull();
@@ -449,5 +465,31 @@ describe("lineCost / filamentCostPerPiece", () => {
 
   it("null com lista vazia", () => {
     expect(filamentCostPerPiece([], materials)).toBeNull();
+  });
+});
+
+describe("shouldUntickAfterRemove", () => {
+  const comGramas = { material_id: "preto", gramasRaw: "12.34", position: 1 };
+  const semGramas = { material_id: "preto", gramasRaw: "", position: 1 };
+
+  it("desmarca quando sobra uma cor com gramas e o flag está marcado", () => {
+    expect(shouldUntickAfterRemove([comGramas], true)).toBe(true);
+  });
+
+  it("NÃO desmarca quando a cor que sobra não tem gramas", () => {
+    // Linha sem gramas usa o refugo do flag: multicolor → single mudaria o
+    // custo do item. E é um caso real — impressão multicor da qual só se sabe
+    // o total do gcode, orçada como uma linha sem gramas com refugo multicor.
+    expect(shouldUntickAfterRemove([semGramas], true)).toBe(false);
+  });
+
+  it("NÃO desmarca enquanto sobrar mais de uma cor", () => {
+    expect(
+      shouldUntickAfterRemove([comGramas, { material_id: "ouro", gramasRaw: "5", position: 2 }], true),
+    ).toBe(false);
+  });
+
+  it("não há o que desmarcar com o flag já desmarcado", () => {
+    expect(shouldUntickAfterRemove([comGramas], false)).toBe(false);
   });
 });
