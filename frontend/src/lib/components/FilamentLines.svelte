@@ -2,7 +2,13 @@
   import { createEventDispatcher } from "svelte";
   import {
     delta,
+    discardsOnLeave,
+    enterMultiColor,
+    filamentCostPerPiece,
     gcodeGrams,
+    isMultiColor,
+    leaveMultiColor,
+    lineCost,
     linesSignature,
     sumGrams,
     toGrams,
@@ -10,8 +16,8 @@
     whyNotSendable,
     withoutIndex,
   } from "$lib/filament-lines";
-  import type { FilamentPayload } from "$lib/filament-lines";
-  import { num as fmtNum, DASH } from "$lib/format";
+  import type { DraftLine, FilamentPayload } from "$lib/filament-lines";
+  import { money as fmtMoney, num as fmtNum, DASH } from "$lib/format";
   import type { Material, QuoteItemFilament } from "$lib/types";
 
   /** Editor das linhas de filamento de um item — uma linha por cor.
@@ -26,13 +32,27 @@
   export let gcodeMeta: Record<string, unknown> = {};
   /** PUT em voo — trava os campos para não sobrepor dois salvamentos. */
   export let saving = false;
+  /** `is_multi_color` do item, como o servidor gravou. */
+  export let multiColor = false;
+  /** PATCH do flag em voo — trava só o checkbox. */
+  export let savingFlag = false;
+  /** SAÍDA (para `bind:`): quantas cores o item tem quando está em modo
+   *  multicor, 0 fora dele. A página usa na célula de tempo ("vale para as N
+   *  cores") — e precisa ser o número do RASCUNHO, porque a 2ª linha criada
+   *  ao marcar multicolor ainda não existe no servidor. */
+  export let nCores = 0;
 
-  const dispatch = createEventDispatcher<{ save: { filaments: FilamentPayload[] } }>();
+  /** `multicolor`: a pessoa marcou/desmarcou. `filaments` vem junto só quando
+   *  desmarcar precisa apagar cores já salvas — flag e lista num PUT só. */
+  const dispatch = createEventDispatcher<{
+    save: { filaments: FilamentPayload[] };
+    multicolor: { next: boolean; filaments?: FilamentPayload[] };
+  }>();
 
   /** O rascunho guarda as gramas como o TEXTO do campo, não como número: o
    *  que a pessoa digitou é o que fica no input, sem reformatar embaixo do
    *  cursor. `toGrams` faz a leitura ("" e 0 são ausência, não zero grama). */
-  type Rascunho = { material_id: string; gramasRaw: string; position: number };
+  type Rascunho = DraftLine;
   type Normal = { material_id: string; grams_unit: number | null };
 
   function doServidor(vindas: QuoteItemFilament[]): Rascunho[] {
@@ -96,6 +116,13 @@
   // cor só, campo vazio é legítimo — significa "derive do gcode".
   $: exigeGramas = linhas.length > 1;
 
+  // Modo multicor: flag do servidor OU mais de uma linha no rascunho. Nenhum
+  // destes três escreve em `linhas` — só leem. Quem escreve em `linhas` fora
+  // de handler é apenas o resync acima, guardado pela assinatura.
+  $: modoMulti = isMultiColor(linhas, multiColor);
+  $: custoPeca = filamentCostPerPiece(normalizadas, materials);
+  $: nCores = modoMulti ? linhas.length : 0;
+
   function densidadeDe(lista: Material[], materialId: string): number {
     const m = lista.find((x) => x.id === materialId);
     const d = Number(m?.density_g_cm3);
@@ -135,6 +162,49 @@
 
   function adiciona() {
     linhas = [...linhas, { material_id: "", gramasRaw: "", position: linhas.length + 1 }];
+    // Flag e linhas andam juntos: a 2ª cor pelo "+ cor" também marca multicolor.
+    if (!multiColor) dispatch("multicolor", { next: true });
+  }
+
+  /** Marcar abre a 2ª cor na hora, em branco e só no rascunho — ela salva
+   *  quando a lista ficar válida, como qualquer cor nova. Desmarcar nunca
+   *  descarta cor preenchida sem confirmação. */
+  function trocaMulticor(el: HTMLInputElement) {
+    if (el.checked) {
+      linhas = enterMultiColor(linhas);
+      if (!multiColor) dispatch("multicolor", { next: true });
+      return;
+    }
+
+    if (discardsOnLeave(linhas)) {
+      const outras = linhas.length - 1;
+      const pergunta =
+        outras === 1
+          ? "Manter só a cor 1 e descartar a outra?"
+          : `Manter só a cor 1 e descartar as outras ${outras}?`;
+      if (!confirm(pergunta)) {
+        // Cancelou: nada muda. O `checked={modoMulti}` não reaplica um valor
+        // que não mudou, então o DOM é recolocado à mão.
+        el.checked = true;
+        return;
+      }
+    }
+
+    const mantidas = leaveMultiColor(linhas);
+    if (filaments.length > 1) {
+      // Há cores SALVAS a apagar: flag e lista vão juntos, e o rascunho não é
+      // tocado aqui — o resync aplica a lista de uma cor quando o servidor
+      // responder. Se o PUT falhar, as cores continuam na tela e no servidor,
+      // em vez de sumirem só da tela. Até lá o checkbox fica marcado.
+      const norm = normaliza(mantidas);
+      el.checked = true;
+      if (whyNotSendable(norm) !== null) return;
+      dispatch("multicolor", { next: false, filaments: toPayload(norm) });
+      return;
+    }
+    // As cores descartadas eram só rascunho: some localmente, e o flag desmarca.
+    linhas = mantidas;
+    if (multiColor) dispatch("multicolor", { next: false });
   }
 
   function remove(i: number) {
@@ -150,12 +220,17 @@
     <span class="contagem mono">{linhas.length} {linhas.length === 1 ? "cor" : "cores"}</span>
   </div>
 
-  <ul class="linhas">
+  <ul class="linhas" class:multi={modoMulti}>
     {#each linhas as l, i}
       {@const semGramas = toGrams(l.gramasRaw) === null}
       {@const precisaGramas = exigeGramas && semGramas}
-      <li class="linha">
-        <span class="ordem mono" aria-hidden="true">{i + 1}</span>
+      {@const custo = lineCost({ material_id: l.material_id, grams_unit: toGrams(l.gramasRaw) }, materials)}
+      <li class="linha" class:sub={modoMulti && i > 0}>
+        {#if modoMulti && i > 0}
+          <span class="conector mono" aria-hidden="true">└ cor {i + 1}</span>
+        {:else if !modoMulti}
+          <span class="ordem mono" aria-hidden="true">{i + 1}</span>
+        {/if}
         <select
           class="material"
           aria-label={`Material da cor ${i + 1}`}
@@ -194,14 +269,26 @@
           />
           <span class="unidade">g/peça</span>
         </span>
+        {#if modoMulti}
+          <span
+            class="custo mono"
+            title={custo === null
+              ? "Sem gramas ou sem preço do material — não dá para custear esta cor."
+              : "Filamento desta cor por peça: gramas × preço/kg do material."}
+          >
+            {custo === null ? DASH : fmtMoney(custo)}
+          </span>
+        {/if}
         <button
           type="button"
           class="tiny ghost danger remover"
           title={linhas.length === 1
             ? "Um item precisa de pelo menos uma cor"
-            : `Remover ${nomeDe(materials, l.material_id)}`}
+            : i === 0
+              ? "A cor 1 é a principal da peça. Para voltar a uma cor, desmarque multicolor."
+              : `Remover ${nomeDe(materials, l.material_id)}`}
           aria-label={`Remover cor ${i + 1}`}
-          disabled={saving || linhas.length === 1}
+          disabled={saving || linhas.length === 1 || (modoMulti && i === 0)}
           on:click={() => remove(i)}
         >
           ×
@@ -210,8 +297,16 @@
     {/each}
   </ul>
 
-  <div class="acoes">
+  <div class="acoes" class:multi={modoMulti}>
     <button type="button" class="tiny ghost" disabled={saving} on:click={adiciona}>+ cor</button>
+    {#if modoMulti}
+      <span
+        class="total mono"
+        title="Soma do filamento das cores, por peça. Tempo, energia e depreciação contam uma vez por peça e ficam de fora."
+      >
+        filamento/peça <strong>{custoPeca === null ? DASH : fmtMoney(custoPeca)}</strong>
+      </span>
+    {/if}
   </div>
 
   <div class="rodape mono">
@@ -237,6 +332,21 @@
   {:else if diferenca !== null && diferenca !== 0}
     <p class="nota">A soma não fecha com o gcode, e está salvo assim: o gcode estima, o digitado mede.</p>
   {/if}
+
+  <label
+    class="mc-toggle"
+    title={modoMulti
+      ? "Desmarcar volta a uma cor: fica só a cor 1."
+      : "Marque quando a peça usa mais de uma cor — abre uma linha para cada cor."}
+  >
+    <input
+      type="checkbox"
+      checked={modoMulti}
+      disabled={savingFlag || saving}
+      on:change={(e) => trocaMulticor(e.currentTarget as HTMLInputElement)}
+    />
+    <span>multicolor</span>
+  </label>
 </div>
 
 <style>
@@ -339,6 +449,56 @@
   }
   .acoes {
     display: flex;
+    align-items: baseline;
+  }
+  /* Modo multicor: a lista vira um bloco — cor 1 na linha do item, cores
+     2..N penduradas nela por um fio, sem repetir peça, quantidade ou tempo.
+     Cor 1 ocupa as duas primeiras colunas; as sub-linhas deixam a primeira
+     para o conector, e é esse deslocamento que as recua. */
+  .linhas.multi .linha {
+    grid-template-columns: 3.4rem minmax(6rem, 1fr) auto 4.6rem 1.7rem;
+  }
+  .linhas.multi .linha:not(.sub) .material {
+    grid-column: 1 / 3;
+  }
+  .conector {
+    font-size: 0.68rem;
+    color: var(--muted);
+    white-space: nowrap;
+    padding-left: 0.35rem;
+  }
+  .custo {
+    font-size: 0.72rem;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .acoes.multi {
+    justify-content: space-between;
+    padding-left: 3.8rem;
+  }
+  .total {
+    font-size: 0.7rem;
+    color: var(--muted);
+    white-space: nowrap;
+    padding-right: 2.1rem;
+  }
+  .total strong {
+    font-weight: 500;
+    color: var(--fg);
+  }
+  .mc-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    color: var(--muted);
+    font-size: 0.72rem;
+    cursor: pointer;
+    user-select: none;
+    justify-self: start;
+  }
+  .mc-toggle input {
+    margin: 0;
   }
   .rodape {
     display: flex;
