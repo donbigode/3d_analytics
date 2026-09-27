@@ -158,7 +158,25 @@ _PI4 = Decimal("3.14159265358979323846") / Decimal(4)
 async def _compute_orcado_real(
     session: AsyncSession, quote: Quote
 ) -> tuple[Decimal, Decimal]:
-    """Replicate the same numbers G6 shows on the dashboard."""
+    """Estimativa rápida de orçado × real, só para o painel de variância e o
+    piso de preço sugerido pela LLM — nada aqui é persistido nem aparece no
+    PDF ou no DRE.
+
+    Diverge de `compute_quote_costs` (a fonte de verdade do custo contábil) de
+    vários jeitos, de propósito ou por atraso mesmo:
+    - preça o item inteiro pelo material da linha 1 (`material_version_id`) e
+      ignora as linhas 2+ de `quote_item_filaments` — um item bicolor conta
+      como se fosse só da cor 1;
+    - deriva as gramas de `gcode_meta["filament_m"]`, nunca do
+      `grams_unit`/`filament_g` de cada linha;
+    - não aplica refugo (`waste_for_line`), manutenção nem a provisão de
+      falha que `compute_quote_costs` soma em `orcado_itens`;
+    - multiplica o filamento por `quantity`, mas NÃO multiplica energia nem
+      depreciação por `quantity` — o mesmo bug que a Spec 2026-06-17 corrigiu
+      em `compute_quote_costs` (ver comentário lá) continua aqui.
+    Trate os dois números como aproximação para orientar a LLM, não como
+    espelho do dashboard.
+    """
     settings_row = await session.get(Settings, 1) or Settings(id=1)
     items = (
         await session.execute(select(QuoteItem).where(QuoteItem.quote_id == quote.id))

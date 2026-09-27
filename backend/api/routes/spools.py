@@ -5,7 +5,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.api.deps import db_session, require_user
 from backend.api.schemas.spools import SpoolCreate, SpoolUpdate, SpoolOut
-from backend.infra.db.models import MaterialConsumption, Spool, User
+from backend.infra.db.models import MaterialConsumption, MaterialVersion, Spool, User
+from backend.infra.db.repos import material as material_repo
 
 router = APIRouter()
 
@@ -39,7 +40,26 @@ async def create_spool(payload: SpoolCreate, _: User = Depends(require_user),
                        session: AsyncSession = Depends(db_session)):
     if payload.remaining_grams > payload.initial_grams:
         raise HTTPException(400, "remaining_grams cannot exceed initial_grams")
-    s = Spool(**payload.model_dump())
+    data = payload.model_dump()
+    mv_id_raw = data.pop("material_version_id", None)
+    if mv_id_raw is not None:
+        # Enviado explicitamente: manda, sem auto-resolve — mas precisa existir.
+        try:
+            mv_id = UUID(mv_id_raw)
+        except ValueError:
+            raise HTTPException(400, "material_version_id precisa ser um UUID válido")
+        if await session.get(MaterialVersion, mv_id) is None:
+            raise HTTPException(400, "material não existe")
+        data["material_version_id"] = mv_id
+    else:
+        # Omitido: mesma regra da migração 0035 — só vincula quando o trio
+        # (material_type, color, manufacturer) casa com exatamente UMA versão
+        # corrente; caso contrário fica NULL.
+        mv = await material_repo.auto_resolve_for_spool(
+            session, payload.material_type, payload.color, payload.manufacturer
+        )
+        data["material_version_id"] = mv.id if mv else None
+    s = Spool(**data)
     session.add(s); await session.commit(); await session.refresh(s)
     return _out(s)
 
@@ -65,6 +85,18 @@ async def update_spool(spool_id: UUID, payload: SpoolUpdate, _: User = Depends(r
     new_remaining = updates.get("remaining_grams", s.remaining_grams)
     if new_remaining > new_initial:
         raise HTTPException(400, "remaining_grams cannot exceed initial_grams")
+    if "material_version_id" in updates:
+        raw = updates["material_version_id"]
+        if raw is None:
+            updates["material_version_id"] = None
+        else:
+            try:
+                mv_id = UUID(raw)
+            except ValueError:
+                raise HTTPException(400, "material_version_id precisa ser um UUID válido")
+            if await session.get(MaterialVersion, mv_id) is None:
+                raise HTTPException(400, "material não existe")
+            updates["material_version_id"] = mv_id
     for k, v in updates.items():
         setattr(s, k, v)
     await session.commit(); await session.refresh(s)

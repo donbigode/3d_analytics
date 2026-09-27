@@ -291,3 +291,83 @@ async def test_bobina_de_material_divergente_avisa_e_conclui(auth_client, caplog
     async with session_module.SessionFactory() as s:
         sp_depois = await s.get(Spool, sp.id)
     assert sp_depois.remaining_grams < Decimal("1000")
+
+
+@pytest.mark.asyncio
+async def test_duas_cores_falha_e_reproducao_separam_quatro_consumos(auth_client):
+    """O caso que motiva `quote_item_filament_id` existir: duas cores no
+    mesmo item, produzido, falho, produzido de novo — 4 linhas de
+    MaterialConsumption (2 cores × 2 tentativas).
+
+    Nem `filament_id` sozinho nem `consumed_at` sozinho separam as 4: as
+    duas linhas de uma MESMA tentativa (mesmo commit) compartilham
+    `consumed_at` — só `filament_id` as distingue. As duas linhas de uma
+    MESMA cor, em tentativas diferentes, compartilham `filament_id` — só
+    `consumed_at` as distingue. É a combinação das duas dimensões que separa
+    as 4 linhas.
+    """
+    mv_a = await _material("PLA Preto", "Preto", "1.24")
+    mv_b = await _material("PLA Dourado", "Dourado", "1.24")
+    q, it, fil_a, fil_b = await _quote_multicor_aprovado(
+        mv_a, mv_b, quantity=1, grams_unit_a="10", grams_unit_b="8",
+    )
+    sp_a = await _spool(material_version_id=mv_a.id, remaining="1000")
+    sp_b = await _spool(material_version_id=mv_b.id, remaining="1000")
+
+    consumo = [
+        {"quote_item_id": str(it.id), "spool_id": str(sp_a.id),
+         "quote_item_filament_id": str(fil_a.id)},
+        {"quote_item_id": str(it.id), "spool_id": str(sp_b.id),
+         "quote_item_filament_id": str(fil_b.id)},
+    ]
+
+    # 1ª tentativa: produz, depois falha.
+    r = await auth_client.post(f"/quotes/{q.id}/transitions/produce",
+                               json={"consumption": consumo})
+    assert r.status_code == 200, r.text
+    r = await auth_client.post(f"/quotes/{q.id}/transitions/fail",
+                               json={"failure_description": "entupiu o bico"})
+    assert r.status_code == 200, r.text
+
+    # 2ª tentativa: falhou → em_producao de novo, debitando as MESMAS duas
+    # bobinas pelas MESMAS duas linhas.
+    r = await auth_client.post(f"/quotes/{q.id}/transitions/produce",
+                               json={"consumption": consumo})
+    assert r.status_code == 200, r.text
+
+    item = (await auth_client.get(f"/quotes/{q.id}")).json()["items"][0]
+    consumos = item["consumptions"]
+    assert len(consumos) == 4, f"esperava 4 linhas de consumo, veio {len(consumos)}"
+
+    por_filamento: dict[str, list[str]] = {}
+    for c in consumos:
+        por_filamento.setdefault(c["filament_id"], []).append(c["consumed_at"])
+
+    # Dimensão 1: filament_id separa as duas cores — 2 grupos, cada um com
+    # as 2 tentativas daquela cor.
+    assert set(por_filamento) == {str(fil_a.id), str(fil_b.id)}, (
+        "as 4 linhas não se separaram por cor (filament_id)"
+    )
+    for fid, timestamps in por_filamento.items():
+        assert len(timestamps) == 2, (
+            f"cor {fid} devia ter 2 consumos (1 por tentativa), tem {len(timestamps)}"
+        )
+        # Dimensão 2: dentro da MESMA cor, consumed_at separa as tentativas —
+        # se as duas tentativas colidissem no mesmo timestamp, filament_id
+        # sozinho não bastaria para saber qual consumo é de qual tentativa.
+        assert len(set(timestamps)) == 2, (
+            f"cor {fid}: as duas tentativas gravaram o MESMO consumed_at — "
+            "impossível separar tentativa 1 de tentativa 2 só por essa cor"
+        )
+
+    # E o inverso: consumed_at SOZINHO não separa a cor — as duas cores da
+    # MESMA tentativa (mesmo commit) compartilham o timestamp da transação.
+    tentativa_1_ts = por_filamento[str(fil_a.id)][0]
+    cores_na_tentativa_1 = sorted(
+        c["filament_id"] for c in consumos if c["consumed_at"] == tentativa_1_ts
+    )
+    assert cores_na_tentativa_1 == sorted([str(fil_a.id), str(fil_b.id)]), (
+        "consumed_at sozinho já deveria juntar as duas cores da mesma "
+        "tentativa — se não juntou, o timestamp não é por-transação como "
+        "o teste assume, e a prova de que precisa das duas dimensões cai"
+    )

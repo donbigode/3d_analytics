@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.api.deps import db_session, require_user
 from backend.api.schemas.materials import MaterialCreate, MaterialOut, MaterialUpdate
-from backend.infra.db.models import MaterialVersion, QuoteItem, User
+from backend.infra.db.models import MaterialVersion, QuoteItem, QuoteItemFilament, User
 from backend.infra.db.repos import material as repo
 
 router = APIRouter()
@@ -108,8 +108,16 @@ async def delete_material(
     if not versions:
         raise HTTPException(404)
     version_ids = [v.id for v in versions]
+    # Cobrir as DUAS tabelas que guardam material_version_id como FK NOT NULL
+    # sem cascade: QuoteItem (a linha 1, derivada) e QuoteItemFilament (linha
+    # 1 em diante). Um material usado só como cor 2+ não aparece em QuoteItem
+    # — checar só ali deixava o hard-delete seguir e estourar violação de FK
+    # (500) em vez do 409 que este endpoint promete.
     in_use = await session.scalar(
-        select(exists().where(QuoteItem.material_version_id.in_(version_ids)))
+        select(
+            exists().where(QuoteItem.material_version_id.in_(version_ids))
+            | exists().where(QuoteItemFilament.material_version_id.in_(version_ids))
+        )
     )
     if in_use:
         raise HTTPException(409, "material has been referenced; cannot hard-delete")

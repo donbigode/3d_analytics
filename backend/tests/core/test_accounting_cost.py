@@ -139,10 +139,16 @@ async def test_cpv_concorda_com_o_pricing_no_mesmo_item():
     compara os dois diretamente, com quantidade > 1 para que a assimetria de
     escala apareça.
 
-    Compara só filamento de catálogo + energia + depreciação: o pricing ainda
-    aplica `failure_pct` e `maintenance_cost`, que o contábil não aplica. Essa
-    diferença é decisão de produto em aberto (provisão de falha não é custo
-    realizado), não bug — e está documentada nos achados pendentes.
+    Compara só filamento de catálogo + energia + depreciação, com
+    `failure_pct` e `printer_maintenance_per_hour` ZERADOS nos dois motores —
+    não porque o contábil deixe de aplicar esses termos (ele aplica: ambos
+    entram em `orcado_itens`/`cost_orcado`, igual ao pricing, desde que a task
+    de refugo/manutenção fechou essa lacuna). É para isolar a concordância dos
+    três termos de base sem arrastar a lógica de provisão de falha e
+    manutenção para esta asserção — essa concordância já tem teste próprio
+    (`test_total_da_venda_bate_com_o_total_do_pdf`, com os dois NÃO-zero) e o
+    isolamento de `cpv` (que nunca leva manutenção nem provisão) tem o dele
+    (`test_cpv_nao_ganha_manutencao_nem_provisao_de_falha`).
     """
     from backend.core.pricing.quote import FilamentLine, ItemInput, compute_item_cost
 

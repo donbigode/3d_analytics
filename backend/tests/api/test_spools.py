@@ -125,8 +125,9 @@ async def test_spool_out_exposes_material_version_id(auth_client):
     from backend.infra.db import session as session_module
     from backend.infra.db.models import MaterialVersion, Spool
 
-    # O vínculo não é criável pela API (não está em SpoolCreate): quem o
-    # preenche é a migração 0035. Então o fixture grava direto.
+    # Grava direto no banco (não pela API) para controlar exatamente qual
+    # spool fica vinculada e qual não, sem depender do auto-resolve de
+    # `POST /spools` — esse caminho tem teste próprio logo abaixo.
     async with session_module.SessionFactory() as s:
         mv = MaterialVersion(
             material_type="PLA", name="PLA Preto", color="Preto", manufacturer="ACME",
@@ -161,3 +162,82 @@ async def test_spool_out_exposes_material_version_id(auth_client):
     por_id = {s["id"]: s for s in (await auth_client.get("/spools")).json()}
     assert por_id[com_id]["material_version_id"] == mv_id
     assert por_id[sem_id]["material_version_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_spool_criada_com_trio_unico_e_auto_vinculada(auth_client):
+    """`POST /spools` sem `material_version_id`: casamento único de
+    (material_type, color, manufacturer) contra a versão CORRENTE vincula
+    sozinho — mesma regra da migração 0035, agora no caminho de escrita.
+    """
+    r = await auth_client.post("/materials", json={
+        "material_type": "PLA", "name": "PLA Preto ACME",
+        "manufacturer": "ACME", "color": "Preto",
+        "density_g_cm3": "1.24", "price_per_kg_ref": "100",
+    })
+    assert r.status_code == 201, r.text
+    mv_id = r.json()["id"]
+
+    r = await auth_client.post("/spools", json={
+        "material_type": "PLA", "manufacturer": "ACME", "color": "Preto",
+        "purchased_at": "2026-06-01T00:00:00Z",
+        "purchased_price": "100", "initial_grams": "1000", "remaining_grams": "1000",
+    })
+    assert r.status_code == 201, r.text
+    assert r.json()["material_version_id"] == mv_id
+
+
+@pytest.mark.asyncio
+async def test_spool_criada_com_trio_ambiguo_fica_sem_vinculo(auth_client):
+    """Dois materiais correntes casam o mesmo trio (type/color/manufacturer)
+    — escolher um dos dois seria vincular a bobina ao produto errado, então
+    o auto-resolve deixa `material_version_id` NULL, igual à migração 0035.
+    """
+    for nome in ("PLA Preto ACME v1", "PLA Preto ACME v2"):
+        r = await auth_client.post("/materials", json={
+            "material_type": "PLA", "name": nome,
+            "manufacturer": "ACME", "color": "Preto",
+            "density_g_cm3": "1.24", "price_per_kg_ref": "100",
+        })
+        assert r.status_code == 201, r.text
+
+    r = await auth_client.post("/spools", json={
+        "material_type": "PLA", "manufacturer": "ACME", "color": "Preto",
+        "purchased_at": "2026-06-01T00:00:00Z",
+        "purchased_price": "100", "initial_grams": "1000", "remaining_grams": "1000",
+    })
+    assert r.status_code == 201, r.text
+    assert r.json()["material_version_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_spool_com_material_version_id_explicito_nao_e_sobrescrito(auth_client):
+    """Um `material_version_id` explícito no POST manda, mesmo quando o
+    trio (type/color/manufacturer) da bobina casaria com outro material via
+    auto-resolve — enviado explicitamente nunca é sobrescrito.
+    """
+    r = await auth_client.post("/materials", json={
+        "material_type": "PLA", "name": "PLA Preto Auto-resolveria",
+        "manufacturer": "ACME", "color": "Preto",
+        "density_g_cm3": "1.24", "price_per_kg_ref": "100",
+    })
+    assert r.status_code == 201, r.text
+    mv_auto_id = r.json()["id"]
+
+    r = await auth_client.post("/materials", json={
+        "material_type": "PETG", "name": "PETG explícito",
+        "manufacturer": "Voolt", "color": "Azul",
+        "density_g_cm3": "1.27", "price_per_kg_ref": "150",
+    })
+    assert r.status_code == 201, r.text
+    mv_explicito_id = r.json()["id"]
+
+    r = await auth_client.post("/spools", json={
+        "material_type": "PLA", "manufacturer": "ACME", "color": "Preto",
+        "purchased_at": "2026-06-01T00:00:00Z",
+        "purchased_price": "100", "initial_grams": "1000", "remaining_grams": "1000",
+        "material_version_id": mv_explicito_id,
+    })
+    assert r.status_code == 201, r.text
+    assert r.json()["material_version_id"] == mv_explicito_id
+    assert r.json()["material_version_id"] != mv_auto_id

@@ -1,8 +1,8 @@
 from backend.infra.db.models import (
     Asset, CalibrationInsight, Client, DataSourceRun, Expense, KeywordIdea,
     KeywordObservation, LLMDigest, LLMSuggestion, MaterialConsumption, MaterialVersion,
-    Person, ProductionEvent, ProductionSuggestion, Quote, QuoteItem, QuotePerson,
-    QuoteService, Sale, Service, Spool, User, WatcherInboxFile,
+    Person, ProductionEvent, ProductionSuggestion, Quote, QuoteItem, QuoteItemFilament,
+    QuotePerson, QuoteService, Sale, Service, Spool, User, WatcherInboxFile,
 )
 
 # (nome no destino, model, colunas excluídas). Segredos (settings, export_config)
@@ -10,6 +10,11 @@ from backend.infra.db.models import (
 EXPORT_ENTITIES: list[tuple[str, type, set[str]]] = [
     ("quotes", Quote, set()),
     ("quote_items", QuoteItem, set()),
+    # Logo depois de quote_items, em ordem de dependência: cada linha aponta
+    # para um quote_item. Sem esta entrada o repositório de analytics nunca
+    # recebe as linhas de cor por item — só as duas colunas derivadas em
+    # quote_items, que `columns_for` já lê sozinho.
+    ("quote_item_filaments", QuoteItemFilament, set()),
     ("quote_services", QuoteService, set()),
     ("people", Person, set()),
     ("quote_people", QuotePerson, set()),
