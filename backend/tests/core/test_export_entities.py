@@ -7,6 +7,16 @@ def test_people_entities_exported():
     assert "quote_people" in names
 
 
+def test_quote_item_filaments_exportada():
+    """A tabela nova do multicor precisa estar na lista, senão o repositório
+    de analytics nunca recebe as linhas de cor por item — só invisível porque
+    as DUAS colunas derivadas em quote_items (`material_version_id`,
+    `is_multi_color`) continuam fluindo sozinhas via `columns_for`.
+    """
+    names = {name for name, _m, _ex in EXPORT_ENTITIES}
+    assert "quote_item_filaments" in names
+
+
 def test_secrets_excluded_and_users_has_no_hash():
     names = {name for name, _model, _ex in EXPORT_ENTITIES}
     assert "settings" not in names

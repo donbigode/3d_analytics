@@ -530,6 +530,57 @@ async def test_remover_a_linha_do_meio_renumera(auth_client):
 
 
 @pytest.mark.asyncio
+async def test_trocar_a_linha_1_via_filaments_atualiza_o_derivado(auth_client):
+    """`quote_items.material_version_id` é derivado da linha 1 — inclusive no
+    caminho `filaments`, não só nos atalhos `material_id`/`material_code`.
+
+    Este é o caminho que a feature inteira usa (a tela sempre manda a lista
+    inteira). Um PUT que troca o material da linha 1 tem que mover o
+    derivado junto — é ele que a exportação para o repositório de analytics
+    lê como "a cor do item".
+    """
+    mv_a = await _material("PLA A", "100", "A-408")
+    mv_b = await _material("PLA B", "100", "B-408")
+    mv_c = await _material("PLA C", "100", "C-408")
+    q = await _quote_com_item_multicor(mv_a, mv_b, quantity=1)
+    r0 = await auth_client.get(f"/quotes/{q.id}")
+    item_id = r0.json()["items"][0]["id"]
+
+    r = await auth_client.put(f"/quotes/{q.id}/items/{item_id}", json={"filaments": [
+        {"material_id": str(mv_c.id), "grams_unit": "10"},
+        {"material_id": str(mv_b.id), "grams_unit": "5"},
+    ]})
+    assert r.status_code == 200, r.text
+    item = [i for i in r.json()["items"] if i["id"] == item_id][0]
+    assert item["material_id"] == str(mv_c.id), (
+        "material_id não acompanhou a troca da linha 1 pelo caminho filaments"
+    )
+
+
+@pytest.mark.asyncio
+async def test_remover_a_linha_1_via_filaments_atualiza_o_derivado(auth_client):
+    """Remover a linha 1 (mandando a lista a partir da antiga linha 2) tem
+    que promover o novo primeiro material a `material_version_id` do item —
+    o mesmo derivado que `test_remover_a_linha_do_meio_renumera` não cobre,
+    porque lá a linha 1 nunca muda.
+    """
+    mv_a = await _material("PLA A", "100", "A-409")
+    mv_b = await _material("PLA B", "100", "B-409")
+    q = await _quote_com_item_multicor(mv_a, mv_b, quantity=1)
+    r0 = await auth_client.get(f"/quotes/{q.id}")
+    item_id = r0.json()["items"][0]["id"]
+
+    r = await auth_client.put(f"/quotes/{q.id}/items/{item_id}", json={"filaments": [
+        {"material_id": str(mv_b.id), "grams_unit": "8"},
+    ]})
+    assert r.status_code == 200, r.text
+    item = [i for i in r.json()["items"] if i["id"] == item_id][0]
+    assert item["material_id"] == str(mv_b.id), (
+        "material_id não foi promovido depois de remover a antiga linha 1"
+    )
+
+
+@pytest.mark.asyncio
 async def test_item_novo_ja_nasce_com_a_linha_1(auth_client):
     """add_item resolve o material e precisa criar a linha, senão o item nasce
     violando a invariante 1 e não orça."""
