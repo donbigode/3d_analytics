@@ -229,6 +229,12 @@ async def update_item(
         meta = dict(it.gcode_meta or {})
         meta["material"] = mvs[0].material_type
         it.gcode_meta = meta
+        # Mais de uma cor ⇒ multicolor. Numa direção SÓ: uma lista de uma
+        # linha não desmarca, porque item antigo de uma cor marcado multicolor
+        # usa `multi_color_waste_pct` na linha sem gramas, e desmarcar por
+        # efeito colateral reprecificaria o histórico. Quem desmarca é a pessoa.
+        if len(novas) > 1:
+            it.is_multi_color = True
 
     if payload.material_id is not None:
         try:
