@@ -15,7 +15,10 @@ from backend.infra.db.models import (
 
 @dataclass
 class QuoteCosts:
-    catalog_filament: Decimal  # filamento de catálogo (gcode × densidade × preço-ref)
+    # Filamento de catálogo (gcode × densidade × preço-ref), só informativo —
+    # derivado de fil_peca × qty, não soma em cost_orcado (quem alimenta o
+    # preço é orcado_itens, via fil_peca).
+    catalog_filament: Decimal
     real_filament: Decimal     # filamento real consumido (snapshots)
     energy: Decimal
     depreciation: Decimal
@@ -110,7 +113,17 @@ async def compute_quote_costs(session: AsyncSession, quote, settings_row: Settin
                 fil.grams_unit, it.gcode_meta, mv_line.density_g_cm3, waste
             )
             fil_peca += filament_cost(gramas_unit, mv_line.price_per_kg_ref)
-            catalog_filament += filament_cost(gramas_unit * qty, mv_line.price_per_kg_ref)
+        # `catalog_filament` é derivado de `fil_peca`, não um segundo
+        # acumulador por linha: antes deste branch os dois só concordavam
+        # porque `filament_cost` é linear e sem quantize (gramas_unit × qty ×
+        # preço == (gramas_unit × preço) × qty, bit a bit). Um quantize
+        # futuro em `filament_cost` faria os dois divergir em silêncio, com
+        # só o campo coberto por teste (`catalog_filament`) mudando. Derivar
+        # fecha essa fonte de divergência em vez de só documentá-la —
+        # `catalog_filament` não alimenta `cost_orcado` (isso é `fil_peca` via
+        # `orcado_itens`), é só o total de filamento de catálogo exibido à
+        # parte.
+        catalog_filament += fil_peca * qty
 
         # time_s e filament_m saem do MESMO cabeçalho de gcode e descrevem UMA
         # peça — a spec 2026-06-17-contabil-fato-itens declara `filament_m` como

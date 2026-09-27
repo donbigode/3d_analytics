@@ -50,6 +50,39 @@ async def auto_resolve_for_gcode(
     return None
 
 
+async def auto_resolve_for_spool(
+    session: AsyncSession,
+    material_type: str,
+    color: str | None,
+    manufacturer: str | None,
+) -> MaterialVersion | None:
+    """Pick a current MaterialVersion to link a freshly-registered spool to.
+
+    Mirrors the rule migration 0035 used to backfill `spools.material_version_id`:
+    the CURRENT row whose (material_type, color, manufacturer) trio matches the
+    spool's, with NULL color/manufacturer compared as an exact value (IS NOT
+    DISTINCT FROM), not a wildcard. Returns None — leaving the spool unlinked,
+    same as the migration — when there's no match or more than one; guessing
+    would link the spool to the wrong product.
+    """
+    res = await session.execute(
+        select(MaterialVersion).where(
+            MaterialVersion.is_current.is_(True),
+            MaterialVersion.material_type == material_type,
+            MaterialVersion.color.is_(color)
+            if color is None
+            else MaterialVersion.color == color,
+            MaterialVersion.manufacturer.is_(manufacturer)
+            if manufacturer is None
+            else MaterialVersion.manufacturer == manufacturer,
+        )
+    )
+    matches = list(res.scalars())
+    if len(matches) == 1:
+        return matches[0]
+    return None
+
+
 async def list_current(session: AsyncSession) -> list[MaterialVersion]:
     res = await session.execute(
         select(MaterialVersion)

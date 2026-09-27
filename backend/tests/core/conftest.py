@@ -10,6 +10,7 @@ they need isolation. This mirrors backend/tests/api/conftest.py:
 
 from __future__ import annotations
 
+import logging
 import sys
 
 import pytest
@@ -71,7 +72,12 @@ async def _isolated_engine_core(test_database_url):
                     await s.execute(table.delete())
                 await s.commit()
         except Exception:
-            pass
+            # Nunca engolir em silêncio: uma falha aqui deixa linhas de um
+            # teste vazarem pro próximo (ex.: Settings, mergeado sem resetar
+            # colunas não-enviadas) — melhor um stack trace no log do que uma
+            # tarde perdida caçando um teste "flaky" que na verdade herdou
+            # estado do anterior.
+            logging.exception("falha na limpeza de tabelas do conftest core")
         await engine.dispose()
         for mod, attr, original in patched:
             setattr(mod, attr, original)

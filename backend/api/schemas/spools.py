@@ -16,6 +16,11 @@ class SpoolCreate(BaseModel):
     remaining_grams: Decimal
     status: SpoolStatus = SpoolStatus.OPEN
     notes: str | None = None
+    # Opcional: quando omitido, a rota tenta auto-resolver pela mesma regra da
+    # migração 0035 (material_type + color + manufacturer, versão CORRENTE e
+    # única). Quando enviado, este valor manda — nunca é sobrescrito pelo
+    # auto-resolve.
+    material_version_id: str | None = None
 
 
 class SpoolUpdate(BaseModel):
@@ -30,6 +35,7 @@ class SpoolUpdate(BaseModel):
     remaining_grams: Decimal | None = None
     status: SpoolStatus | None = None
     notes: str | None = None
+    material_version_id: str | None = None
 
 
 class SpoolOut(BaseModel):
