@@ -55,6 +55,11 @@ export type SpoolStatus = "open" | "empty" | "discarded";
 
 export type Spool = {
   id: string;
+  // Qual produto (MaterialVersion) está no rolo. IDENTIDADE, não preço: é o
+  // que a tela de produzir usa para pré-selecionar a bobina da cor de cada
+  // linha. `null` é normal — o backfill da migração 0035 só vinculou o que
+  // casou com certeza.
+  material_version_id: string | null;
   material_type: string;
   color: string | null;
   manufacturer: string | null;
