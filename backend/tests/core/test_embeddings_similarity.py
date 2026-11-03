@@ -21,3 +21,17 @@ def test_zero_vector_defensive():
 
 def test_length_mismatch_defensive():
     assert cosine_similarity([1.0], [1.0, 0.0]) == 0.0
+
+
+def test_embed_raises_unavailable_without_sentence_transformers(monkeypatch):
+    import asyncio
+    import sys
+
+    import pytest
+
+    from backend.core.trends import embeddings as E
+
+    monkeypatch.setitem(sys.modules, "sentence_transformers", None)
+    monkeypatch.setattr(E, "_model", None)
+    with pytest.raises(E.EmbeddingsUnavailable):
+        asyncio.run(E.embed(["warping"]))

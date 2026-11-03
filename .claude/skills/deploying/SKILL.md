@@ -8,8 +8,13 @@ description: Use when shipping/subindo a change to production for 3d_analytics, 
 ## Overview
 
 Prod is a single **AWS Lightsail** box running `docker-compose.prod.yml` behind **Caddy**.
-A push to `main` triggers `.github/workflows/deploy.yml`, which SSHes to the server and runs
-`/opt/3d-analytics/deploy/deploy.sh` (git pull → build `api`+`frontend` → `alembic upgrade head` → `up -d` → prune).
+A push to `main` triggers `.github/workflows/deploy.yml` in two jobs:
+1. **build** (GitHub runner): builds `api` + `frontend` for `linux/amd64` and pushes to GHCR as
+   `ghcr.io/donbigode/3d_analytics-{api,frontend}:<sha>` and `:latest`.
+2. **deploy**: SSHes to the server, `git pull`s, then runs `/opt/3d-analytics/deploy/deploy.sh`
+   (ghcr login → `compose pull` → `alembic upgrade head` → `up -d` → logout → prune).
+
+**The server never builds.** It's a `nano_3_0` (512 MB) after the micro → nano migration (`infra/README.md`).
 
 **Core flow:** branch → PR → merge to `main` → deploy auto-fires → watch run → verify conclusion.
 
@@ -51,15 +56,19 @@ gh workflow run deploy.yml ; gh run list --workflow=deploy.yml --limit 1
 - Caddy routes **`/api/*` → `api:8000`** (strips `/api`); everything else is the SPA.
 - The SPA is served from a **named volume `frontend_build`**. Docker only seeds a named volume when empty, so the frontend image's `CMD` **wipes and recopies** `/build → /srv/frontend` on every container start. ⇒ a deploy that **recreates the frontend container** publishes the new bundle. Look for `Container 3d-analytics-frontend-1 Recreated/Started` in the run log.
 - `frontend.url` in the app uses `/api/...`; tests/curl on the server hit `api:8000/...` directly (no `/api`).
-- **Imagem da api: ~5 GB, e tem que continuar assim.** `sentence-transformers` arrasta `torch`, e o wheel default do PyPI vem com a stack CUDA inteira (3,3 GB de `nvidia/*` + 817 MB de `triton`) que nunca executa — a caixa não tem GPU. O `Dockerfile` instala torch do índice CPU (`--index-url https://download.pytorch.org/whl/cpu`) antes do install principal, e tem um `RUN test ! -d .../site-packages/nvidia` que **quebra o build** se a stack voltar. Se um dia o build falhar nessa linha, não remova a guarda: descubra qual bump reinstalou torch pelo PyPI.
-- Produção não instala os extras `[dev]`: `docker-compose.prod.yml` passa `EXTRAS: ""`. O default do `Dockerfile` é `[dev]`, que é o que o `docker-compose.yml` local usa pra `pytest`/`ruff`.
+- **Produção é só CRUD: sem `[dev]` e sem `[ai]`.** `EXTRAS=""` em dois lugares que precisam andar juntos: `build-args` no `deploy.yml` (é o que vale) e `args` no `docker-compose.prod.yml` (plano B de build na caixa). O default do `Dockerfile` é `[dev,ai]`, que é o que o `docker-compose.yml` local usa pra `pytest`/`ruff`.
+- Sem `[ai]`, não há torch/sentence-transformers nem SDKs de LLM: `factory.py` pula providers cujo SDK falta (cai no "nenhum provider configurado") e `embeddings.py` levanta `EmbeddingsUnavailable`. Features de LLM/trends-sugestões respondem como "sem provider" — esperado, não bug.
+- Com `[ai]` (dev), torch vem do índice CPU e o `RUN test ! -d .../site-packages/nvidia` **quebra o build** se a stack CUDA voltar. Se falhar nessa linha, não remova a guarda: descubra qual bump reinstalou torch pelo PyPI.
+- Pacotes GHCR ligados ao repo pela label `org.opencontainers.image.source`; o deploy faz pull com o `GITHUB_TOKEN` efêmero do job. Pra rodar `deploy.sh` à mão com pacote privado, passe `GHCR_USER`/`GHCR_TOKEN` (PAT com `read:packages`).
 - **Um deploy por vez** (`concurrency: deploy-prod`, `cancel-in-progress: false`). Dois merges próximos enfileiram em vez de rodar juntos. Se você mergear dois PRs seguidos, o segundo run fica `queued` até o primeiro terminar — isso é o desenho, não travamento. Nunca mude para `cancel-in-progress: true`: cancelar no meio deixa a caixa com imagem nova construída, containers na versão velha e migração talvez aplicada.
 
 ## Common failures & fixes
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| Run fails: `no space left on device` while building | Lightsail disk full | **Já mitigado**: `deploy.sh` libera disco *antes* de construir (build cache capado em 4GB + `image prune -af`) e imprime `df -h` em três pontos do log. Se ainda acontecer, ler os `df -h` do run pra ver o que cresceu; só então SSH + `docker system prune -af` (**sem** `--volumes`: `frontend_build`/`caddy_data` são volumes nomeados) |
+| Run fails: `no space left on device` | Lightsail disk full | Raro desde que o build saiu da caixa (imagem da api só-CRUD é pequena). `deploy.sh` faz `image prune -af` + `builder prune -af` depois do `up` e imprime `df -h`. Se acontecer: SSH + `docker system prune -af` (**sem** `--volumes`: `frontend_build`/`caddy_data` são volumes nomeados) |
+| `deploy` job: `denied`/`unauthorized` no pull | Pacote GHCR não ligado ao repo | Conferir a label `org.opencontainers.image.source` no job `build`, ou em GitHub → Packages → o pacote → *Manage Actions access* adicionar o repo |
+| Container `api` em crashloop logo após deploy com `ModuleNotFoundError` | Import de lib do `[ai]` fora de import lazy | O import sweep do `Dockerfile` deveria pegar no build; mover o import pra dentro da função e tratar `ImportError` |
 | Run = success but change **"não apareceu"** | Your **browser** cached the old SPA (server is fresh) | Hard refresh **Cmd/Ctrl+Shift+R** or incognito |
 | A list shows nothing | **Empty state**, no seed (e.g. people) | Add data in the UI — not a bug |
 | Segundo deploy fica `queued` por minutos | `concurrency: deploy-prod` enfileirando — esperado após dois merges seguidos | Esperar. Conferir com `gh run list --workflow=deploy.yml --limit 3` |
@@ -86,10 +95,10 @@ Run multiline `python -c` as a **single line** over SSH — pasted indentation c
 
 - `alembic current` = head **and** frontend grep ≥ 1 ⇒ prod is up to date → it's **browser cache** or **empty state**, not a deploy problem.
 - frontend grep = 0 ⇒ the new SPA isn't served → re-deploy (and check the run recreated the frontend container).
-- route = 404 ⇒ backend image is stale → re-deploy / check the build step.
+- route = 404 ⇒ backend image is stale → re-deploy / check the `build` job pushed `:<sha>` (`docker compose -f docker-compose.prod.yml images` on the box shows the tag in use).
 
 ## Notes
 
 - Each change has been: small branch → PR → squash-less `--merge` → watch → verify. Keep that cadence.
-- The deploy image build is slow (~6 min on Lightsail's disk); `command_timeout` is set to 30m in the workflow.
+- Build runs on the GitHub runner with `type=gha` layer cache; the SSH step only pulls, so `command_timeout` is 10m.
 - This is a **project runbook**, not a discipline skill — update it whenever the prod topology or deploy script changes.

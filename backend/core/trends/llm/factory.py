@@ -1,7 +1,11 @@
 """Pick the right LLM provider based on Settings."""
 from __future__ import annotations
 
+import logging
+
 from backend.core.trends.llm.base import LLMProvider
+
+logger = logging.getLogger(__name__)
 
 ALL_PROVIDERS = ("anthropic", "gemini", "openai")
 
@@ -13,18 +17,28 @@ def _make(
     gemini_key: str | None,
     openai_key: str | None,
 ) -> LLMProvider | None:
-    if name == "anthropic" and anthropic_key:
-        from backend.core.trends.llm.anthropic_provider import AnthropicProvider
+    """Build one provider, or None if it has no key or its SDK isn't installed.
 
-        return AnthropicProvider(api_key=anthropic_key)
-    if name == "gemini" and gemini_key:
-        from backend.core.trends.llm.gemini_provider import GeminiProvider
+    Production installs without the ``ai`` extra (pyproject.toml), so a key
+    saved in /config may point at an SDK that isn't there. Skipping it lets
+    every caller fall into its existing "no provider configured" path instead
+    of a 500.
+    """
+    try:
+        if name == "anthropic" and anthropic_key:
+            from backend.core.trends.llm.anthropic_provider import AnthropicProvider
 
-        return GeminiProvider(api_key=gemini_key)
-    if name == "openai" and openai_key:
-        from backend.core.trends.llm.openai_provider import OpenAIProvider
+            return AnthropicProvider(api_key=anthropic_key)
+        if name == "gemini" and gemini_key:
+            from backend.core.trends.llm.gemini_provider import GeminiProvider
 
-        return OpenAIProvider(api_key=openai_key)
+            return GeminiProvider(api_key=gemini_key)
+        if name == "openai" and openai_key:
+            from backend.core.trends.llm.openai_provider import OpenAIProvider
+
+            return OpenAIProvider(api_key=openai_key)
+    except ImportError as e:
+        logger.warning("LLM provider %s skipped: SDK not installed (%s)", name, e)
     return None
 
 

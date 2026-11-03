@@ -23,11 +23,16 @@ services:
     restart: unless-stopped
 
   api:
+    # Imagem construída no GitHub Actions (deploy.yml) e baixada do GHCR; o
+    # servidor não compila nada. IMAGE_TAG = sha do commit, vindo do deploy.sh.
+    # O `build:` fica como plano B pra build manual na caixa.
+    image: ghcr.io/donbigode/3d_analytics-api:${IMAGE_TAG:-latest}
     build:
       context: .
       args:
-        # Sem os extras [dev]: pytest, ruff, mypy e testcontainers não têm o que
-        # fazer em produção, e cada MB conta no disco do Lightsail.
+        # Sem [dev] (pytest, ruff, mypy, testcontainers) e sem [ai] (torch,
+        # sentence-transformers, SDKs de LLM): produção é só CRUD e cabe no
+        # Lightsail nano. Manter em sincronia com build-args no deploy.yml.
         EXTRAS: ""
     depends_on:
       db:
@@ -43,6 +48,7 @@ services:
     command: ["sh", "-c", "alembic upgrade head && uvicorn backend.app:app --host 0.0.0.0 --port 8000"]
 
   frontend:
+    image: ghcr.io/donbigode/3d_analytics-frontend:${IMAGE_TAG:-latest}
     build: ./frontend
     volumes:
       - frontend_build:/srv/frontend

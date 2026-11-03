@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.llm_features.runner import call_json
 from backend.core.models import ProductionOutcome
-from backend.core.trends.embeddings import cosine_similarity, embed
+from backend.core.trends.embeddings import EmbeddingsUnavailable, cosine_similarity, embed
 from backend.infra.db.models import ProductionEvent, ProductionSuggestion
 
 
@@ -54,7 +54,11 @@ async def fill_failure_embeddings(session: AsyncSession) -> int:
     pending = [(e, t) for e, t in pending if t]
     if not pending:
         return 0
-    vectors = await embed([t for _, t in pending])
+    try:
+        vectors = await embed([t for _, t in pending])
+    except EmbeddingsUnavailable:
+        # Sem o extra [ai]: segue sem vetor; gather_failures só não deduplica.
+        return 0
     for (e, _), vec in zip(pending, vectors):
         e.embedding = vec
     await session.commit()

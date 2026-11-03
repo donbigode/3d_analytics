@@ -9,7 +9,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# torch CPU-only, ANTES do install principal.
+# Extras de instalação. O default traz [dev] (pytest, ruff, mypy,
+# testcontainers) e [ai] (embeddings + SDKs de LLM) porque o docker-compose.yml
+# local roda teste e lint pela mesma imagem. Produção passa EXTRAS="" (no
+# docker-compose.prod.yml e no build-args do deploy.yml): só CRUD, cabe no
+# Lightsail nano.
+ARG EXTRAS="[dev,ai]"
+
+# torch CPU-only, ANTES do install principal — e só quando [ai] está nos extras.
 #
 # sentence-transformers (backend/core/trends/embeddings.py) arrasta torch, e o
 # wheel default do PyPI vem com a stack CUDA inteira: 3,3 GB em nvidia/* mais
@@ -22,15 +29,13 @@ WORKDIR /app
 # gerava uma imagem de 10,4 GB, e o servidor guarda a antiga enquanto constrói
 # a nova.
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install torch --index-url https://download.pytorch.org/whl/cpu
+    case "$EXTRAS" in \
+      *ai*) pip install torch --index-url https://download.pytorch.org/whl/cpu ;; \
+      *) echo "sem [ai]: torch não instalado" ;; \
+    esac
 
 COPY pyproject.toml ./
 
-# Extras de instalação. O default traz [dev] (pytest, ruff, mypy,
-# testcontainers) porque o docker-compose.yml local roda teste e lint pela
-# mesma imagem. Produção passa EXTRAS="" no docker-compose.prod.yml — uvicorn
-# não precisa de nenhum deles.
-ARG EXTRAS="[dev]"
 RUN --mount=type=cache,target=/root/.cache/pip pip install -e ".${EXTRAS}"
 
 # Guarda contra regressão. Se um bump de dependência reinstalar torch pelo PyPI,

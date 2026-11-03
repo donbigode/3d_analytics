@@ -10,57 +10,99 @@ on:
 # MESMA caixa, e eles se atropelam de três formas:
 #
 #   - `docker image prune -af` de um run apaga a imagem que o outro acabou de
-#     construir e ainda não subiu;
-#   - dois `docker compose build` no mesmo projeto disputam o mesmo nome de
+#     baixar e ainda não subiu;
+#   - dois `docker compose pull` no mesmo projeto disputam o mesmo nome de
 #     imagem;
 #   - dois `alembic upgrade head` concorrentes podem se bloquear no lock da
 #     tabela de versão.
 #
 # cancel-in-progress é FALSE de propósito: cancelar um deploy no meio deixa a
-# caixa em estado desconhecido — imagem nova construída, containers na versão
+# caixa em estado desconhecido — imagem nova baixada, containers na versão
 # velha, migração talvez aplicada. Enfileirar é mais lento e sempre coerente.
 concurrency:
   group: deploy-prod
   cancel-in-progress: false
 
+env:
+  # GHCR exige nome em minúsculas.
+  IMAGE_PREFIX: ghcr.io/donbigode/3d_analytics
+
 jobs:
-  deploy:
+  # Build fora do servidor: o Lightsail nano (512 MB) não aguenta compilar as
+  # imagens, e no disco lento do Lightsail o build levava ~6 min e enchia o
+  # disco de build cache (o "no space left on device" de 2026-09-25).
+  build:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        include:
+          - name: api
+            context: .
+            # Igual ao EXTRAS do docker-compose.prod.yml: sem [dev] e sem [ai].
+            build_args: EXTRAS=
+          - name: frontend
+            context: ./frontend
+            build_args: ""
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build & push ${{ matrix.name }}
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          platforms: linux/amd64
+          build-args: ${{ matrix.build_args }}
+          push: true
+          tags: |
+            ${{ env.IMAGE_PREFIX }}-${{ matrix.name }}:${{ github.sha }}
+            ${{ env.IMAGE_PREFIX }}-${{ matrix.name }}:latest
+          # Liga o pacote ao repo: herda as permissões dele, e o GITHUB_TOKEN
+          # do job de deploy consegue fazer pull mesmo com o pacote privado.
+          labels: org.opencontainers.image.source=https://github.com/${{ github.repository }}
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: read
+    steps:
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v1.0.3
+        env:
+          IMAGE_TAG: ${{ github.sha }}
+          GHCR_USER: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           host: ${{ secrets.LIGHTSAIL_IP }}
           username: deploy
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           script_stop: true
-          # Default do ssh-action é 10min; o rebuild da imagem (deps pesadas +
-          # exporting layers no disco lento do Lightsail) passa disso.
-          command_timeout: 30m
+          envs: IMAGE_TAG,GHCR_USER,GHCR_TOKEN
+          command_timeout: 10m
+          # O Action executa o deploy.sh que JÁ está no disco do servidor; se
+          # o `git pull` ficasse só dentro dele, o bash seguiria no inode
+          # antigo e a versão nova só valeria no próximo run. Puxar aqui, no
+          # YAML (lido do repo a cada run), garante que roda o script deste
+          # push. O pull de dentro do deploy.sh vira no-op.
           script: |
-            # Resgate de disco inline, ANTES do deploy.sh.
-            #
-            # Por que aqui e não só no deploy.sh: o Action executa o
-            # deploy.sh que JÁ está no disco do servidor. O `git pull` é a
-            # primeira linha dele, então o script se substitui, mas o bash em
-            # execução segue no inode antigo até terminar — a versão nova só
-            # vale do próximo run em diante. Quando o disco já está cheio,
-            # esse "próximo run" nunca chega. Este bloco, por estar no YAML,
-            # o GitHub lê do repositório a cada run, então vale já no
-            # primeiro. O deploy.sh mantém o mesmo resgate para quem roda
-            # ele à mão via SSH; rodar duas vezes é no-op instantâneo.
-            #
-            # Nunca `--volumes`: frontend_build e caddy_data são volumes
-            # nomeados.
-            df -h /
-            docker builder prune -f --max-used-space 4GB \
-              || docker builder prune -f --keep-storage 4GB \
-              || docker builder prune -f \
-              || echo "aviso: builder prune falhou, seguindo"
-            docker image prune -af || echo "aviso: image prune falhou, seguindo"
-            df -h /
-            /opt/3d-analytics/deploy/deploy.sh
+            cd /opt/3d-analytics
+            git pull --ff-only origin main
+            IMAGE_TAG="$IMAGE_TAG" GHCR_USER="$GHCR_USER" GHCR_TOKEN="$GHCR_TOKEN" \
+              /opt/3d-analytics/deploy/deploy.sh

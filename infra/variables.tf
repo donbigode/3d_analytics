@@ -59,3 +59,20 @@ variable "aws_profile" {
   type        = string
   default     = null
 }
+
+variable "nano_enabled" {
+  description = "Cria a instância nano_3_0 (US$ 5/mês) que substitui a micro. Ver 'Migração micro → nano' no README."
+  type        = bool
+  default     = false
+}
+
+variable "active_instance" {
+  description = "Qual instância recebe o IP estático: 'micro' (a `app` original) ou 'nano'."
+  type        = string
+  default     = "micro"
+
+  validation {
+    condition     = contains(["micro", "nano"], var.active_instance)
+    error_message = "active_instance deve ser 'micro' ou 'nano'."
+  }
+}

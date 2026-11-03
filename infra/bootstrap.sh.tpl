@@ -8,6 +8,7 @@ DUCKDNS_SUBDOMAIN="${duckdns_subdomain}"
 DUCKDNS_TOKEN="${duckdns_token}"
 REPO_URL="${github_repo_url}"
 DEPLOY_PUB_KEY="${deploy_ssh_pub_key}"
+STATIC_IP="${static_ip}"
 
 ENV_FILE=/etc/3d-analytics/.env
 REPO_DIR=/opt/3d-analytics
@@ -80,12 +81,17 @@ fi
 echo "==> symlink .env into repo dir (Compose interpolation cwd)"
 ln -sf "$ENV_FILE" "$REPO_DIR/.env"
 
+# Sempre com o IP estático explícito: `ip=` vazio faria o DuckDNS usar o IP de
+# origem, e uma instância nova (ainda sem o IP estático) roubaria o domínio.
 echo "==> DuckDNS update"
-curl -s "https://www.duckdns.org/update?domains=$DUCKDNS_SUBDOMAIN&token=$DUCKDNS_TOKEN&ip=" || true
+curl -s "https://www.duckdns.org/update?domains=$DUCKDNS_SUBDOMAIN&token=$DUCKDNS_TOKEN&ip=$STATIC_IP" || true
 
-echo "==> docker compose build"
+# Imagens vêm prontas do GHCR (deploy.yml). Build local só como plano B, se o
+# pacote estiver privado — e num nano de 512 MB ele é lento.
+echo "==> docker compose pull"
 cd "$REPO_DIR"
-docker compose -f docker-compose.prod.yml build api frontend
+docker compose -f docker-compose.prod.yml pull api frontend \
+  || docker compose -f docker-compose.prod.yml build api frontend
 
 echo "==> db first + migrate + seed"
 docker compose -f docker-compose.prod.yml up -d db
@@ -98,7 +104,7 @@ docker compose -f docker-compose.prod.yml up -d
 
 echo "==> duckdns cron"
 ( crontab -l 2>/dev/null | grep -v duckdns; \
-  echo "0 */6 * * * curl -s 'https://www.duckdns.org/update?domains=$DUCKDNS_SUBDOMAIN&token=$DUCKDNS_TOKEN&ip='" \
+  echo "0 */6 * * * curl -s 'https://www.duckdns.org/update?domains=$DUCKDNS_SUBDOMAIN&token=$DUCKDNS_TOKEN&ip=$STATIC_IP'" \
 ) | crontab -
 
 echo "==> done"
