@@ -21,10 +21,19 @@ _MODEL_NAME = "intfloat/multilingual-e5-small"
 _model = None
 
 
+class EmbeddingsUnavailable(RuntimeError):
+    """sentence-transformers isn't installed (production skips the ``ai`` extra)."""
+
+
 def _load() -> object:
     global _model
     if _model is None:
-        from sentence_transformers import SentenceTransformer
+        try:
+            from sentence_transformers import SentenceTransformer
+        except ImportError as e:
+            raise EmbeddingsUnavailable(
+                "sentence-transformers not installed; install the [ai] extra"
+            ) from e
 
         logger.info("loading sentence-transformers model %s", _MODEL_NAME)
         _model = SentenceTransformer(_MODEL_NAME)

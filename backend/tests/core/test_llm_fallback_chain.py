@@ -58,3 +58,18 @@ def test_chain_falls_back_when_preferred_key_missing():
     )
     names = [p.name for p in chain]
     assert names == ["anthropic", "gemini"]
+
+
+def test_chain_skips_provider_whose_sdk_is_not_installed(monkeypatch):
+    # Prod installs without the `ai` extra: a key in /config must not crash
+    # the chain just because the SDK isn't there.
+    import sys
+
+    monkeypatch.setitem(sys.modules, "anthropic", None)
+    chain = resolve_chain(
+        preferred="anthropic",
+        anthropic_key="sk-ant-1",
+        gemini_key=None,
+        openai_key=None,
+    )
+    assert chain == []

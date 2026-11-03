@@ -44,6 +44,34 @@ async def test_fill_failure_embeddings_sets_vectors(auth_client, monkeypatch):
         assert len(list(ev.embedding)) == 384
 
 
+
+@pytest.mark.asyncio
+async def test_fill_failure_embeddings_noop_when_embeddings_unavailable(auth_client, monkeypatch):
+    from backend.core.production import suggestions as S
+    from backend.core.trends.embeddings import EmbeddingsUnavailable
+    from backend.infra.db.session import SessionFactory
+    from backend.tests.api.test_production_flow import (
+        _approved_commercial,
+        _seed_material,
+        _spool,
+    )
+
+    async def missing_embed(texts):
+        raise EmbeddingsUnavailable("sentence-transformers not installed")
+
+    monkeypatch.setattr(S, "embed", missing_embed)
+
+    await _seed_material(auth_client)
+    sid = await _spool(auth_client)
+    qid, item_id = await _approved_commercial(auth_client)
+    await auth_client.post(f"/quotes/{qid}/transitions/produce",
+        json={"consumption": [{"quote_item_id": item_id, "spool_id": sid}]})
+    await auth_client.post(f"/quotes/{qid}/transitions/fail",
+        json={"failure_description": "stringing", "attempts": 1})
+
+    async with SessionFactory() as session:
+        assert await S.fill_failure_embeddings(session) == 0
+
 @pytest.mark.asyncio
 async def test_generate_suggestions_caches_llm_output(auth_client, monkeypatch):
     from sqlalchemy import select
