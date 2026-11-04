@@ -2,7 +2,13 @@
 # Bootstrap idempotente do 3D Analytics em Lightsail Ubuntu 22.04.
 # Renderizado pelo Terraform via templatefile() em lightsail.tf.
 # Roda como root no primeiro boot (Lightsail wrappa em #!/bin/sh).
-set -euo pipefail
+#
+# POSIX sh, NÃO bash: o Lightsail executa o user_data via `sh`, que no Ubuntu
+# 22.04 é o dash 0.5.11 — sem `pipefail` nem `trap ERR`. Com
+# `set -euo pipefail` o script morria na primeira linha sem fazer nada
+# (2026-11-03, duas nanos). Sem pipefail, `curl | sh` não acusa falha do curl:
+# por isso o `command -v docker` depois do get.docker.com.
+set -eu
 
 DUCKDNS_SUBDOMAIN="${duckdns_subdomain}"
 DUCKDNS_TOKEN="${duckdns_token}"
@@ -13,12 +19,12 @@ STATIC_IP="${static_ip}"
 ENV_FILE=/etc/3d-analytics/.env
 REPO_DIR=/opt/3d-analytics
 
-trap 'echo "BOOTSTRAP FALHOU na linha $LINENO (exit $?)" >&2' ERR
+trap 'rc=$?; [ "$rc" -eq 0 ] || echo "BOOTSTRAP FALHOU (exit $rc); ver o último ==> acima" >&2' EXIT
 
-# Usuário deploy PRIMEIRO, antes de qualquer coisa que dependa de rede/apt.
-# Na 1ª tentativa da nano (2026-11-03) o script morreu antes deste passo, e
-# sem ele não havia como entrar pra ler o log (a chave de admin tem
-# passphrase). Grupo `adm` = lê /var/log/cloud-init-output.log.
+# Usuário deploy PRIMEIRO, antes de qualquer coisa que dependa de rede/apt:
+# se algo falhar depois, ainda dá pra entrar com a chave do deploy (a de
+# admin tem passphrase) e ler o log. Grupo `adm` = lê
+# /var/log/cloud-init-output.log.
 echo "==> deploy user"
 if ! id deploy >/dev/null 2>&1; then
     useradd -m -s /bin/bash -G adm deploy
