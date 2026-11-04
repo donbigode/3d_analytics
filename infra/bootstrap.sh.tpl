@@ -2,7 +2,13 @@
 # Bootstrap idempotente do 3D Analytics em Lightsail Ubuntu 22.04.
 # Renderizado pelo Terraform via templatefile() em lightsail.tf.
 # Roda como root no primeiro boot (Lightsail wrappa em #!/bin/sh).
-set -euo pipefail
+#
+# POSIX sh, NÃO bash: o Lightsail executa o user_data via `sh`, que no Ubuntu
+# 22.04 é o dash 0.5.11 — sem `pipefail` nem `trap ERR`. Com
+# `set -euo pipefail` o script morria na primeira linha sem fazer nada
+# (2026-11-03, duas nanos). Sem pipefail, `curl | sh` não acusa falha do curl:
+# por isso o `command -v docker` depois do get.docker.com.
+set -eu
 
 DUCKDNS_SUBDOMAIN="${duckdns_subdomain}"
 DUCKDNS_TOKEN="${duckdns_token}"
@@ -13,29 +19,23 @@ STATIC_IP="${static_ip}"
 ENV_FILE=/etc/3d-analytics/.env
 REPO_DIR=/opt/3d-analytics
 
-echo "==> updating apt"
-apt-get update -qq
+trap 'rc=$?; [ "$rc" -eq 0 ] || echo "BOOTSTRAP FALHOU (exit $rc); ver o último ==> acima" >&2' EXIT
 
-echo "==> base packages"
-DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
-    git curl openssl ufw ca-certificates gnupg
-
-echo "==> docker via get.docker.com"
-if ! command -v docker >/dev/null 2>&1; then
-    curl -fsSL https://get.docker.com | sh
-fi
-
+# Usuário deploy PRIMEIRO, antes de qualquer coisa que dependa de rede/apt:
+# se algo falhar depois, ainda dá pra entrar com a chave do deploy (a de
+# admin tem passphrase) e ler o log. Grupo `adm` = lê
+# /var/log/cloud-init-output.log.
 echo "==> deploy user"
 if ! id deploy >/dev/null 2>&1; then
-    useradd -m -s /bin/bash deploy
+    useradd -m -s /bin/bash -G adm deploy
 fi
-usermod -aG docker deploy
 mkdir -p /home/deploy/.ssh
 chmod 700 /home/deploy/.ssh
 echo "$DEPLOY_PUB_KEY" > /home/deploy/.ssh/authorized_keys
 chmod 600 /home/deploy/.ssh/authorized_keys
 chown -R deploy:deploy /home/deploy/.ssh
 
+# Swap antes do apt/docker: no nano (512 MB) a instalação roda apertada.
 echo "==> swap 2GB"
 if [ ! -f /swapfile ]; then
     fallocate -l 2G /swapfile
@@ -44,6 +44,30 @@ if [ ! -f /swapfile ]; then
     swapon /swapfile
     echo '/swapfile none swap sw 0 0' >> /etc/fstab
 fi
+
+# No primeiro boot o unattended-upgrades costuma estar segurando o lock do
+# dpkg; esperar em vez de falhar na hora.
+APT="apt-get -o DPkg::Lock::Timeout=900"
+
+echo "==> updating apt"
+$APT update -qq
+
+echo "==> base packages"
+DEBIAN_FRONTEND=noninteractive $APT install -y -qq \
+    git curl openssl ufw ca-certificates gnupg
+
+echo "==> docker via get.docker.com"
+if ! command -v docker >/dev/null 2>&1; then
+    # O script do get.docker.com chama apt-get sem timeout de lock.
+    for attempt in 1 2 3 4 5; do
+        while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do sleep 5; done
+        curl -fsSL https://get.docker.com | sh && break
+        echo "get.docker.com falhou (tentativa $attempt); aguardando"
+        sleep 60
+    done
+    command -v docker >/dev/null 2>&1
+fi
+usermod -aG docker deploy
 
 echo "==> directories"
 mkdir -p /etc/3d-analytics /var/lib/3d-analytics/db /var/lib/3d-analytics/storage
