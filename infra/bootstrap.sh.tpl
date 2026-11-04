@@ -13,29 +13,23 @@ STATIC_IP="${static_ip}"
 ENV_FILE=/etc/3d-analytics/.env
 REPO_DIR=/opt/3d-analytics
 
-echo "==> updating apt"
-apt-get update -qq
+trap 'echo "BOOTSTRAP FALHOU na linha $LINENO (exit $?)" >&2' ERR
 
-echo "==> base packages"
-DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
-    git curl openssl ufw ca-certificates gnupg
-
-echo "==> docker via get.docker.com"
-if ! command -v docker >/dev/null 2>&1; then
-    curl -fsSL https://get.docker.com | sh
-fi
-
+# Usuário deploy PRIMEIRO, antes de qualquer coisa que dependa de rede/apt.
+# Na 1ª tentativa da nano (2026-11-03) o script morreu antes deste passo, e
+# sem ele não havia como entrar pra ler o log (a chave de admin tem
+# passphrase). Grupo `adm` = lê /var/log/cloud-init-output.log.
 echo "==> deploy user"
 if ! id deploy >/dev/null 2>&1; then
-    useradd -m -s /bin/bash deploy
+    useradd -m -s /bin/bash -G adm deploy
 fi
-usermod -aG docker deploy
 mkdir -p /home/deploy/.ssh
 chmod 700 /home/deploy/.ssh
 echo "$DEPLOY_PUB_KEY" > /home/deploy/.ssh/authorized_keys
 chmod 600 /home/deploy/.ssh/authorized_keys
 chown -R deploy:deploy /home/deploy/.ssh
 
+# Swap antes do apt/docker: no nano (512 MB) a instalação roda apertada.
 echo "==> swap 2GB"
 if [ ! -f /swapfile ]; then
     fallocate -l 2G /swapfile
@@ -44,6 +38,30 @@ if [ ! -f /swapfile ]; then
     swapon /swapfile
     echo '/swapfile none swap sw 0 0' >> /etc/fstab
 fi
+
+# No primeiro boot o unattended-upgrades costuma estar segurando o lock do
+# dpkg; esperar em vez de falhar na hora.
+APT="apt-get -o DPkg::Lock::Timeout=900"
+
+echo "==> updating apt"
+$APT update -qq
+
+echo "==> base packages"
+DEBIAN_FRONTEND=noninteractive $APT install -y -qq \
+    git curl openssl ufw ca-certificates gnupg
+
+echo "==> docker via get.docker.com"
+if ! command -v docker >/dev/null 2>&1; then
+    # O script do get.docker.com chama apt-get sem timeout de lock.
+    for attempt in 1 2 3 4 5; do
+        while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do sleep 5; done
+        curl -fsSL https://get.docker.com | sh && break
+        echo "get.docker.com falhou (tentativa $attempt); aguardando"
+        sleep 60
+    done
+    command -v docker >/dev/null 2>&1
+fi
+usermod -aG docker deploy
 
 echo "==> directories"
 mkdir -p /etc/3d-analytics /var/lib/3d-analytics/db /var/lib/3d-analytics/storage
