@@ -17,9 +17,9 @@ variable "instance_name" {
 }
 
 variable "bundle_id" {
-  description = "Plano Lightsail. micro_3_0 = $7/mês, 1 GB RAM, 40 GB SSD (2GB swap criado no cloud-init pra folga). small_3_0 = $12/mês, 2 GB RAM, 60 GB SSD."
+  description = "Plano Lightsail. nano_3_0 = $5/mês, 512 MB RAM, 20 GB SSD (2GB swap criado no cloud-init). micro_3_0 = $7/mês, 1 GB. small_3_0 = $12/mês, 2 GB. ATENÇÃO: mudar numa instância existente força replace e apaga o disco com o Postgres; pra trocar de plano, migre (infra/migrate-data.sh)."
   type        = string
-  default     = "micro_3_0"
+  default     = "nano_3_0"
 }
 
 variable "ssh_pub_key" {
@@ -58,21 +58,4 @@ variable "aws_profile" {
   description = "Profile do ~/.aws/credentials a usar. Default null = usa o profile default ou env vars (AWS_PROFILE/AWS_ACCESS_KEY_ID)."
   type        = string
   default     = null
-}
-
-variable "nano_enabled" {
-  description = "Cria a instância nano_3_0 (US$ 5/mês) que substitui a micro. Ver 'Migração micro → nano' no README."
-  type        = bool
-  default     = false
-}
-
-variable "active_instance" {
-  description = "Qual instância recebe o IP estático: 'micro' (a `app` original) ou 'nano'."
-  type        = string
-  default     = "micro"
-
-  validation {
-    condition     = contains(["micro", "nano"], var.active_instance)
-    error_message = "active_instance deve ser 'micro' ou 'nano'."
-  }
 }
